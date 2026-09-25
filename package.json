@@ -1,0 +1,13 @@
+{
+  "name": "moshsol",
+  "private": true,
+  "packageManager": "pnpm@10.13.1",
+  "scripts": {
+    "dev:web": "pnpm --filter @moshsol/web dev",
+    "dev:indexer": "pnpm --filter @moshsol/indexer dev",
+    "dev:agent": "pnpm --filter @moshsol/agent dev",
+    "setup:localnet": "pnpm --filter @moshsol/scripts run setup",
+    "seed:localnet": "pnpm --filter @moshsol/scripts run seed",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

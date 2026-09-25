@@ -1,0 +1,46 @@
+import { Wallet } from "@coral-xyz/anchor";
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, type Signer, type TransactionInstruction } from "@solana/web3.js";
+import { MoshClient } from "@moshsol/sdk";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+export const LOCALNET_DIR = path.resolve(ROOT, process.env.KEYS_DIR ?? ".localnet");
+export const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8899";
+
+export function loadOrCreateKeypair(name: string): Keypair {
+  fs.mkdirSync(LOCALNET_DIR, { recursive: true });
+  const file = path.join(LOCALNET_DIR, `${name}.json`);
+  if (fs.existsSync(file)) {
+    return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(file, "utf8"))));
+  }
+  const kp = Keypair.generate();
+  fs.writeFileSync(file, JSON.stringify(Array.from(kp.secretKey)));
+  return kp;
+}
+
+export async function airdrop(connection: Connection, to: PublicKey, sol: number) {
+  const sig = await connection.requestAirdrop(to, Math.round(sol * LAMPORTS_PER_SOL));
+  const bh = await connection.getLatestBlockhash("confirmed");
+  await connection.confirmTransaction({ signature: sig, ...bh }, "confirmed");
+}
+
+export async function send(
+  client: MoshClient,
+  payer: Keypair,
+  ixs: TransactionInstruction[],
+  extraSigners: Signer[] = [],
+  computeUnits = 300_000,
+): Promise<string> {
+  const { tx, blockhash, lastValidBlockHeight } = await client.buildTx(payer.publicKey, ixs, { computeUnits });
+  tx.sign(payer, ...extraSigners);
+  const sig = await client.connection.sendRawTransaction(tx.serialize());
+  const res = await client.connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+  if (res.value.err) throw new Error(`tx ${sig} failed: ${JSON.stringify(res.value.err)}`);
+  return sig;
+}
+
+export function clientFor(connection: Connection, kp: Keypair) {
+  return new MoshClient(connection, new Wallet(kp));
+}

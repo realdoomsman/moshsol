@@ -1,0 +1,20 @@
+{
+  "name": "@moshsol/scripts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "tsx src/setup.ts",
+    "seed": "tsx src/seed.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@moshsol/sdk": "workspace:*",
+    "@solana/web3.js": "^1.98.0",
+    "@coral-xyz/anchor": "0.31.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

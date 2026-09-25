@@ -1,0 +1,12 @@
+target/
+node_modules/
+.next/
+dist/
+.anchor/
+test-ledger/
+*.log
+.env
+.env.local
+apps/indexer/data/
+.localnet/
+.devnet/

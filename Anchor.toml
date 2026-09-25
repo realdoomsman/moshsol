@@ -1,0 +1,19 @@
+[toolchain]
+anchor_version = "0.31.0"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+moshsol = "C1c2ggJWMy2Ta4ogc297mGWk7Fj617dAxQr91BJKpTSW"
+
+[programs.devnet]
+moshsol = "C1c2ggJWMy2Ta4ogc297mGWk7Fj617dAxQr91BJKpTSW"
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "cargo test -p moshsol-tests -- --test-threads=4"

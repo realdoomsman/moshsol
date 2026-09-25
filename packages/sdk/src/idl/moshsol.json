@@ -1,0 +1,2610 @@
+{
+  "address": "C1c2ggJWMy2Ta4ogc297mGWk7Fj617dAxQr91BJKpTSW",
+  "metadata": {
+    "name": "moshsol",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Bundle launchpad: locked backer vaults traded by rate-limited agents"
+  },
+  "instructions": [
+    {
+      "name": "accept_admin",
+      "discriminator": [
+        112,
+        42,
+        45,
+        90,
+        116,
+        181,
+        13,
+        170
+      ],
+      "accounts": [
+        {
+          "name": "new_admin",
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "agent_buy",
+      "discriminator": [
+        26,
+        219,
+        253,
+        44,
+        79,
+        91,
+        19,
+        198
+      ],
+      "accounts": [
+        {
+          "name": "agent",
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "curve_tokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_tokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": [
+        {
+          "name": "sol_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_tokens_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "agent_sell",
+      "discriminator": [
+        122,
+        171,
+        119,
+        122,
+        223,
+        127,
+        182,
+        120
+      ],
+      "accounts": [
+        {
+          "name": "agent",
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "curve_tokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_tokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": [
+        {
+          "name": "tokens_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_sol_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "buy",
+      "discriminator": [
+        102,
+        6,
+        61,
+        18,
+        1,
+        218,
+        235,
+        234
+      ],
+      "accounts": [
+        {
+          "name": "trader",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "curve_tokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "trader_tokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "trader"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "sol_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_tokens_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "cancel_launch",
+      "discriminator": [
+        120,
+        69,
+        17,
+        7,
+        41,
+        48,
+        40,
+        37
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "signer": true,
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.mint",
+                "account": "Launch"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_backer_fees",
+      "discriminator": [
+        234,
+        26,
+        209,
+        192,
+        20,
+        160,
+        240,
+        25
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "backer"
+          ]
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.mint",
+                "account": "Launch"
+              }
+            ]
+          },
+          "relations": [
+            "backer"
+          ]
+        },
+        {
+          "name": "backer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  97,
+                  99,
+                  107,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_creator_fees",
+      "discriminator": [
+        0,
+        23,
+        125,
+        234,
+        156,
+        118,
+        134,
+        89
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.mint",
+                "account": "Launch"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_launch",
+      "discriminator": [
+        239,
+        223,
+        255,
+        134,
+        39,
+        121,
+        127,
+        62
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_recipient",
+          "writable": true
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "curve_tokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_tokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "CreateLaunchArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.mint",
+                "account": "Launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "backer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  97,
+                  99,
+                  107,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "proof",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize_platform",
+      "discriminator": [
+        119,
+        201,
+        101,
+        45,
+        75,
+        122,
+        89,
+        3
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_recipient",
+          "type": "pubkey"
+        },
+        {
+          "name": "agent_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "PlatformParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "launch",
+      "discriminator": [
+        153,
+        241,
+        93,
+        225,
+        22,
+        69,
+        74,
+        61
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "curve_tokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_tokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "propose_admin",
+      "discriminator": [
+        121,
+        214,
+        199,
+        212,
+        87,
+        39,
+        117,
+        234
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "platform"
+          ]
+        },
+        {
+          "name": "platform",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "new_admin",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "refund",
+      "discriminator": [
+        2,
+        96,
+        183,
+        251,
+        63,
+        208,
+        46,
+        46
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "backer"
+          ]
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.mint",
+                "account": "Launch"
+              }
+            ]
+          },
+          "relations": [
+            "backer"
+          ]
+        },
+        {
+          "name": "backer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  97,
+                  99,
+                  107,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "sell",
+      "discriminator": [
+        51,
+        230,
+        133,
+        164,
+        1,
+        127,
+        131,
+        173
+      ],
+      "accounts": [
+        {
+          "name": "trader",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "curve_tokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "trader_tokens",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": [
+        {
+          "name": "tokens_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_sol_out",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_agent_authority",
+      "discriminator": [
+        250,
+        203,
+        192,
+        81,
+        102,
+        63,
+        241,
+        120
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "platform"
+          ]
+        },
+        {
+          "name": "platform",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "agent_authority",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "set_fee_recipient",
+      "discriminator": [
+        227,
+        18,
+        215,
+        42,
+        237,
+        246,
+        151,
+        66
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "platform"
+          ]
+        },
+        {
+          "name": "platform",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_recipient",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "sweep_platform_fees",
+      "discriminator": [
+        190,
+        168,
+        25,
+        182,
+        75,
+        123,
+        135,
+        189
+      ],
+      "accounts": [
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.mint",
+                "account": "Launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_recipient",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_platform",
+      "discriminator": [
+        46,
+        78,
+        138,
+        189,
+        47,
+        163,
+        120,
+        85
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "platform"
+          ]
+        },
+        {
+          "name": "platform",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "PlatformParams"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Backer",
+      "discriminator": [
+        199,
+        128,
+        179,
+        190,
+        2,
+        66,
+        118,
+        252
+      ]
+    },
+    {
+      "name": "Launch",
+      "discriminator": [
+        144,
+        51,
+        51,
+        163,
+        206,
+        85,
+        213,
+        38
+      ]
+    },
+    {
+      "name": "Platform",
+      "discriminator": [
+        77,
+        92,
+        204,
+        58,
+        187,
+        98,
+        91,
+        12
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "BackerFeesClaimed",
+      "discriminator": [
+        15,
+        132,
+        40,
+        103,
+        53,
+        64,
+        22,
+        253
+      ]
+    },
+    {
+      "name": "CreatorFeesClaimed",
+      "discriminator": [
+        189,
+        178,
+        21,
+        181,
+        171,
+        179,
+        131,
+        1
+      ]
+    },
+    {
+      "name": "Deposited",
+      "discriminator": [
+        111,
+        141,
+        26,
+        45,
+        161,
+        35,
+        100,
+        57
+      ]
+    },
+    {
+      "name": "LaunchCancelled",
+      "discriminator": [
+        210,
+        90,
+        18,
+        45,
+        176,
+        239,
+        185,
+        155
+      ]
+    },
+    {
+      "name": "LaunchCreated",
+      "discriminator": [
+        59,
+        38,
+        190,
+        230,
+        33,
+        34,
+        89,
+        20
+      ]
+    },
+    {
+      "name": "Launched",
+      "discriminator": [
+        209,
+        127,
+        29,
+        152,
+        129,
+        212,
+        189,
+        183
+      ]
+    },
+    {
+      "name": "PlatformFeesSwept",
+      "discriminator": [
+        11,
+        134,
+        55,
+        195,
+        74,
+        64,
+        122,
+        35
+      ]
+    },
+    {
+      "name": "Refunded",
+      "discriminator": [
+        35,
+        103,
+        149,
+        246,
+        196,
+        123,
+        221,
+        99
+      ]
+    },
+    {
+      "name": "Trade",
+      "discriminator": [
+        24,
+        254,
+        218,
+        152,
+        253,
+        43,
+        18,
+        81
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Signer is not authorized for this action"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidParam",
+      "msg": "Parameter out of allowed bounds"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidMetadata",
+      "msg": "Name, symbol or URI too long or empty"
+    },
+    {
+      "code": 6003,
+      "name": "Paused",
+      "msg": "Platform is paused"
+    },
+    {
+      "code": 6004,
+      "name": "AgentsPaused",
+      "msg": "Agents are paused"
+    },
+    {
+      "code": 6005,
+      "name": "NotRaising",
+      "msg": "Launch is not raising"
+    },
+    {
+      "code": 6006,
+      "name": "NotLive",
+      "msg": "Launch is not live"
+    },
+    {
+      "code": 6007,
+      "name": "NotRefunding",
+      "msg": "Launch is not refunding"
+    },
+    {
+      "code": 6008,
+      "name": "RaiseClosed",
+      "msg": "Raise deadline has passed"
+    },
+    {
+      "code": 6009,
+      "name": "RaiseStillOpen",
+      "msg": "Raise is still open"
+    },
+    {
+      "code": 6010,
+      "name": "RaiseFull",
+      "msg": "Raise is full"
+    },
+    {
+      "code": 6011,
+      "name": "WalletCapReached",
+      "msg": "Wallet deposit cap reached"
+    },
+    {
+      "code": 6012,
+      "name": "MinimumNotReached",
+      "msg": "Raise minimum not reached"
+    },
+    {
+      "code": 6013,
+      "name": "MinimumReached",
+      "msg": "Raise minimum was reached; refunds unavailable"
+    },
+    {
+      "code": 6014,
+      "name": "NotWhitelisted",
+      "msg": "Wallet is not on the whitelist"
+    },
+    {
+      "code": 6015,
+      "name": "ZeroAmount",
+      "msg": "Amount must be greater than zero"
+    },
+    {
+      "code": 6016,
+      "name": "Slippage",
+      "msg": "Output below minimum (slippage)"
+    },
+    {
+      "code": 6017,
+      "name": "InsufficientLiquidity",
+      "msg": "Insufficient curve liquidity"
+    },
+    {
+      "code": 6018,
+      "name": "MathOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6019,
+      "name": "AgentWindowLimit",
+      "msg": "Agent window limit exceeded"
+    },
+    {
+      "code": 6020,
+      "name": "AgentPriceImpact",
+      "msg": "Agent trade exceeds max price impact"
+    },
+    {
+      "code": 6021,
+      "name": "AgentBuyNotDip",
+      "msg": "Agents may only buy below the EMA band"
+    },
+    {
+      "code": 6022,
+      "name": "AgentSellNotRally",
+      "msg": "Agents may only sell above the EMA band"
+    },
+    {
+      "code": 6023,
+      "name": "InsufficientVault",
+      "msg": "Insufficient vault balance"
+    },
+    {
+      "code": 6024,
+      "name": "NothingToClaim",
+      "msg": "Nothing to claim"
+    },
+    {
+      "code": 6025,
+      "name": "AlreadyRefunded",
+      "msg": "Already refunded"
+    },
+    {
+      "code": 6026,
+      "name": "NoPendingAdmin",
+      "msg": "No pending admin or signer mismatch"
+    }
+  ],
+  "types": [
+    {
+      "name": "Backer",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "deposited",
+            "docs": [
+              "Lamports deposited. Doubles as the fee-share weight."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "fees_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BackerFeesClaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "backer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreateLaunchArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "symbol",
+            "type": "string"
+          },
+          {
+            "name": "uri",
+            "type": "string"
+          },
+          {
+            "name": "raise_min",
+            "type": "u64"
+          },
+          {
+            "name": "raise_max",
+            "type": "u64"
+          },
+          {
+            "name": "max_per_wallet",
+            "docs": [
+              "0 = no per-wallet cap"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "duration_secs",
+            "type": "i64"
+          },
+          {
+            "name": "whitelist_root",
+            "docs": [
+              "All zero = open raise"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "bundle_supply_bps",
+            "docs": [
+              "Max share of supply the bundle buys at launch"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "reserve_bps",
+            "docs": [
+              "Share of the raise kept as SOL in the vault for agents to buy dips"
+            ],
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreatorFeesClaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Deposited",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "backer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "total_deposited",
+            "type": "u64"
+          },
+          {
+            "name": "raised",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Launch",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "index",
+            "type": "u64"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "LaunchStatus"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "curve_bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "launched_at",
+            "type": "i64"
+          },
+          {
+            "name": "raise_min",
+            "type": "u64"
+          },
+          {
+            "name": "raise_max",
+            "type": "u64"
+          },
+          {
+            "name": "max_per_wallet",
+            "type": "u64"
+          },
+          {
+            "name": "raise_deadline",
+            "type": "i64"
+          },
+          {
+            "name": "raised",
+            "type": "u64"
+          },
+          {
+            "name": "refunded",
+            "type": "u64"
+          },
+          {
+            "name": "backer_count",
+            "type": "u32"
+          },
+          {
+            "name": "whitelist_root",
+            "docs": [
+              "sha256 merkle root of allowed backer pubkeys. All zero = open to everyone."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "bundle_supply_bps",
+            "type": "u16"
+          },
+          {
+            "name": "reserve_bps",
+            "type": "u16"
+          },
+          {
+            "name": "virtual_sol",
+            "type": "u64"
+          },
+          {
+            "name": "real_sol",
+            "type": "u64"
+          },
+          {
+            "name": "token_reserve",
+            "type": "u64"
+          },
+          {
+            "name": "vault_sol",
+            "type": "u64"
+          },
+          {
+            "name": "vault_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "bundle_sol",
+            "type": "u64"
+          },
+          {
+            "name": "bundle_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "acc_fee_per_share",
+            "type": "u128"
+          },
+          {
+            "name": "backer_fees_accrued",
+            "type": "u64"
+          },
+          {
+            "name": "backer_fees_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "creator_fees_unclaimed",
+            "type": "u64"
+          },
+          {
+            "name": "creator_fees_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "platform_fees_unclaimed",
+            "type": "u64"
+          },
+          {
+            "name": "window_start",
+            "type": "i64"
+          },
+          {
+            "name": "window_buy_cap",
+            "type": "u64"
+          },
+          {
+            "name": "window_sol_spent",
+            "type": "u64"
+          },
+          {
+            "name": "window_sell_cap",
+            "type": "u64"
+          },
+          {
+            "name": "window_tokens_sold",
+            "type": "u64"
+          },
+          {
+            "name": "ema_price",
+            "docs": [
+              "Time-weighted EMA of the spot price, Q64.64 lamports per base unit."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "last_trade_ts",
+            "type": "i64"
+          },
+          {
+            "name": "agent_buys",
+            "type": "u32"
+          },
+          {
+            "name": "agent_sells",
+            "type": "u32"
+          },
+          {
+            "name": "agent_sol_spent",
+            "type": "u64"
+          },
+          {
+            "name": "agent_sol_received",
+            "type": "u64"
+          },
+          {
+            "name": "volume_sol",
+            "type": "u64"
+          },
+          {
+            "name": "trade_count",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LaunchCancelled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LaunchCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u64"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "symbol",
+            "type": "string"
+          },
+          {
+            "name": "uri",
+            "type": "string"
+          },
+          {
+            "name": "raise_min",
+            "type": "u64"
+          },
+          {
+            "name": "raise_max",
+            "type": "u64"
+          },
+          {
+            "name": "raise_deadline",
+            "type": "i64"
+          },
+          {
+            "name": "bundle_supply_bps",
+            "type": "u16"
+          },
+          {
+            "name": "reserve_bps",
+            "type": "u16"
+          },
+          {
+            "name": "whitelisted",
+            "type": "bool"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LaunchStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Raising"
+          },
+          {
+            "name": "Live"
+          },
+          {
+            "name": "Refunding"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Launched",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "raised",
+            "type": "u64"
+          },
+          {
+            "name": "launch_fee",
+            "type": "u64"
+          },
+          {
+            "name": "bundle_sol",
+            "type": "u64"
+          },
+          {
+            "name": "bundle_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "vault_sol",
+            "type": "u64"
+          },
+          {
+            "name": "price_q64",
+            "type": "u128"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Platform",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent_authority",
+            "docs": [
+              "The only key allowed to call agent_buy / agent_sell. It can never withdraw anything."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "params",
+            "type": {
+              "defined": {
+                "name": "PlatformParams"
+              }
+            }
+          },
+          {
+            "name": "launch_count",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PlatformFeesSwept",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PlatformParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "trade_fee_bps",
+            "docs": [
+              "Fee on every public trade, taken in SOL."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "backer_fee_share_bps",
+            "docs": [
+              "Portion of the trade fee paid to backers (pro-rata to their deposit)."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "creator_fee_share_bps",
+            "docs": [
+              "Portion of the trade fee paid to the creator. Platform receives the remainder."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "launch_fee_bps",
+            "docs": [
+              "Cut of the raised SOL taken at launch."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "create_fee_lamports",
+            "docs": [
+              "Flat fee charged when creating a launch (anti-spam)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "virtual_sol_reserves",
+            "docs": [
+              "Virtual SOL reserves seeded into every new curve (sets the starting market cap)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "max_bundle_supply_bps",
+            "type": "u16"
+          },
+          {
+            "name": "min_raise_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "agent_buy_bps_per_window",
+            "docs": [
+              "Max share of vault SOL agents may spend per window."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "agent_sell_bps_per_window",
+            "docs": [
+              "Max share of vault tokens agents may sell per window."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "agent_max_impact_bps",
+            "docs": [
+              "Max price move from a single agent trade."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "agent_band_bps",
+            "docs": [
+              "Agents buy only when price <= EMA * (1 - band) and sell only when price >= EMA * (1 + band)."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "agent_window_secs",
+            "type": "u32"
+          },
+          {
+            "name": "ema_period_secs",
+            "type": "u32"
+          },
+          {
+            "name": "paused",
+            "docs": [
+              "Blocks new launches and deposits. Never blocks refunds, trading or claims."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "agents_paused",
+            "docs": [
+              "Blocks agent trades (circuit breaker). Vault funds stay locked either way."
+            ],
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Refunded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "backer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Trade",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "trader",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_buy",
+            "type": "bool"
+          },
+          {
+            "name": "is_agent",
+            "type": "bool"
+          },
+          {
+            "name": "sol_amount",
+            "docs": [
+              "Lamports paid (buy, gross incl. fee) or received (sell, net of fee)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "token_amount",
+            "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          },
+          {
+            "name": "price_q64",
+            "type": "u128"
+          },
+          {
+            "name": "ema_q64",
+            "type": "u128"
+          },
+          {
+            "name": "real_sol",
+            "type": "u64"
+          },
+          {
+            "name": "token_reserve",
+            "type": "u64"
+          },
+          {
+            "name": "vault_sol",
+            "type": "u64"
+          },
+          {
+            "name": "vault_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}
