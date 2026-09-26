@@ -204,22 +204,32 @@ between transactions), `SIM_TRADERS` (10), `SIM_BACKERS` (6), `SIM_MEDIAN_TRADE_
 
 `.devnet/*.json` are the only copies of those keys — back them up; they are gitignored.
 
-Railway project `moshsol` has three services built from this repo with per-service Dockerfiles
-(`RAILWAY_DOCKERFILE_PATH` = `apps/<service>/Dockerfile`, build context = repo root):
+Railway project `moshsol` has three services, each connected to this GitHub repo (`master`) with its
+own Dockerfile (`apps/<service>/Dockerfile`, build context = repo root), a healthcheck, restart on
+failure, and watch paths so a push only rebuilds what it touched (`apps/<service>/**`,
+`packages/sdk/**`, lockfile):
 
-| Service | Variables | Notes |
-|---|---|---|
-| `indexer` | `RPC_URL`, `WS_URL`, `PUBLIC_URL` (its own Railway domain), `PORT=8787`, `POLL_MS=8000`, `FULL_REFRESH_MS=30000`, `HOLDERS_TTL_MS=120000`, `CHAIN_CHECK_MS=60000` | Volume mounted at `/data` (SQLite DB + uploaded images/metadata). |
-| `agent` | `RPC_URL`, `AGENT_KEYPAIR_JSON` (secret), `PORT=8788`, `POLL_MS=10000` | Keep ~0.1+ SOL on the agent key for fees. |
-| `web` | `NEXT_PUBLIC_CLUSTER=devnet`, `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_INDEXER_URL`, `NEXT_PUBLIC_AGENT_URL`, `NEXT_PUBLIC_SITE_URL`, `PORT=3000` | `NEXT_PUBLIC_*` are baked in at build time — redeploy after changing them. |
+| Service | Variables | Healthcheck | Notes |
+|---|---|---|---|
+| `indexer` | `RPC_URL`, `WS_URL`, `PUBLIC_URL` (its own Railway domain), `PORT=8787`, `POLL_MS=8000`, `FULL_REFRESH_MS=30000`, `HOLDERS_TTL_MS=120000`, `CHAIN_CHECK_MS=60000` | `/api/health` | Volume at `/data` (SQLite DB + uploaded images/metadata). |
+| `agent` | `RPC_URL`, `AGENT_KEYPAIR_JSON` (secret), `PORT=8788`, `POLL_MS=10000` | `/status` | Keep ~0.1+ SOL on the agent key for fees. |
+| `web` | `NEXT_PUBLIC_CLUSTER=devnet`, `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_INDEXER_URL`, `NEXT_PUBLIC_AGENT_URL`, `NEXT_PUBLIC_SITE_URL`, `PORT=3000` | `/` | Pages are server-rendered with live indexer data. `NEXT_PUBLIC_*` are baked in at build time — redeploy after changing them. |
 
-Redeploy after code changes (from the repo root): `railway up --service indexer|agent|web --ci`.
+**Deploying:** push to `master`. Manual deploy of local changes: `railway up --service indexer|agent|web --ci`.
+**CI** (GitHub Actions): `CI` typechecks everything and builds the web on every push; `Program`
+runs `anchor build` + the litesvm suite when `programs/`, `tests/` or Cargo/Anchor files change.
 
-**RPC note.** The public `api.devnet.solana.com` works but is rate-limited and refuses
-`getProgramAccounts` on the token programs; the indexer then derives holders from its own trade
-ledger (transfers between wallets aren't counted), and the in-app faucet falls back to a
-faucet.solana.com link. For real traffic set `RPC_URL`/`WS_URL` (indexer, agent) and
-`NEXT_PUBLIC_RPC_URL`/`NEXT_PUBLIC_WS_URL` (web) to a dedicated provider (Helius, Triton, QuickNode).
+**Devnet platform params** are set for cheap testing: min raise 0.05 SOL, create fee 0.005 SOL
+(`MIN_RAISE_SOL=0.05 CREATE_FEE_SOL=0.005 … pnpm setup:localnet -- --update`). Live launches keep the
+terms frozen at their creation.
+
+**RPC note.** Everything runs on the public `api.devnet.solana.com`: it is rate-limited and refuses
+`getProgramAccounts` on the token programs, so the indexer reads the real token accounts of the
+curve, the vault and every wallet that ever traded (exact balances; wallets that only *received*
+tokens by transfer aren't listed). The in-app "Get test SOL" falls back to a faucet.solana.com link
+when the public faucet throttles. For real traffic set `RPC_URL`/`WS_URL` on the indexer and agent to a
+dedicated provider (Helius, Triton, QuickNode) — keep keyed URLs server-side only; the web's
+`NEXT_PUBLIC_RPC_URL` is visible to every visitor.
 
 ## Deploy to another cluster
 
