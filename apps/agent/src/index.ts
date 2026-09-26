@@ -44,8 +44,8 @@ const shutdown = (signal: NodeJS.Signals) => {
   log("stopping", { signal });
   controller.abort();
 };
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+// SIGBREAK: Ctrl+Break on Windows consoles.
+for (const signal of ["SIGINT", "SIGTERM", "SIGBREAK"] as const) process.on(signal, shutdown);
 
 await agent.run(controller.signal);
 server.closeAllConnections();

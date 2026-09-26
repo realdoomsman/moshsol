@@ -28,6 +28,11 @@ export class Holders {
     return this.cache.get(mint);
   }
 
+  /** Drops cached snapshots (chain reset). In-flight loads still resolve for their callers. */
+  clear(): void {
+    this.cache.clear();
+  }
+
   async get(mint: string, launch: string): Promise<HolderSet> {
     const hit = this.cache.get(mint);
     if (hit && Date.now() - hit.at < this.ttlMs) return hit;

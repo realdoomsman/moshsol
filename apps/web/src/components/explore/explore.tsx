@@ -1,7 +1,6 @@
 "use client";
 
 import { Flame, Rocket, Search, SearchX, Sparkles } from "lucide-react";
-import { AnimatePresence } from "motion/react";
 import { useMemo, useState } from "react";
 import type { LaunchSort } from "@/lib/api";
 import { useDebounced, useNow } from "@/lib/hooks";
@@ -116,7 +115,14 @@ export function Explore() {
                   </>
                 ),
               },
-              { value: "ended", label: <>Ended · refunding <Count n={grouped.ended.length} /></> },
+              {
+                value: "ended",
+                label: (
+                  <>
+                    Ended<span className="hidden sm:inline"> · refunding</span> <Count n={grouped.ended.length} />
+                  </>
+                ),
+              },
             ]}
           />
         </div>
@@ -160,11 +166,9 @@ export function Explore() {
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              <AnimatePresence mode="popLayout">
-                {list.map((l, i) => (
-                  <LaunchCard key={l.mint} launch={l} now={now} index={i} />
-                ))}
-              </AnimatePresence>
+              {list.map((l) => (
+                <LaunchCard key={l.mint} launch={l} now={now} />
+              ))}
             </div>
           )}
         </div>

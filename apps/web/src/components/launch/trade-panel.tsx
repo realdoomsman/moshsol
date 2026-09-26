@@ -28,7 +28,7 @@ import { cn } from "../ui/cn";
 import { Segmented } from "../ui/interactive";
 import { Card, Row } from "../ui/primitives";
 
-type Side = "buy" | "sell";
+export type Side = "buy" | "sell";
 const SLIPPAGE_PRESETS = [50, 100, 200, 500];
 /** Kept aside on buys for the network fee and the first-time token account rent. */
 const BUY_HEADROOM = 5_000_000n;
@@ -42,7 +42,15 @@ function parseAmount(v: string, decimals: 6 | 9): bigint | null {
   }
 }
 
-export function TradePanel({ launch: l }: { launch: LaunchSummary }) {
+export function TradePanel({
+  launch: l,
+  side,
+  onSideChange,
+}: {
+  launch: LaunchSummary;
+  side: Side;
+  onSideChange: (s: Side) => void;
+}) {
   const { publicKey } = useWallet();
   const client = useMoshClient();
   const platform = usePlatform();
@@ -51,7 +59,6 @@ export function TradePanel({ launch: l }: { launch: LaunchSummary }) {
   const tx = useTx();
   const { setVisible } = useWalletModal();
 
-  const [side, setSide] = useState<Side>("buy");
   const [buyIn, setBuyIn] = useState<"sol" | "token">("sol");
   const [amount, setAmount] = useState("");
   const [slippageBps, setSlippageBps] = useLocalStorage("moshsol:slippage-bps", 100);
@@ -149,20 +156,20 @@ export function TradePanel({ launch: l }: { launch: LaunchSummary }) {
         : "—";
 
   return (
-    <Card className="p-4 sm:p-5">
-      <div className="flex items-center justify-between gap-2">
+    <Card id="trade" className="p-4 sm:p-5">
+      <div className="flex items-stretch gap-2">
         <div className="grid flex-1 grid-cols-2 gap-1 rounded-xl border border-line bg-black/30 p-1">
           {(["buy", "sell"] as const).map((s) => (
             <button
               key={s}
               type="button"
               onClick={() => {
-                setSide(s);
+                onSideChange(s);
                 setAmount("");
               }}
               aria-pressed={side === s}
               className={cn(
-                "h-9 rounded-lg text-sm font-semibold capitalize transition",
+                "h-10 rounded-lg text-sm font-semibold capitalize transition",
                 side === s
                   ? s === "buy"
                     ? "bg-up text-black shadow-[0_6px_24px_-8px_rgb(47_230_167/0.6)]"
@@ -180,7 +187,7 @@ export function TradePanel({ launch: l }: { launch: LaunchSummary }) {
           aria-expanded={showSettings}
           aria-label="Slippage settings"
           className={cn(
-            "flex h-11 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold transition",
+            "flex min-h-11 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold transition",
             showSettings ? "border-lime/40 text-lime" : "border-line text-muted hover:text-ink",
           )}
         >
@@ -209,7 +216,7 @@ export function TradePanel({ launch: l }: { launch: LaunchSummary }) {
                       setCustomSlip("");
                     }}
                     className={cn(
-                      "h-8 rounded-lg border px-3 text-xs font-semibold tabular-nums transition",
+                      "h-10 rounded-lg border px-3 text-xs font-semibold transition sm:h-8",
                       slippageBps === bps ? "border-lime/50 bg-lime/10 text-lime" : "border-line text-muted hover:text-ink",
                     )}
                   >
@@ -229,7 +236,7 @@ export function TradePanel({ launch: l }: { launch: LaunchSummary }) {
                       const n = Number(v);
                       if (v && n > 0 && n <= 50) setSlippageBps(Math.round(n * 100));
                     }}
-                    className="h-8 w-24 rounded-lg border border-line bg-transparent px-2.5 pr-6 text-xs tabular-nums text-ink outline-none focus:border-lime/50"
+                    className="h-10 w-24 rounded-lg border border-line bg-transparent px-2.5 pr-6 text-xs text-ink outline-none focus:border-lime/50 sm:h-8"
                   />
                   <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-xs text-dim">%</span>
                 </div>
@@ -240,13 +247,14 @@ export function TradePanel({ launch: l }: { launch: LaunchSummary }) {
         ) : null}
       </AnimatePresence>
 
-      <div className="mt-4 rounded-xl border border-line bg-black/30 p-3 focus-within:border-lime/40">
+      <div className="mt-4 rounded-xl border border-line bg-black/30 p-3 transition-colors focus-within:border-lime/40">
         <div className="flex items-center justify-between text-xs text-dim">
-          <span>You pay</span>
-          <span className="tabular-nums">Balance {balanceLine}</span>
+          <label htmlFor="trade-amount">{side === "buy" ? "You pay" : "You sell"}</label>
+          <span>Balance {balanceLine}</span>
         </div>
         <div className="mt-1.5 flex items-center gap-2">
           <input
+            id="trade-amount"
             aria-label={`Amount in ${inputIsSol ? "SOL" : l.symbol}`}
             inputMode="decimal"
             autoComplete="off"
@@ -256,7 +264,7 @@ export function TradePanel({ launch: l }: { launch: LaunchSummary }) {
               const v = e.target.value.replace(",", ".");
               if (/^\d*\.?\d{0,9}$/.test(v)) setAmount(v);
             }}
-            className="w-0 min-w-0 flex-1 bg-transparent text-2xl font-semibold tabular-nums text-ink outline-none placeholder:text-white/20"
+            className="w-0 min-w-0 flex-1 bg-transparent text-2xl font-semibold text-ink outline-none placeholder:text-white/40"
           />
           {side === "buy" ? (
             <button
@@ -265,14 +273,14 @@ export function TradePanel({ launch: l }: { launch: LaunchSummary }) {
                 setBuyIn((u) => (u === "sol" ? "token" : "sol"));
                 setAmount("");
               }}
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-white/[0.05] px-2.5 text-xs font-semibold transition hover:border-line-strong"
+              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-white/[0.05] px-2.5 text-xs font-semibold transition hover:border-line-strong sm:h-8"
               title="Switch input between SOL and tokens"
             >
               {buyIn === "sol" ? "SOL" : `$${l.symbol}`}
               <ArrowDownUp className="size-3 text-dim" aria-hidden />
             </button>
           ) : (
-            <span className="shrink-0 rounded-lg border border-line bg-white/[0.05] px-2.5 py-1.5 text-xs font-semibold">
+            <span className="inline-flex h-10 shrink-0 items-center rounded-lg border border-line bg-white/[0.05] px-2.5 text-xs font-semibold sm:h-8">
               ${l.symbol}
             </span>
           )}
@@ -283,7 +291,7 @@ export function TradePanel({ launch: l }: { launch: LaunchSummary }) {
               key={q.label}
               type="button"
               onClick={() => setAmount(q.v)}
-              className="h-7 rounded-lg border border-line bg-white/[0.03] text-xs font-semibold text-muted tabular-nums transition hover:border-line-strong hover:text-ink"
+              className="h-10 rounded-lg border border-line bg-white/[0.03] text-xs font-semibold text-muted transition hover:border-line-strong hover:text-ink sm:h-8"
             >
               {q.label}
             </button>

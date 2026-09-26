@@ -37,10 +37,10 @@ flowchart LR
 | `programs/moshsol` | Anchor 0.31 program (raise → launch → curve + vault + agents + fee accounting) |
 | `tests/program` | litesvm integration tests (time travel for deadlines/windows, invariants after every step) |
 | `packages/sdk` | `@moshsol/sdk`: IDL, PDAs, bigint curve math mirroring the program, ix builders, event parser, merkle whitelist, formatters |
-| `apps/indexer` | Data backend: event indexer (backfill + live logs + poller), SQLite, REST + WebSocket API, image/metadata uploads |
+| `apps/indexer` | Data backend: event indexer (backfill + reconnecting live logs + poller, chain-reset detection), SQLite, REST + WebSocket API, rate-limited image/metadata uploads |
 | `apps/agent` | Vault agent: mirrors on-chain EMA/window math, sizes trades to pull price back toward the EMA within limits, status API |
 | `apps/web` | Next.js site: explore, create, raise/launch/trade pages, portfolio, agent transparency, docs |
-| `scripts` | `localnet.sh` (validator), `setup.ts` (platform init), `seed.ts` (demo data) |
+| `scripts` | `localnet.sh` + `localnet.mjs` (validator), `setup.ts` (platform init), `seed.ts` (demo data), `simulate.ts` (live traffic), `preflight.ts` (dev checks) |
 
 ## Program
 
@@ -65,32 +65,135 @@ Guarantees enforced in code (see `programs/moshsol/src/constants.rs` for hard ca
 
 ## Run it locally
 
-Prereqs: Rust + Solana CLI (Agave) + Anchor 0.31 (Linux/WSL/macOS), Node 22+ and pnpm 10.
+Prereqs: Rust + Solana CLI (Agave) + Anchor 0.31 in WSL/Linux/macOS for the program and the validator;
+Node 22+ and pnpm 10 for everything else (on Windows the validator runs in WSL, the rest natively).
 
 ```bash
-# 1. build + test the program (WSL/Linux)
-anchor build
-cargo test -p moshsol-tests  # 16 litesvm tests; needs target/deploy/moshsol.so from anchor build
+anchor build                 # WSL/Linux, once and after every program change
+cargo test -p moshsol-tests  # 16 litesvm tests; needs target/deploy/moshsol.so
 
-# 2. start a local validator with the program (WSL/Linux; keep running)
-bash scripts/localnet.sh
-
-# 3. JS workspace (any OS)
 pnpm install
-pnpm setup:localnet          # initializes the platform, writes .localnet/config.json + keys
-pnpm dev:indexer             # http://127.0.0.1:8787
-pnpm dev:agent               # status on http://127.0.0.1:8788/status
-pnpm seed:localnet           # optional demo launches, deposits and trades
-pnpm dev:web                 # http://localhost:3000
+pnpm localnet                # terminal 1: validator (through WSL on Windows); resumes its ledger
+pnpm setup:localnet          # once per fresh chain: initializes the platform, writes .localnet/
+pnpm dev                     # terminal 2: indexer :8787 + agent :8788 + web http://localhost:3000
+pnpm seed:localnet           # optional: demo launches, deposits and a few minutes of trading
+pnpm simulate:localnet       # optional: endless organic-looking traffic (see below)
 ```
+
+`pnpm dev` first runs a preflight that refuses to start — printing the command that fixes it — when the
+validator is unreachable, the program is not deployed, the platform is not initialized, the agent key is
+missing or a port is taken. The three services then share one terminal with colored `[indexer]`,
+`[agent]`, `[web]` prefixes; if one exits, the others are stopped too.
+
+| Command | What it does |
+|---|---|
+| `pnpm localnet` | `scripts/localnet.sh` via `wsl` on Windows, `bash` elsewhere. Keeps `~/.moshsol-ledger` across restarts; `pnpm localnet --reset` starts a fresh chain (required after `anchor build`: the program is loaded at genesis). |
+| `pnpm reset:localnet` | Fresh chain in one go: stops the validator, restarts it on a new ledger in the background (log in `.localnet/validator.log`), wipes the indexer DB (a running indexer re-indexes by itself instead), runs `setup:localnet`, then `seed:localnet` if the indexer is up. |
+| `pnpm stop:localnet` | Stops a running validator. |
+| `pnpm dev` | Preflight, then indexer + agent (tsx watch) and `next dev` via `concurrently`, fail fast. |
+| `pnpm start` | Production-style: preflight, `next build`, then indexer/agent `start` + `next start`. |
+| `pnpm simulate:localnet` | Traffic simulator (localhost RPC only). |
+| `pnpm preflight` | The checks `dev`/`start` run first (RPC, program, platform, agent key, free ports). |
+| `pnpm dev:indexer` / `dev:agent` / `dev:web` | One service. |
+| `pnpm typecheck` | Every workspace. |
 
 On localnet the web app offers a burner wallet and a "Get test SOL" button; Phantom/Solflare/Backpack
 work too (point them at `http://127.0.0.1:8899`).
+
+### Traffic simulator
+
+`pnpm simulate:localnet` keeps the site alive through the real program and the indexer's upload endpoint:
+
+- trades every live launch from 10 trader wallets — momentum chasers, mean-reverters (against the
+  on-chain EMA) and noise traders — with log-normal sizes (median 0.15 SOL) and occasional whale pumps
+  and dumps, which is what makes the vault agents step in;
+- every ~5 minutes opens a raise with a generated name and SVG mascot, fills it from 6 backer wallets and
+  launches it once the minimum is met and it has been visible for 2 minutes;
+- backers and creators claim their fees from time to time.
+
+It runs about 3 transactions per 10 s, keeps its wallets in `.localnet/sim/` (topped up by airdrop), refuses
+to run unless `RPC_URL` is a localhost validator, and stops cleanly on Ctrl+C with a summary.
+
+### Environment
+
+Indexer (`apps/indexer`):
+
+| Variable | Default | |
+|---|---|---|
+| `PORT`, `HOST` | `8787`, `127.0.0.1` | HTTP API + `/ws` |
+| `RPC_URL` | `http://127.0.0.1:8899` | |
+| `WS_URL` | RPC port + 1 | `logsSubscribe`; reconnects with backoff (1 s → 30 s), the 4 s poller covers gaps |
+| `DB_PATH` | `apps/indexer/data/indexer.db` | SQLite (WAL). Safe to delete while stopped: the next start re-indexes |
+| `FILES_DIR` | `apps/indexer/data/files` | Uploaded images + metadata JSON |
+| `PUBLIC_URL` | `http://127.0.0.1:$PORT` | Base of the URIs stored on-chain; must be reachable by browsers and wallets |
+| `RATE_LIMIT_PER_MIN` | `1200` | Per-IP requests per minute across all routes (`0` = off); 429 + `Retry-After` |
+| `UPLOAD_LIMIT_PER_MIN` | `20` | Per-IP `POST /api/upload` per minute (`0` = off) |
+| `TRUST_PROXY` | off | `1` behind a reverse proxy, so limits apply to `X-Forwarded-For` |
+| `LOG_LEVEL` | `info` | `debug` adds poller catch-ups and websocket retry attempts |
+
+`GET /api/health` → `{ ok, slot, lastIndexedSlot, lagSlots, wsConnected, genesisHash }` (503 when the RPC is
+unreachable or the first sync hasn't finished).
+
+Agent (`apps/agent`):
+
+| Variable | Default | |
+|---|---|---|
+| `RPC_URL` | `http://127.0.0.1:8899` | |
+| `AGENT_KEYPAIR` | `.localnet/agent.json` | Must be the platform's agent authority to trade |
+| `STATUS_PORT`, `STATUS_HOST` | `8788`, `127.0.0.1` | `GET /status`: latest decision per live launch |
+| `POLL_MS` | `4000` | |
+| `DRY_RUN` | off | `1`: decide and report, never send |
+| `MIN_TRADE_LAMPORTS` | `10000000` | 0.01 SOL: smaller buys/sells are skipped |
+| `MAX_FRACTION_PER_TRADE` | `0.5` | Share of the remaining window budget one trade may use |
+| `COOLDOWN_MS` | `15000` | Per launch after a trade (errors back off exponentially up to 5 min) |
+| `SLIPPAGE_BPS`, `PRIORITY_MICROLAMPORTS` | `50`, `0` | |
+
+Web (`apps/web`, read at build time):
+
+| Variable | Default |
+|---|---|
+| `NEXT_PUBLIC_CLUSTER` | `localnet` (`devnet`, `mainnet-beta`; burner wallet + faucet only on test clusters) |
+| `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_WS_URL` | `http://127.0.0.1:8899`, `ws://127.0.0.1:8900` |
+| `NEXT_PUBLIC_INDEXER_URL` | `http://127.0.0.1:8787` (also fetched server-side for OG images) |
+| `NEXT_PUBLIC_AGENT_URL` | `http://127.0.0.1:8788` |
+| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` (public origin for absolute share/OG URLs) |
+
+Scripts: `RPC_URL`, `KEYS_DIR` (default `.localnet`), `INDEXER_URL` (seed/simulate), `PROFILE=production`
+(setup: hourly agent windows), `SEED_TRADE_SECS` (seed, 150). Simulator: `SIM_INTERVAL_MS` (3000, mean pause
+between transactions), `SIM_TRADERS` (10), `SIM_BACKERS` (6), `SIM_MEDIAN_TRADE_SOL` (0.15), `SIM_WHALE_PROB`
+(0.04), `SIM_RAISE_EVERY_S` (300), `SIM_MAX_RAISING` (1), `SIM_CLAIM_EVERY_S` (90). Validator (`localnet.sh`):
+`LEDGER` (`~/.moshsol-ledger`), `LEDGER_LIMIT` (1,000,000 shreds), `UPGRADE_AUTHORITY` (`.localnet/admin.json`).
+
+### Troubleshooting
+
+- **Windows can't reach the WSL validator.** Windows talks to it on `127.0.0.1:8899/8900` through WSL
+  localhost forwarding. If `pnpm dev` says the validator is unreachable while it runs, make sure
+  `%UserProfile%\.wslconfig` doesn't disable it (`localhostForwarding=true`, or `networkingMode=mirrored`),
+  run `wsl --shutdown`, start `pnpm localnet` again, and check with
+  `curl -s -X POST -H "content-type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getHealth\"}" http://127.0.0.1:8899`.
+- **Chain reset.** After `pnpm localnet --reset` / `pnpm reset:localnet` the genesis hash changes. The indexer
+  checks it at start, every 30 s and after every RPC or websocket outage; on a mismatch (or when its cursor
+  vanished from retained history) it wipes its DB, re-indexes and pushes `{ type: "reset" }` so open pages
+  refetch. Re-run `pnpm setup:localnet` on the new chain (`reset:localnet` does). Wallets keep their keys but
+  have 0 SOL on the new chain.
+- **Validator restarts.** The indexer reconnects its websocket with backoff and the agent retries with
+  backoff; `GET :8787/api/health` shows `wsConnected` and `lagSlots` (≈0–10 when healthy).
+- **History gaps.** `solana-test-validator` only keeps `--limit-ledger-size` shreds (its default, 10,000, is
+  ~3 minutes); `localnet.sh` raises it to 1,000,000 (hours). Trades older than the node's history can't be
+  backfilled after a long indexer outage; launches themselves are always rediscovered from their accounts.
+- **Burner wallet.** Wallet modal → "More options" → Burner Wallet. The key lives in the browser's local
+  storage (clear site data for a fresh one) and is for test clusters only; "Get test SOL" airdrops to it.
+- **Phantom on localnet** shows stale balances or "blockhash not found" after a chain reset: switch its
+  network away and back to the custom `http://127.0.0.1:8899` RPC.
+- **Agent doesn't trade.** `GET :8788/status` gives the reason per launch: inside the EMA band, cost-basis
+  rule, window budget exhausted, cooldown, or a trade below `MIN_TRADE_LAMPORTS`.
+- **429 from the indexer.** Raise `RATE_LIMIT_PER_MIN` / `UPLOAD_LIMIT_PER_MIN` (everything on one machine
+  shares the 127.0.0.1 budget).
 
 ## Deploy to devnet / mainnet
 
 1. `CLUSTER=devnet bash scripts/deploy.sh` — creates `.devnet/admin.json` on first run; fund it (~4 SOL) and re-run. The admin is the upgrade authority (required to initialize).
 2. `RPC_URL=https://api.devnet.solana.com KEYS_DIR=.devnet PROFILE=production pnpm setup:localnet` (hourly agent windows, 30-min EMA).
-3. Run indexer + agent against the cluster (`RPC_URL`, `WS_URL`, `AGENT_KEYPAIR=.devnet/agent.json`), use a dedicated RPC (Helius/Triton) for `onLogs` + `getProgramAccounts`.
-4. Build the web with `NEXT_PUBLIC_CLUSTER=devnet NEXT_PUBLIC_RPC_URL=… NEXT_PUBLIC_INDEXER_URL=… NEXT_PUBLIC_AGENT_URL=…`.
+3. Run indexer + agent against the cluster (`RPC_URL`, `WS_URL`, `AGENT_KEYPAIR=.devnet/agent.json`, and for the indexer a public `PUBLIC_URL`, plus `TRUST_PROXY=1` behind a reverse proxy); use a dedicated RPC (Helius/Triton) for `logsSubscribe` + `getProgramAccounts`. `pnpm preflight` checks the RPC, program and platform before you start.
+4. Build the web with `NEXT_PUBLIC_CLUSTER=devnet NEXT_PUBLIC_RPC_URL=… NEXT_PUBLIC_INDEXER_URL=… NEXT_PUBLIC_AGENT_URL=… NEXT_PUBLIC_SITE_URL=…`.
 5. Before mainnet: external audit, move `admin` to a Squads multisig (`propose_admin` → `accept_admin`), transfer the program upgrade authority to the multisig, keep low `raise_max` caps during beta, and store uploads on Arweave/IPFS instead of the indexer disk.

@@ -14,7 +14,6 @@ import {
   TrendingUp,
   Users,
 } from "lucide-react";
-import { motion } from "motion/react";
 import type { ReactNode } from "react";
 import { usePlatform } from "@/lib/queries";
 import { ButtonLink } from "../ui/button";
@@ -183,13 +182,9 @@ export function HowItWorks() {
   return (
     <div className="grid grid-cols-1 gap-16 pb-8">
       <section className="pt-6 text-center">
-        <motion.h1
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mx-auto max-w-3xl text-4xl font-semibold tracking-[-0.03em] text-balance sm:text-6xl"
-        >
+        <h1 className="animate-in mx-auto max-w-3xl text-4xl font-semibold tracking-[-0.03em] text-balance sm:text-6xl">
           A launchpad where the <span className="text-lime">bundle works for the market</span>
-        </motion.h1>
+        </h1>
         <p className="mx-auto mt-5 max-w-2xl text-lg text-muted text-pretty">
           Backers fund a bundle that is locked forever in an on-chain vault. Agents trade it inside hard limits to
           soften dumps and rallies. Backers earn a share of every trade.
@@ -202,14 +197,7 @@ export function HowItWorks() {
         </h2>
         <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {steps.map((s, i) => (
-            <motion.li
-              key={s.title}
-              initial={{ opacity: 0, y: 14 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: "-40px" }}
-              transition={{ delay: i * 0.05 }}
-              className="card p-5 sm:p-6"
-            >
+            <li key={s.title} className="card animate-in p-5 sm:p-6">
               <div className="flex items-center justify-between">
                 <span className="grid size-10 place-items-center rounded-xl border border-line bg-white/[0.04] text-lime">
                   <s.icon className="size-5" aria-hidden />
@@ -218,7 +206,7 @@ export function HowItWorks() {
               </div>
               <h3 className="mt-4 text-lg font-semibold">{s.title}</h3>
               <p className="mt-1.5 text-sm leading-relaxed text-muted">{s.body}</p>
-            </motion.li>
+            </li>
           ))}
         </ol>
       </section>
@@ -229,20 +217,23 @@ export function HowItWorks() {
         </h2>
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-sm">
+            <table className="w-full text-sm">
               <thead className="border-b border-line">
                 <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-dim">
                   <th className="px-5 py-3">Party</th>
                   <th className="px-5 py-3">Gets</th>
-                  <th className="px-5 py-3">How</th>
+                  <th className="hidden px-5 py-3 sm:table-cell">How</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
                 {split.map((r) => (
                   <tr key={r.who}>
-                    <td className={`px-5 py-4 font-semibold ${r.tone}`}>{r.who}</td>
-                    <td className="px-5 py-4 font-medium tabular-nums">{r.gets}</td>
-                    <td className="px-5 py-4 text-muted">{r.how}</td>
+                    <td className={`px-5 py-4 align-top font-semibold ${r.tone}`}>{r.who}</td>
+                    <td className="px-5 py-4">
+                      <span className="font-medium">{r.gets}</span>
+                      <span className="mt-1 block text-xs text-muted sm:hidden">{r.how}</span>
+                    </td>
+                    <td className="hidden px-5 py-4 text-muted sm:table-cell">{r.how}</td>
                   </tr>
                 ))}
               </tbody>

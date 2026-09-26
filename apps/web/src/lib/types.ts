@@ -216,6 +216,10 @@ export interface AgentStatus {
   decisions: AgentDecision[];
 }
 
-export type WsMessage = { type: "event"; event: ActivityEvent } | { type: "launch"; launch: LaunchSummary };
+export type WsMessage =
+  | { type: "event"; event: ActivityEvent }
+  | { type: "launch"; launch: LaunchSummary }
+  /** The indexer rebuilt its index after a chain reset; everything cached is stale. */
+  | { type: "reset"; genesisHash: string };
 
 export type { LaunchStatus };

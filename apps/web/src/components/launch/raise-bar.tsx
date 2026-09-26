@@ -1,6 +1,3 @@
-"use client";
-
-import { motion } from "motion/react";
 import { pctOf } from "@/lib/format";
 import { cn } from "../ui/cn";
 
@@ -36,15 +33,13 @@ export function RaiseBar({
         className,
       )}
     >
-      <motion.div
+      <div
         className={cn(
-          "absolute inset-y-0 left-0 rounded-full",
+          "absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out",
           failed ? "bg-down/70" : minMet ? "bg-lime" : "bg-gradient-brand",
           size === "lg" && !failed && "shadow-[0_0_24px_-2px_rgb(198_255_61/0.45)]",
         )}
-        initial={{ width: 0 }}
-        animate={{ width: `${Math.min(100, fill)}%` }}
-        transition={{ type: "spring", stiffness: 60, damping: 18 }}
+        style={{ width: `${Math.min(100, fill)}%` }}
       />
       {minAt > 0 && minAt < 100 ? (
         <div

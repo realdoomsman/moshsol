@@ -2,7 +2,6 @@
 
 import { lamportsToSol, timeAgo } from "@moshsol/sdk";
 import { ArrowRight, Bot, Coins, Lock } from "lucide-react";
-import { motion } from "motion/react";
 import Link from "next/link";
 import { fmtSolValue } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
@@ -114,7 +113,7 @@ export function Hero() {
 
   return (
     <section className="relative grid items-center gap-10 pt-8 pb-10 lg:grid-cols-[1.15fr_1fr] lg:gap-14 lg:pt-14 lg:pb-14">
-      <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+      <div className="animate-in">
         <div className="inline-flex items-center gap-2 rounded-full border border-line bg-white/[0.04] py-1 pr-3 pl-1 text-xs font-medium text-muted">
           <span className="rounded-full bg-gradient-brand px-2 py-0.5 text-[11px] font-bold text-black">NEW</span>
           Bundle-locked launches on Solana
@@ -144,14 +143,10 @@ export function Hero() {
             </li>
           ))}
         </ul>
-      </motion.div>
-      <motion.div
-        initial={{ opacity: 0, y: 18, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.6, delay: 0.1 }}
-      >
+      </div>
+      <div className="animate-in [animation-delay:60ms]">
         <VaultPanel />
-      </motion.div>
+      </div>
     </section>
   );
 }

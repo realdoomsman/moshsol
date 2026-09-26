@@ -5,6 +5,8 @@
   "scripts": {
     "setup": "tsx src/setup.ts",
     "seed": "tsx src/seed.ts",
+    "simulate": "tsx src/simulate.ts",
+    "preflight": "tsx src/preflight.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

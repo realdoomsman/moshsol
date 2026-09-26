@@ -15,6 +15,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type { ActivityDbRow, EventDbRow, MetaUpdate, Store } from "./db";
 import type { HolderSet, Holders } from "./holders";
 import type { Hub } from "./hub";
+import { LogsStream } from "./logs-stream";
 import { UnfetchableUriError, loadMetadata } from "./metadata";
 import { summaryOf } from "./summaries";
 import type { ActivityEvent } from "./types";
@@ -22,12 +23,25 @@ import type { ActivityEvent } from "./types";
 export interface SyncOptions {
   pollMs: number;
   fullRefreshMs: number;
+  chainCheckMs: number;
   holdersTtlMs: number;
   publicUrl: string;
   filesDir: string;
+  wsUrl: string;
+}
+
+export interface SyncHealth {
+  ok: boolean;
+  slot: number | null;
+  lastIndexedSlot: number;
+  lagSlots: number | null;
+  wsConnected: boolean;
+  genesisHash: string | null;
+  error?: string;
 }
 
 const SIG_PAGE = 1_000;
+const HEALTH_RPC_TIMEOUT_MS = 3_000;
 const META_MAX_ATTEMPTS = 5;
 const NO_META: MetaUpdate = {
   status: "none",
@@ -40,6 +54,10 @@ const NO_META: MetaUpdate = {
   website: null,
   whitelist: null,
 };
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 export function activityFromRow(r: ActivityDbRow): ActivityEvent {
   const ev: ActivityEvent = {
@@ -63,7 +81,9 @@ export function activityFromRow(r: ActivityDbRow): ActivityEvent {
 /**
  * Chain → SQLite sync:
  * - signature backfill/poller (`getSignaturesForAddress` down to the persisted cursor, oldest→newest),
- * - live `onLogs` at `confirmed`, parsed straight from the logs,
+ * - live `logsSubscribe` over a reconnecting websocket, parsed straight from the logs,
+ * - chain identity checks (genesis hash, program id, cursor still on chain) that wipe and re-index
+ *   after a cluster reset,
  * - launch account snapshots after every touching event plus a periodic full refresh,
  * - metadata fetches and holder counts.
  * All transaction processing runs on one serial queue, so event rows are written in chain order
@@ -75,8 +95,18 @@ export class ChainSync {
   private queue: Promise<void> = Promise.resolve();
   private pollQueued = false;
   private timers: NodeJS.Timeout[] = [];
-  private logsSub: number | null = null;
+  private stream: LogsStream | null = null;
   private stopped = false;
+  /** Chain identity confirmed since the last RPC failure / websocket reconnect; live logs wait for it. */
+  private verified = false;
+  private verifiedAt = 0;
+  private genesisHash: string | null;
+  private backfilled = false;
+  private announceReset = false;
+  /** Bumped by every wipe so in-flight account refreshes from before it are discarded. */
+  private epoch = 0;
+  /** Current sync outage: logged when it starts and when it ends, not on every retry. */
+  private outage: { since: number; error: string } | null = null;
   private readonly refreshing = new Map<string, Promise<void>>();
   private readonly refreshAgain = new Set<string>();
   private readonly metaInflight = new Set<string>();
@@ -93,52 +123,48 @@ export class ChainSync {
   ) {
     this.connection = client.connection;
     this.launchDisc = client.program.coder.accounts.memcmp("launch") as { offset: number; bytes: string };
+    this.genesisHash = store.getState("genesis");
   }
 
+  /** Highest slot through which every program transaction is indexed. */
   get lastIndexedSlot(): number {
     return Number(this.store.getState("last_slot") ?? 0);
   }
 
-  async start(): Promise<void> {
-    const genesis = await this.connection.getGenesisHash();
-    const programId = this.client.programId.toBase58();
-    const prevGenesis = this.store.getState("genesis");
-    const prevProgram = this.store.getState("program_id");
-    if ((prevGenesis && prevGenesis !== genesis) || (prevProgram && prevProgram !== programId)) {
-      this.log.warn({ prevGenesis, genesis, prevProgram, programId }, "cluster or program changed; wiping index");
-      this.store.wipe();
-    }
-    this.store.setState("genesis", genesis);
-    this.store.setState("program_id", programId);
-
-    const counts = this.store.counts();
-    this.log.info({ ...counts, cursor: this.store.getState("cursor") }, "resuming sync");
-
-    // Backfill first; live notifications queue behind it and dedupe by signature.
-    const backfill = this.enqueue(() => this.syncSignatures());
-    this.logsSub = this.connection.onLogs(
-      this.client.programId,
-      (logs, ctx) => {
-        void this.enqueue(async () => {
-          if (this.store.hasTx(logs.signature)) return;
-          if (logs.err) {
-            this.store.markTx(logs.signature, ctx.slot, true, 0);
-            return;
-          }
-          await this.processTx(logs.signature, ctx.slot, logs.logs);
-        });
-      },
-      "confirmed",
+  /** Starts the logs stream, the poller (its first run is the backfill) and periodic account refreshes. */
+  start(): void {
+    this.log.info(
+      { ...this.store.counts(), cursor: this.store.getState("cursor"), lastIndexedSlot: this.lastIndexedSlot },
+      "resuming sync",
     );
-    await backfill;
-    await this.fullRefresh().catch((err: unknown) => this.log.error({ err }, "initial full refresh failed"));
-    this.log.info(this.store.counts(), "backfill complete");
-
+    this.stream = new LogsStream(
+      this.opts.wsUrl,
+      this.client.programId.toBase58(),
+      {
+        onLogs: (n) => {
+          void this.enqueue(async () => {
+            // Unverified: the DB may still belong to a previous chain; the poller picks these up after the check.
+            if (!this.verified || this.store.hasTx(n.signature)) return;
+            if (n.err) {
+              this.store.markTx(n.signature, n.slot, true, 0);
+              return;
+            }
+            await this.processTx(n.signature, n.slot, n.logs);
+          });
+        },
+        onSubscribed: () => {
+          // A (re)subscription usually follows a validator restart: re-verify the chain and fill the gap now.
+          this.verified = false;
+          this.poll();
+        },
+      },
+      this.log,
+    );
+    this.stream.start();
+    this.poll();
     this.timers.push(
       setInterval(() => this.poll(), this.opts.pollMs),
-      setInterval(() => {
-        this.fullRefresh().catch((err: unknown) => this.log.error({ err }, "full refresh failed"));
-      }, this.opts.fullRefreshMs),
+      setInterval(() => void this.refreshAll(), this.opts.fullRefreshMs),
     );
   }
 
@@ -146,11 +172,26 @@ export class ChainSync {
     this.stopped = true;
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
-    if (this.logsSub !== null) {
-      await this.connection.removeOnLogsListener(this.logsSub).catch(() => undefined);
-      this.logsSub = null;
-    }
+    this.stream?.close();
+    this.stream = null;
     await this.queue;
+  }
+
+  async health(): Promise<SyncHealth> {
+    const lastIndexedSlot = this.lastIndexedSlot;
+    const base = { lastIndexedSlot, wsConnected: this.stream?.subscribed ?? false, genesisHash: this.genesisHash };
+    const { promise: timeout, reject } = Promise.withResolvers<never>();
+    const timer = setTimeout(() => reject(new Error(`no answer within ${HEALTH_RPC_TIMEOUT_MS}ms`)), HEALTH_RPC_TIMEOUT_MS);
+    try {
+      const slot = await Promise.race([this.connection.getSlot("confirmed"), timeout]);
+      const ok = this.verified && this.backfilled;
+      const error = ok ? undefined : this.outage ? `sync failing: ${this.outage.error}` : "initial sync in progress";
+      return { ok, slot, lagSlots: Math.max(0, slot - lastIndexedSlot), ...base, ...(error ? { error } : {}) };
+    } catch (err) {
+      return { ok: false, slot: null, lagSlots: null, ...base, error: `rpc unreachable: ${errorText(err)}` };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Serializes chain processing; a failing job is logged and never blocks later jobs. */
@@ -172,30 +213,143 @@ export class ChainSync {
     this.pollQueued = true;
     void this.enqueue(async () => {
       this.pollQueued = false;
-      await this.syncSignatures();
+      try {
+        if (!this.verified || Date.now() - this.verifiedAt >= this.opts.chainCheckMs) await this.verifyChain();
+        // Everything confirmed up to `through` is returned by the scan below.
+        const through = await this.connection.getSlot("confirmed");
+        if (await this.syncSignatures()) {
+          if (through > this.lastIndexedSlot) this.store.setState("last_slot", String(through));
+        }
+        if (!this.backfilled && !this.stopped) {
+          await this.fullRefresh();
+          this.backfilled = true;
+          this.log.info({ ...this.store.counts(), lastIndexedSlot: this.lastIndexedSlot }, "backfill complete");
+          if (this.announceReset) {
+            this.announceReset = false;
+            this.hub.broadcast({ type: "reset", genesisHash: this.genesisHash ?? "" });
+          }
+        }
+        this.recovered();
+      } catch (err) {
+        this.failed(err);
+      }
     });
+  }
+
+  private async refreshAll(): Promise<void> {
+    if (!this.verified || !this.backfilled) return;
+    try {
+      await this.fullRefresh();
+    } catch (err) {
+      this.failed(err);
+    }
+  }
+
+  /** Logs the first failure of an outage (and later changes of error at debug), then stays quiet until recovery. */
+  private failed(err: unknown): void {
+    this.verified = false;
+    const error = errorText(err);
+    if (!this.outage) {
+      this.outage = { since: Date.now(), error };
+      this.log.warn({ error }, "sync failing; retrying every poll");
+    } else if (this.outage.error !== error) {
+      this.outage.error = error;
+      this.log.debug({ error }, "sync still failing");
+    }
+  }
+
+  private recovered(): void {
+    if (!this.outage) return;
+    this.log.info({ downMs: Date.now() - this.outage.since, lastIndexedSlot: this.lastIndexedSlot }, "sync recovered");
+    this.outage = null;
+  }
+
+  // ---------------- chain identity ----------------
+
+  /**
+   * Wipes and re-indexes when the DB belongs to another chain: genesis hash or program id changed
+   * (e.g. `solana-test-validator --reset`), or the stored cursor is unknown to the node although it is
+   * inside the node's retained history.
+   */
+  private async verifyChain(): Promise<void> {
+    const genesis = await this.connection.getGenesisHash();
+    const programId = this.client.programId.toBase58();
+    const prevGenesis = this.store.getState("genesis");
+    const prevProgram = this.store.getState("program_id");
+    if (prevGenesis && prevGenesis !== genesis) this.reset("genesis hash changed", { prevGenesis, genesis });
+    else if (prevProgram && prevProgram !== programId) this.reset("program id changed", { prevProgram, programId });
+    else await this.reconcileCursor();
+    this.store.setState("genesis", genesis);
+    this.store.setState("program_id", programId);
+    this.genesisHash = genesis;
+    this.verified = true;
+    this.verifiedAt = Date.now();
+  }
+
+  /**
+   * The cursor must still exist on chain. Below the node's first available block it was merely pruned
+   * (short localnet ledgers): drop it and rescan the retained history (deduped by signature). Inside
+   * retained history but unknown means a different chain or a dropped fork: rebuild the index.
+   */
+  private async reconcileCursor(): Promise<void> {
+    const cursor = this.store.getState("cursor");
+    if (!cursor) return;
+    const { value } = await this.connection.getSignatureStatuses([cursor], { searchTransactionHistory: true });
+    if (value[0]) return;
+    const cursorSlot = this.store.txSlot(cursor) ?? 0;
+    const firstAvailable = await this.connection.getFirstAvailableBlock();
+    if (cursorSlot < firstAvailable) {
+      this.log.info({ cursorSlot, firstAvailable }, "cursor pruned from node history; rescanning retained history");
+      this.store.deleteState("cursor");
+    } else {
+      this.reset("cursor signature not found on chain", { cursor, cursorSlot, firstAvailable });
+    }
+  }
+
+  private reset(reason: string, details: Record<string, unknown>): void {
+    this.log.warn({ reason, ...details, dropped: this.store.counts() }, "chain reset detected; wiping index and re-indexing");
+    this.store.wipe();
+    this.holders.clear();
+    this.platform = null;
+    this.epoch += 1;
+    this.backfilled = false;
+    this.announceReset = true;
   }
 
   // ---------------- signature backfill / poller ----------------
 
-  private async syncSignatures(): Promise<void> {
-    const cursor = this.store.getState("cursor") ?? undefined;
+  private async signaturesSince(until: string | undefined): Promise<ConfirmedSignatureInfo[]> {
     const found: ConfirmedSignatureInfo[] = [];
     let before: string | undefined;
     for (;;) {
       const page = await this.connection.getSignaturesForAddress(
         this.client.programId,
-        { before, until: cursor, limit: SIG_PAGE },
+        { before, until, limit: SIG_PAGE },
         "confirmed",
       );
       found.push(...page);
-      if (page.length < SIG_PAGE) break;
+      if (page.length < SIG_PAGE) return found;
       before = page[page.length - 1]!.signature;
     }
-    if (found.length === 0) return;
+  }
+
+  /** Indexes every program signature newer than the cursor; false if it stopped early (retry next poll). */
+  private async syncSignatures(): Promise<boolean> {
+    const cursor = this.store.getState("cursor") ?? undefined;
+    let found: ConfirmedSignatureInfo[];
+    try {
+      found = await this.signaturesSince(cursor);
+    } catch (err) {
+      // The node rejects an `until` it no longer knows (pruned or different chain).
+      if (!cursor || !errorText(err).includes(cursor)) throw err;
+      await this.reconcileCursor();
+      found = await this.signaturesSince(this.store.getState("cursor") ?? undefined);
+    }
+    if (found.length === 0) return true;
 
     let fetched = 0;
     for (const info of found.reverse()) {
+      if (this.stopped) return false;
       if (!this.store.hasTx(info.signature)) {
         if (info.err) {
           this.store.markTx(info.signature, info.slot, true, 0);
@@ -205,7 +359,7 @@ export class ChainSync {
             maxSupportedTransactionVersion: 0,
           });
           // Not visible yet: keep the cursor here and retry on the next poll.
-          if (!tx) return;
+          if (!tx) return false;
           fetched++;
           if (tx.meta?.err) this.store.markTx(info.signature, tx.slot, true, 0);
           else await this.processTx(info.signature, tx.slot, tx.meta?.logMessages ?? []);
@@ -213,7 +367,10 @@ export class ChainSync {
       }
       this.store.setState("cursor", info.signature);
     }
-    if (fetched > 0) this.log.info({ fetched, scanned: found.length }, "signature sync caught up");
+    // Small catch-ups are routine while the websocket is down; only real backfills are worth an info line.
+    if (fetched >= 20) this.log.info({ fetched, scanned: found.length }, "signature sync caught up");
+    else if (fetched > 0) this.log.debug({ fetched, scanned: found.length }, "signature sync caught up");
+    return true;
   }
 
   // ---------------- transaction / event processing ----------------
@@ -402,11 +559,12 @@ export class ChainSync {
         do {
           this.refreshAgain.delete(address);
           const key = new PublicKey(address);
+          const epoch = this.epoch;
           const res = await this.client.program.account.launch.fetchNullableAndContext(key, "confirmed");
-          if (res.data) await this.applySnapshot(key, res.data, res.context.slot);
+          if (res.data) await this.applySnapshot(key, res.data, res.context.slot, epoch);
         } while (this.refreshAgain.has(address) && !this.stopped);
       } catch (err) {
-        this.log.error({ err, address }, "launch refresh failed");
+        this.log.warn({ address, error: errorText(err) }, "launch refresh failed");
       } finally {
         this.refreshing.delete(address);
       }
@@ -415,8 +573,12 @@ export class ChainSync {
     return p;
   }
 
-  /** Upserts a snapshot if it is at least as new as the stored one; broadcasts on change. */
-  private async applySnapshot(key: PublicKey, account: LaunchAccount, slot: number): Promise<void> {
+  /**
+   * Upserts a snapshot if it is at least as new as the stored one; broadcasts on change. Dropped when
+   * the index was wiped (`epoch` moved) after the account was fetched.
+   */
+  private async applySnapshot(key: PublicKey, account: LaunchAccount, slot: number, epoch: number): Promise<void> {
+    if (epoch !== this.epoch) return;
     const address = key.toBase58();
     if (!this.store.launch(address)) {
       // Discovered from the account (its `launchCreated` is not in our history): use on-mint metadata.
@@ -424,6 +586,7 @@ export class ChainSync {
         this.log.warn({ err, address }, "token metadata fetch failed");
         return null;
       });
+      if (epoch !== this.epoch) return;
       this.store.insertLaunch({
         address,
         mint: account.mint.toBase58(),
@@ -468,6 +631,7 @@ export class ChainSync {
 
   /** All launch accounts in one getProgramAccounts call, plus platform, metadata retries and holder counts. */
   private async fullRefresh(): Promise<void> {
+    const epoch = this.epoch;
     const res = await this.connection.getProgramAccounts(this.client.programId, {
       commitment: "confirmed",
       withContext: true,
@@ -475,7 +639,7 @@ export class ChainSync {
     });
     for (const { pubkey, account } of res.value) {
       const decoded = this.client.program.coder.accounts.decode<LaunchAccount>("launch", account.data);
-      await this.applySnapshot(pubkey, decoded, res.context.slot);
+      await this.applySnapshot(pubkey, decoded, res.context.slot, epoch);
     }
     this.platform = await this.client.fetchPlatform();
     for (const row of this.store.launchesWithMetaDue(Date.now(), META_MAX_ATTEMPTS)) void this.fetchMetadata(row.address);

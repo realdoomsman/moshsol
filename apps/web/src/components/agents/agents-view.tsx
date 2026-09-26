@@ -26,8 +26,6 @@ import { cn } from "../ui/cn";
 import { AddressLink, AnimatedNumber, TokenAvatar } from "../ui/interactive";
 import { Badge, Card, CardHeader, EmptyState, Meter, Skeleton } from "../ui/primitives";
 
-const th = "px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-dim first:pl-5 last:pr-5";
-const td = "px-3 py-3 first:pl-5 last:pr-5";
 const pct = (bps: number) => `${bps / 100}%`;
 
 function Rule({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
@@ -100,22 +98,24 @@ function Rules() {
   );
 }
 
-function BandMini({ r }: { r: AgentLaunchRow }) {
+function BandMini({ r, wide }: { r: AgentLaunchRow; wide?: boolean }) {
   const lo = Math.min(r.bandLowSol, r.priceSol) * 0.97;
   const hi = Math.max(r.bandHighSol, r.priceSol) * 1.03;
   const at = (v: number) => `${Math.min(100, Math.max(0, ((v - lo) / (hi - lo || 1)) * 100))}%`;
   const zone = r.priceSol <= r.bandLowSol ? "buy zone" : r.priceSol >= r.bandHighSol ? "sell zone" : "in band";
   return (
-    <div className="w-40">
+    <div className={wide ? "w-full" : "w-40"}>
       <div className="relative h-1.5 rounded-full bg-white/[0.07]">
-        <div className="absolute inset-y-0 left-0 rounded-l-full bg-cyan/40" style={{ width: at(r.bandLowSol) }} />
-        <div className="absolute inset-y-0 right-0 rounded-r-full bg-violet/45" style={{ left: at(r.bandHighSol) }} />
+        <div className="absolute inset-y-0 left-0 rounded-l-full bg-lime/35" style={{ width: at(r.bandLowSol) }} />
+        <div className="absolute inset-y-0 right-0 rounded-r-full bg-pink/40" style={{ left: at(r.bandHighSol) }} />
         <div
-          className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-bg bg-lime"
+          className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-bg bg-white"
           style={{ left: at(r.priceSol) }}
         />
       </div>
-      <div className="mt-1.5 text-[11px] text-dim">{zone}</div>
+      <div className="mt-1.5 text-[11px] text-dim">
+        {zone} · spot {fmtPrice(r.priceSol)}
+      </div>
     </div>
   );
 }
@@ -128,7 +128,14 @@ function LaunchWindows() {
   const rows = data?.launches ?? [];
   return (
     <Card className="overflow-hidden">
-      <CardHeader title="Live vaults · window usage & bands" icon={<Activity className="size-3.5 text-lime" aria-hidden />} />
+      <CardHeader
+        title={
+          <>
+            Live vaults<span className="hidden sm:inline">{" · window usage & bands"}</span>
+          </>
+        }
+        icon={<Activity className="size-3.5 text-lime" aria-hidden />}
+      />
       {isLoading ? (
         <div className="grid gap-2 px-5 pb-5">
           {[0, 1, 2].map((i) => (
@@ -140,68 +147,107 @@ function LaunchWindows() {
           Vaults appear here as soon as a launch goes live.
         </EmptyState>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-[13px]">
-            <thead className="border-y border-line">
-              <tr>
-                <th className={th}>Launch</th>
-                <th className={cn(th, "text-right")}>Vault</th>
-                <th className={th}>Price vs band</th>
-                <th className={th}>Buy budget</th>
-                <th className={th}>Sell budget</th>
-                <th className={cn(th, "text-right")}>Trades</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {rows.map((r) => {
-                const rolled = windowSecs > 0 && now >= r.windowStart + windowSecs;
-                return (
-                  <tr key={r.mint} className="hover:bg-white/[0.02]">
-                    <td className={td}>
-                      <Link href={`/launch/${r.mint}`} className="group flex items-center gap-3">
-                        <TokenAvatar src={r.image} symbol={r.symbol} size={32} />
-                        <span>
-                          <span className="block font-semibold group-hover:text-lime">{r.name}</span>
-                          <span className="block text-xs text-dim">${r.symbol}</span>
-                        </span>
-                      </Link>
-                    </td>
-                    <td className={cn(td, "text-right tabular-nums")}>
+        <>
+          <ul className="divide-y divide-line border-t border-line md:hidden">
+            {rows.map((r) => {
+              const rolled = windowSecs > 0 && now >= r.windowStart + windowSecs;
+              return (
+                <li key={r.mint} className="grid gap-3 px-5 py-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <Link href={`/launch/${r.mint}`} className="group flex min-w-0 items-center gap-3">
+                      <TokenAvatar src={r.image} symbol={r.symbol} size={36} />
+                      <span className="min-w-0">
+                        <span className="block truncate font-semibold group-hover:text-lime">{r.name}</span>
+                        <span className="block text-xs text-dim">${r.symbol}</span>
+                      </span>
+                    </Link>
+                    <div className="text-right text-[13px]">
                       <div className="font-medium">{fmtLamports(r.vaultSol)} SOL</div>
                       <div className="text-xs text-dim">{fmtTokens(r.vaultTokens)} tokens</div>
-                    </td>
-                    <td className={td}>
-                      <BandMini r={r} />
-                    </td>
-                    <td className={td}>
-                      <div className="w-36">
-                        <Meter value={rolled ? 0 : pctOf(r.windowSolSpent, r.windowBuyCap)} tone="up" label="Buy budget used" />
-                        <div className="mt-1.5 text-[11px] text-dim tabular-nums">
-                          {rolled ? "0" : fmtLamports(r.windowSolSpent)} / {fmtLamports(r.windowBuyCap)} SOL
-                        </div>
+                    </div>
+                  </div>
+                  <BandMini r={r} wide />
+                  <div className="grid grid-cols-2 gap-4 text-[11px] text-dim">
+                    <div>
+                      <Meter value={rolled ? 0 : pctOf(r.windowSolSpent, r.windowBuyCap)} tone="lime" label="Buy budget used" />
+                      <div className="mt-1.5">
+                        buy {rolled ? "0" : fmtLamports(r.windowSolSpent)} / {fmtLamports(r.windowBuyCap)} SOL
                       </div>
-                    </td>
-                    <td className={td}>
-                      <div className="w-36">
-                        <Meter
-                          value={rolled ? 0 : pctOf(r.windowTokensSold, r.windowSellCap)}
-                          tone="violet"
-                          label="Sell budget used"
-                        />
-                        <div className="mt-1.5 text-[11px] text-dim tabular-nums">
-                          {rolled ? "0" : fmtTokens(r.windowTokensSold)} / {fmtTokens(r.windowSellCap)}
-                        </div>
+                    </div>
+                    <div>
+                      <Meter value={rolled ? 0 : pctOf(r.windowTokensSold, r.windowSellCap)} tone="pink" label="Sell budget used" />
+                      <div className="mt-1.5">
+                        sell {rolled ? "0" : fmtTokens(r.windowTokensSold)} / {fmtTokens(r.windowSellCap)}
                       </div>
-                    </td>
-                    <td className={cn(td, "text-right tabular-nums")}>
-                      <span className="text-up">{r.agentBuys}</span> / <span className="text-down">{r.agentSells}</span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Launch</th>
+                  <th className="text-right">Vault</th>
+                  <th>Price vs band</th>
+                  <th>Buy budget</th>
+                  <th>Sell budget</th>
+                  <th className="text-right">Buys / sells</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const rolled = windowSecs > 0 && now >= r.windowStart + windowSecs;
+                  return (
+                    <tr key={r.mint}>
+                      <td>
+                        <Link href={`/launch/${r.mint}`} className="group flex items-center gap-3">
+                          <TokenAvatar src={r.image} symbol={r.symbol} size={32} />
+                          <span>
+                            <span className="block font-semibold group-hover:text-lime">{r.name}</span>
+                            <span className="block text-xs text-dim">${r.symbol}</span>
+                          </span>
+                        </Link>
+                      </td>
+                      <td className="text-right">
+                        <div className="font-medium">{fmtLamports(r.vaultSol)} SOL</div>
+                        <div className="text-xs text-dim">{fmtTokens(r.vaultTokens)} tokens</div>
+                      </td>
+                      <td>
+                        <BandMini r={r} />
+                      </td>
+                      <td>
+                        <div className="w-36">
+                          <Meter value={rolled ? 0 : pctOf(r.windowSolSpent, r.windowBuyCap)} tone="lime" label="Buy budget used" />
+                          <div className="mt-1.5 text-[11px] text-dim">
+                            {rolled ? "0" : fmtLamports(r.windowSolSpent)} / {fmtLamports(r.windowBuyCap)} SOL
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="w-36">
+                          <Meter
+                            value={rolled ? 0 : pctOf(r.windowTokensSold, r.windowSellCap)}
+                            tone="pink"
+                            label="Sell budget used"
+                          />
+                          <div className="mt-1.5 text-[11px] text-dim">
+                            {rolled ? "0" : fmtTokens(r.windowTokensSold)} / {fmtTokens(r.windowSellCap)}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="text-right">
+                        <span className="text-up">{r.agentBuys}</span> / <span className="text-down">{r.agentSells}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </Card>
   );
@@ -210,7 +256,7 @@ function LaunchWindows() {
 function RecentTrades() {
   const { data, isLoading } = useAgents();
   const now = useNow(5_000);
-  const rows = (data?.recent ?? []).slice(0, 20);
+  const rows = data?.recent ?? [];
   return (
     <Card className="overflow-hidden">
       <CardHeader title="Recent agent trades" icon={<Bot className="size-3.5 text-cyan" aria-hidden />} />
@@ -225,36 +271,36 @@ function RecentTrades() {
           Agents stay idle while prices sit inside their bands.
         </EmptyState>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-[13px]">
-            <thead className="border-y border-line">
+        <div className="max-h-[480px] overflow-auto overscroll-contain border-t border-line">
+          <table className="data-table">
+            <thead>
               <tr>
-                <th className={th}>Time</th>
-                <th className={th}>Launch</th>
-                <th className={th}>Side</th>
-                <th className={cn(th, "text-right")}>SOL</th>
-                <th className={cn(th, "text-right")}>Price</th>
-                <th className={cn(th, "text-right")}>Tx</th>
+                <th>Time</th>
+                <th>Launch</th>
+                <th>Side</th>
+                <th className="text-right">SOL</th>
+                <th className="hidden text-right sm:table-cell">Price</th>
+                <th className="hidden text-right sm:table-cell">Tx</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line">
+            <tbody>
               {rows.map((t) => (
-                <tr key={t.signature} className="hover:bg-white/[0.02]">
-                  <td className={cn(td, "whitespace-nowrap text-dim tabular-nums")}>{timeAgo(t.timestamp, now)}</td>
-                  <td className={td}>
+                <tr key={`${t.signature}:${t.mint}`}>
+                  <td className="whitespace-nowrap text-dim">{timeAgo(t.timestamp, now)}</td>
+                  <td>
                     <Link href={`/launch/${t.mint}`} className="font-semibold hover:text-lime">
                       ${t.symbol}
                     </Link>
                   </td>
-                  <td className={td}>
-                    <span className={cn("inline-flex items-center gap-1 font-semibold", t.isBuy ? "text-up" : "text-down")}>
+                  <td>
+                    <span className={cn("inline-flex items-center gap-1 font-semibold whitespace-nowrap", t.isBuy ? "text-up" : "text-down")}>
                       {t.isBuy ? <ArrowDownRight className="size-3.5" aria-hidden /> : <ArrowUpRight className="size-3.5" aria-hidden />}
                       {t.isBuy ? "Bought dip" : "Sold rally"}
                     </span>
                   </td>
-                  <td className={cn(td, "text-right tabular-nums")}>{fmtLamports(t.solAmount)}</td>
-                  <td className={cn(td, "text-right tabular-nums text-muted")}>{fmtPrice(t.priceSol)}</td>
-                  <td className={cn(td, "text-right")}>
+                  <td className="text-right">{fmtLamports(t.solAmount)}</td>
+                  <td className="hidden text-right text-muted sm:table-cell">{fmtPrice(t.priceSol)}</td>
+                  <td className="hidden text-right sm:table-cell">
                     <a href={explorerTx(t.signature)} target="_blank" rel="noreferrer" className="font-mono text-xs text-muted hover:text-lime">
                       {shortAddr(t.signature, 4)}
                     </a>
@@ -283,7 +329,11 @@ function AgentBrain() {
   return (
     <Card className="overflow-hidden">
       <CardHeader
-        title="Agent brain · live decisions"
+        title={
+          <>
+            Agent brain<span className="hidden sm:inline"> · live decisions</span>
+          </>
+        }
         icon={<BrainCircuit className="size-3.5 text-cyan" aria-hidden />}
         right={
           <span className={cn("inline-flex items-center gap-1.5 text-xs font-semibold", online ? "text-up" : "text-dim")}>

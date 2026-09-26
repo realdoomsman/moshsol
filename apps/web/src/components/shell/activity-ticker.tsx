@@ -14,6 +14,7 @@ function TickerItem({ e }: { e: ActivityEvent }) {
   return (
     <Link
       href={`/launch/${e.mint}`}
+      prefetch={false}
       className="group inline-flex shrink-0 items-center gap-2 rounded-full px-2.5 py-1 text-[12.5px] transition hover:bg-white/[0.05]"
     >
       <TokenAvatar src={e.image} symbol={e.symbol} size={18} />
@@ -44,7 +45,7 @@ export function ActivityTicker() {
           <span className={cn("size-1.5 rounded-full", connected ? "animate-pulse-dot bg-lime text-lime" : "bg-dim")} />
           Live
         </span>
-        <div className="relative min-w-0 flex-1 overflow-hidden [mask-image:linear-gradient(90deg,transparent,#000_4%,#000_96%,transparent)]">
+        <div className="no-scrollbar relative min-w-0 flex-1 overflow-hidden [mask-image:linear-gradient(90deg,transparent,#000_4%,#000_96%,transparent)] motion-reduce:overflow-x-auto">
           {events.length === 0 ? (
             <div className="truncate text-[12.5px] text-dim">
               {isError ? "Indexer unreachable — retrying…" : "Waiting for on-chain activity…"}

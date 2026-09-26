@@ -75,6 +75,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           // A fetch started before the indexer saw the change would overwrite this newer push.
           void qc.cancelQueries({ queryKey: key, exact: true }).then(() => qc.setQueryData<LaunchSummary>(key, launch));
           refreshLists();
+        } else if (msg.type === "reset") {
+          void qc.invalidateQueries();
         }
       };
       ws.onclose = () => {

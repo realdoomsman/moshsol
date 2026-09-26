@@ -61,15 +61,24 @@ export const api = {
     return request<{ launches: LaunchSummary[]; total: number }>(INDEXER_URL, `/api/launches?${qs}`);
   },
   launch: (mint: string) => request<LaunchSummary>(INDEXER_URL, `/api/launches/${mint}`),
-  trades: (mint: string, limit = 100) =>
-    request<{ trades: TradeRow[] }>(INDEXER_URL, `/api/launches/${mint}/trades?limit=${limit}`),
+  /** Newest first; `before` = unix seconds (exclusive), `agent` = vault agent trades only. */
+  trades: (mint: string, p: { limit: number; before?: number; agent?: boolean }) => {
+    const qs = new URLSearchParams({ limit: String(p.limit) });
+    if (p.before !== undefined) qs.set("before", String(p.before));
+    if (p.agent) qs.set("agent", "1");
+    return request<{ trades: TradeRow[] }>(INDEXER_URL, `/api/launches/${mint}/trades?${qs}`);
+  },
   candles: (mint: string, tf: Timeframe) =>
     request<{ candles: Candle[] }>(INDEXER_URL, `/api/launches/${mint}/candles?tf=${tf}`),
   backers: (mint: string) => request<{ backers: BackerRow[] }>(INDEXER_URL, `/api/launches/${mint}/backers`),
-  deposits: (mint: string) =>
-    request<{ deposits: DepositRow[] }>(INDEXER_URL, `/api/launches/${mint}/deposits?limit=50`),
-  holders: (mint: string) =>
-    request<{ holders: HolderRow[] }>(INDEXER_URL, `/api/launches/${mint}/holders?limit=20`),
+  /** Newest first; `before` = unix seconds (exclusive). */
+  deposits: (mint: string, p: { limit: number; before?: number }) => {
+    const qs = new URLSearchParams({ limit: String(p.limit) });
+    if (p.before !== undefined) qs.set("before", String(p.before));
+    return request<{ deposits: DepositRow[] }>(INDEXER_URL, `/api/launches/${mint}/deposits?${qs}`);
+  },
+  holders: (mint: string, limit: number) =>
+    request<{ holders: HolderRow[] }>(INDEXER_URL, `/api/launches/${mint}/holders?limit=${limit}`),
   portfolio: (wallet: string) => request<Portfolio>(INDEXER_URL, `/api/portfolio/${wallet}`),
   activity: (limit = 40) => request<{ events: ActivityEvent[] }>(INDEXER_URL, `/api/activity?limit=${limit}`),
   agents: () => request<AgentsOverview>(INDEXER_URL, "/api/agents"),

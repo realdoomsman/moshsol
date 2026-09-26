@@ -144,11 +144,11 @@ export function Meter({
 }: {
   /** 0–100 */
   value: number;
-  tone?: "lime" | "up" | "down" | "violet";
+  tone?: "lime" | "up" | "down" | "violet" | "pink";
   className?: string;
   label?: string;
 }) {
-  const fill = { lime: "bg-lime", up: "bg-up", down: "bg-down", violet: "bg-violet" }[tone];
+  const fill = { lime: "bg-lime", up: "bg-up", down: "bg-down", violet: "bg-violet", pink: "bg-pink" }[tone];
   return (
     <div
       role="meter"

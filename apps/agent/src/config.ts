@@ -51,7 +51,8 @@ export function loadConfig(): AgentConfig {
     statusHost: process.env.STATUS_HOST?.trim() || "127.0.0.1",
     dryRun: dryRun === "1" || dryRun === "true" || dryRun === "yes",
     cooldownMs: int("COOLDOWN_MS", 15_000, 0, 86_400_000),
-    minTradeLamports: BigInt(int("MIN_TRADE_LAMPORTS", 1_000_000, 1, Number.MAX_SAFE_INTEGER)),
+    // 0.01 SOL: below this a vault trade barely moves price and mostly adds noise to the tape.
+    minTradeLamports: BigInt(int("MIN_TRADE_LAMPORTS", 10_000_000, 1, Number.MAX_SAFE_INTEGER)),
     maxFractionBps: BigInt(Math.round(fraction * 10_000)),
     slippageBps: int("SLIPPAGE_BPS", 50, 0, 9_999),
     priorityMicroLamports: priority > 0 ? priority : undefined,

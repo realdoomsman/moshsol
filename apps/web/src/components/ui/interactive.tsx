@@ -2,8 +2,8 @@
 
 import { countdown, shortAddr } from "@moshsol/sdk";
 import { Check, Copy, Info } from "lucide-react";
-import { motion, useSpring, useTransform } from "motion/react";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { motion, useReducedMotion, useSpring, useTransform } from "motion/react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { explorerAddress } from "@/lib/explorer";
 import { useNow } from "@/lib/hooks";
 import { cn } from "./cn";
@@ -52,7 +52,9 @@ export function Segmented<T extends string>({
             onClick={() => onChange(o.value)}
             className={cn(
               "relative inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg font-semibold transition-colors",
-              size === "sm" ? "h-7 px-2.5 text-xs" : "h-8 px-3.5 text-[13px]",
+              size === "sm"
+                ? "h-10 min-w-10 px-2 text-xs sm:h-7 sm:min-w-0 sm:px-2.5"
+                : "h-10 min-w-10 px-2.5 text-[13px] sm:h-8 sm:px-3.5",
               stretch && "flex-1",
               active ? "text-ink" : "text-dim hover:text-muted",
             )}
@@ -72,22 +74,43 @@ export function Segmented<T extends string>({
   );
 }
 
-/** Spring-animated number; `format` renders every intermediate frame. */
+/**
+ * Spring-animated number; `format` renders every intermediate frame. With `flash`, the text briefly
+ * turns green/red when the value moves up/down. Reduced-motion users get the final value instantly.
+ */
 export function AnimatedNumber({
   value,
   format,
   className,
+  flash,
 }: {
   value: number;
   format: (n: number) => string;
   className?: string;
+  flash?: boolean;
 }) {
-  const spring = useSpring(value, { stiffness: 90, damping: 22, mass: 0.7 });
+  const reduce = useReducedMotion();
+  const spring = useSpring(value, { stiffness: 140, damping: 26, mass: 0.6 });
   const text = useTransform(spring, (v) => format(v));
+  const el = useRef<HTMLSpanElement>(null);
+  const prev = useRef(value);
   useEffect(() => {
-    spring.set(value);
-  }, [spring, value]);
-  return <motion.span className={cn("tabular-nums", className)}>{text}</motion.span>;
+    if (reduce) spring.jump(value);
+    else spring.set(value);
+    const node = el.current;
+    if (flash && node && value !== prev.current) {
+      node.classList.remove("animate-flash-up", "animate-flash-down");
+      // Restart the animation even when the direction repeats.
+      void node.offsetWidth;
+      node.classList.add(value > prev.current ? "animate-flash-up" : "animate-flash-down");
+    }
+    prev.current = value;
+  }, [spring, value, reduce, flash]);
+  return (
+    <motion.span ref={el} className={cn("tabular-nums", className)}>
+      {text}
+    </motion.span>
+  );
 }
 
 export function CopyButton({ value, label, className }: { value: string; label?: string; className?: string }) {
@@ -104,7 +127,8 @@ export function CopyButton({ value, label, className }: { value: string; label?:
         void navigator.clipboard.writeText(value).then(() => setDone(true));
       }}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md text-dim transition hover:text-ink",
+        // The hit area extends past the 14px glyph without shifting the surrounding text.
+        "relative inline-flex items-center gap-1.5 rounded-md text-dim transition before:absolute before:-inset-2 before:content-[''] hover:text-ink",
         className,
       )}
       aria-label={label ?? "Copy to clipboard"}

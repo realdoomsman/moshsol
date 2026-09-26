@@ -141,12 +141,19 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     return row as LaunchDbRow & { snapshot: string };
   };
 
-  app.get("/api/health", async () => ({
-    ok: true,
-    slot: await connection.getSlot("confirmed"),
-    programId: client.programId.toBase58(),
-    lastIndexedSlot: sync.lastIndexedSlot,
-  }));
+  app.get("/api/health", async (_req, reply) => {
+    const h = await sync.health();
+    return reply.code(h.ok ? 200 : 503).send({
+      ok: h.ok,
+      slot: h.slot,
+      programId: client.programId.toBase58(),
+      lastIndexedSlot: h.lastIndexedSlot,
+      lagSlots: h.lagSlots,
+      wsConnected: h.wsConnected,
+      genesisHash: h.genesisHash,
+      ...(h.error ? { error: h.error } : {}),
+    });
+  });
 
   app.get("/api/platform", async () => {
     const p = sync.platform ?? (await client.fetchPlatform());
@@ -206,7 +213,8 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     const row = launchRow(req.params.mint);
     const limit = intQuery(req.query, "limit", 100, 500);
     const before = intQuery(req.query, "before", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
-    return { trades: store.trades(row.address, before, limit).map(tradeRow) };
+    const agentOnly = oneOf(["0", "1"] as const, req.query.agent, "0", "agent") === "1";
+    return { trades: store.trades(row.address, before, limit, agentOnly).map(tradeRow) };
   });
 
   app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/candles", async (req) => {
@@ -239,8 +247,9 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
   app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/deposits", async (req) => {
     const row = launchRow(req.params.mint);
     const limit = intQuery(req.query, "limit", 50, 500);
+    const before = intQuery(req.query, "before", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
     return {
-      deposits: store.deposits(row.address, limit).map((d) => ({
+      deposits: store.deposits(row.address, before, limit).map((d) => ({
         signature: d.signature,
         timestamp: d.timestamp,
         backer: d.backer,

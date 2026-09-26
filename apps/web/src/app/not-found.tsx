@@ -1,21 +1,27 @@
-import { SearchX } from "lucide-react";
+import { Compass, Rocket } from "lucide-react";
+import type { Metadata } from "next";
 import { ButtonLink } from "@/components/ui/button";
-import { Card, EmptyState } from "@/components/ui/primitives";
+import { NotFoundPanel } from "@/components/ui/not-found-panel";
+
+export const metadata: Metadata = { title: "Page not found" };
 
 export default function NotFound() {
   return (
-    <Card className="mx-auto mt-10 max-w-xl">
-      <EmptyState
-        icon={<SearchX className="size-5" aria-hidden />}
-        title="Page not found"
-        action={
-          <ButtonLink href="/" variant="primary">
+    <NotFoundPanel
+      icon={<Compass className="size-6" aria-hidden />}
+      title="This page doesn't exist"
+      actions={
+        <>
+          <ButtonLink href="/" variant="primary" size="lg">
             Explore launches
           </ButtonLink>
-        }
-      >
-        That address isn&apos;t a page or a valid mint.
-      </EmptyState>
-    </Card>
+          <ButtonLink href="/create" variant="secondary" size="lg">
+            <Rocket className="size-4" aria-hidden /> Create a launch
+          </ButtonLink>
+        </>
+      }
+    >
+      The link may be broken or the page may have moved.
+    </NotFoundPanel>
   );
 }

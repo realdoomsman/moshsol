@@ -2,14 +2,13 @@
 
 import { lamportsToSol, tokensToUi } from "@moshsol/sdk";
 import { Bot, Clock, Lock, ShieldCheck, Users } from "lucide-react";
-import { motion } from "motion/react";
 import Link from "next/link";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import { phaseOf, type Phase } from "@/lib/launch";
 import { useCandles, usePlatform } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { cn } from "../ui/cn";
-import { Countdown, Sparkline, TokenAvatar } from "../ui/interactive";
+import { AnimatedNumber, Countdown, Sparkline, TokenAvatar } from "../ui/interactive";
 import { Badge, Skeleton } from "../ui/primitives";
 import { ChangeText, PhasePill } from "../ui/status";
 import { RaiseBar } from "../launch/raise-bar";
@@ -25,8 +24,9 @@ function LiveBody({ l }: { l: LaunchSummary }) {
       <div className="mt-4 grid grid-cols-2 gap-3">
         <div>
           <div className="text-[11px] font-medium uppercase tracking-wider text-dim">Market cap</div>
-          <div className="mt-0.5 text-lg font-semibold tabular-nums">
-            {fmtSolValue(l.marketCapSol)} <span className="text-xs font-medium text-dim">SOL</span>
+          <div className="mt-0.5 text-lg font-semibold">
+            <AnimatedNumber value={l.marketCapSol} format={fmtSolValue} flash />{" "}
+            <span className="text-xs font-medium text-dim">SOL</span>
           </div>
         </div>
         <div className="text-right">
@@ -88,7 +88,7 @@ function RaisingBody({ l, phase }: { l: LaunchSummary; phase: Phase }) {
   );
 }
 
-export function LaunchCard({ launch: l, now, index = 0 }: { launch: LaunchSummary; now: number; index?: number }) {
+export function LaunchCard({ launch: l, now }: { launch: LaunchSummary; now: number }) {
   const platform = usePlatform();
   const phase = phaseOf(l, now);
   const windowSecs = platform.data?.params.agentWindowSecs ?? 0;
@@ -100,71 +100,59 @@ export function LaunchCard({ launch: l, now, index = 0 }: { launch: LaunchSummar
   const vaultValue = lamportsToSol(l.vaultSol) + tokensToUi(l.vaultTokens) * l.priceSol;
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.97 }}
-      transition={{ duration: 0.3, delay: Math.min(index, 12) * 0.03 }}
-      whileHover={{ y: -3 }}
+    <Link
+      href={`/launch/${l.mint}`}
+      className="card group block h-full animate-in p-4 transition duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:bg-white/[0.045] focus-visible:border-lime/50"
     >
-      <Link
-        href={`/launch/${l.mint}`}
-        className="card group block h-full p-4 transition-colors duration-200 hover:border-line-strong hover:bg-white/[0.045] focus-visible:border-lime/50"
-      >
-        <div className="flex items-start gap-3">
-          <TokenAvatar src={l.image} symbol={l.symbol} size={48} />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="truncate text-[15px] font-semibold leading-tight group-hover:text-lime">{l.name}</div>
-                <div className="mt-1 flex items-center gap-1.5 text-[13px] text-muted">
-                  <span className="font-medium">${l.symbol}</span>
-                  {l.whitelisted ? (
-                    <Lock className="size-3 text-warn" aria-label="Whitelist raise" />
-                  ) : null}
-                </div>
+      <div className="flex items-start gap-3">
+        <TokenAvatar src={l.image} symbol={l.symbol} size={48} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="truncate text-[15px] leading-tight font-semibold transition-colors group-hover:text-lime">
+                {l.name}
               </div>
-              <PhasePill phase={phase} />
+              <div className="mt-1 flex items-center gap-1.5 text-[13px] text-muted">
+                <span className="font-medium">${l.symbol}</span>
+                {l.whitelisted ? <Lock className="size-3 text-warn" aria-label="Whitelist raise" /> : null}
+              </div>
             </div>
+            <PhasePill phase={phase} />
           </div>
         </div>
+      </div>
 
-        {phase === "live" ? <LiveBody l={l} /> : <RaisingBody l={l} phase={phase} />}
+      {phase === "live" ? <LiveBody l={l} /> : <RaisingBody l={l} phase={phase} />}
 
-        <div className="mt-4 flex items-center justify-between gap-2 border-t border-line pt-3">
-          {phase === "live" ? (
-            <Badge tone="lime" title="SOL + tokens locked in the vault forever">
-              <ShieldCheck className="size-3" aria-hidden />
-              {fmtLamports(l.vaultSol)} SOL + {fmtTokens(l.vaultTokens)}
-            </Badge>
-          ) : (
-            <Badge tone="neutral">
-              Bundle {l.bundleSupplyBps / 100}% · Reserve {l.reserveBps / 100}%
-            </Badge>
-          )}
-          {phase === "live" ? (
-            <span
-              className={cn(
-                "inline-flex items-center gap-1.5 text-[11.5px] font-medium",
-                agentsActive ? "text-cyan" : "text-dim",
-              )}
-              title={`Vault value ≈ ${fmtSolValue(vaultValue)} SOL · ${l.agentBuys} agent buys / ${l.agentSells} sells`}
-            >
-              <Bot className="size-3.5" aria-hidden />
-              {agentsActive ? (
-                <>
-                  <span className="size-1.5 animate-pulse-dot rounded-full bg-cyan text-cyan" />
-                  active
-                </>
-              ) : (
-                `${l.agentBuys + l.agentSells} trades`
-              )}
-            </span>
-          ) : null}
-        </div>
-      </Link>
-    </motion.div>
+      <div className="mt-4 flex items-center justify-between gap-2 border-t border-line pt-3">
+        {phase === "live" ? (
+          <Badge tone="lime" title="SOL + tokens locked in the vault forever">
+            <ShieldCheck className="size-3" aria-hidden />
+            {fmtLamports(l.vaultSol)} SOL + {fmtTokens(l.vaultTokens)}
+          </Badge>
+        ) : (
+          <Badge tone="neutral">
+            Bundle {l.bundleSupplyBps / 100}% · Reserve {l.reserveBps / 100}%
+          </Badge>
+        )}
+        {phase === "live" ? (
+          <span
+            className={cn("inline-flex items-center gap-1.5 text-[11.5px] font-medium", agentsActive ? "text-cyan" : "text-dim")}
+            title={`Vault value ≈ ${fmtSolValue(vaultValue)} SOL · ${l.agentBuys} agent buys / ${l.agentSells} sells`}
+          >
+            <Bot className="size-3.5" aria-hidden />
+            {agentsActive ? (
+              <>
+                <span className="size-1.5 animate-pulse-dot rounded-full bg-cyan text-cyan" />
+                active
+              </>
+            ) : (
+              `${l.agentBuys + l.agentSells} agent trades`
+            )}
+          </span>
+        ) : null}
+      </div>
+    </Link>
   );
 }
 

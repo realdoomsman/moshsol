@@ -252,7 +252,9 @@ const SQL = {
   getState: "SELECT value FROM sync_state WHERE key = ?",
   setState:
     "INSERT INTO sync_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  deleteState: "DELETE FROM sync_state WHERE key = ?",
   hasTx: "SELECT 1 AS one FROM txs WHERE signature = ?",
+  txSlot: "SELECT slot FROM txs WHERE signature = ?",
   insertTx: "INSERT OR IGNORE INTO txs (signature, slot, failed, event_count) VALUES (?, ?, ?, ?)",
   upsertCreated: `
     INSERT INTO launches (address, mint, creator, idx, status, created_at, onchain_name, onchain_symbol, uri, meta_status)
@@ -294,8 +296,10 @@ const SQL = {
   priceAt: "SELECT price_sol FROM trades WHERE launch = ? AND timestamp <= ? ORDER BY slot DESC, rowid DESC LIMIT 1",
   firstPrice: "SELECT price_sol FROM trades WHERE launch = ? ORDER BY slot ASC, rowid ASC LIMIT 1",
   trades: "SELECT * FROM trades WHERE launch = ? AND timestamp < ? ORDER BY slot DESC, rowid DESC LIMIT ?",
+  launchAgentTrades:
+    "SELECT * FROM trades WHERE launch = ? AND is_agent = 1 AND timestamp < ? ORDER BY slot DESC, rowid DESC LIMIT ?",
   candlePoints: "SELECT timestamp, price_sol, sol FROM trades WHERE launch = ? ORDER BY slot ASC, rowid ASC",
-  deposits: "SELECT * FROM deposits WHERE launch = ? ORDER BY slot DESC, rowid DESC LIMIT ?",
+  deposits: "SELECT * FROM deposits WHERE launch = ? AND timestamp < ? ORDER BY slot DESC, rowid DESC LIMIT ?",
   agentTrades: `
     SELECT t.*, l.mint AS mint, ${LAUNCH_SYMBOL} AS symbol
     FROM trades t JOIN launches l ON l.address = t.launch
@@ -367,8 +371,16 @@ export class Store {
     this.stmts.setState.run(key, value);
   }
 
+  deleteState(key: string): void {
+    this.stmts.deleteState.run(key);
+  }
+
   hasTx(signature: string): boolean {
     return row(this.stmts.hasTx, [signature]) !== undefined;
+  }
+
+  txSlot(signature: string): number | null {
+    return row<{ slot: number }>(this.stmts.txSlot, [signature])?.slot ?? null;
   }
 
   markTx(signature: string, slot: number, failed: boolean, eventCount: number): void {
@@ -484,16 +496,16 @@ export class Store {
     return row<{ price_sol: number }>(this.stmts.firstPrice, [launch])?.price_sol ?? null;
   }
 
-  trades(launch: string, beforeTs: number, limit: number): TradeDbRow[] {
-    return rows<TradeDbRow>(this.stmts.trades, [launch, beforeTs, limit]);
+  trades(launch: string, beforeTs: number, limit: number, agentOnly = false): TradeDbRow[] {
+    return rows<TradeDbRow>(agentOnly ? this.stmts.launchAgentTrades : this.stmts.trades, [launch, beforeTs, limit]);
   }
 
   candlePoints(launch: string): CandlePointDbRow[] {
     return rows<CandlePointDbRow>(this.stmts.candlePoints, [launch]);
   }
 
-  deposits(launch: string, limit: number): DepositDbRow[] {
-    return rows<DepositDbRow>(this.stmts.deposits, [launch, limit]);
+  deposits(launch: string, beforeTs: number, limit: number): DepositDbRow[] {
+    return rows<DepositDbRow>(this.stmts.deposits, [launch, beforeTs, limit]);
   }
 
   agentTrades(limit: number): AgentTradeDbRow[] {

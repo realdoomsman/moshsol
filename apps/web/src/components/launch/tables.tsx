@@ -2,61 +2,134 @@
 
 import { fmtPrice, shortAddr, timeAgo } from "@moshsol/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { Bot, ExternalLink, Inbox } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { Bot, ExternalLink, Inbox, Users } from "lucide-react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { explorerTx } from "@/lib/explorer";
 import { fmtLamports, fmtTokens } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
-import { useAgentStatus, useBackers, useDeposits, useHolders, useTrades } from "@/lib/queries";
+import {
+  tradeKey,
+  useAgentStatus,
+  useBackers,
+  useDepositFeed,
+  useHolders,
+  useTradeFeed,
+  type PagedFeed,
+} from "@/lib/queries";
 import type { LaunchSummary, TradeRow } from "@/lib/types";
+import { Button } from "../ui/button";
 import { cn } from "../ui/cn";
 import { AddressLink } from "../ui/interactive";
 import { Badge, EmptyState, Meter, Skeleton } from "../ui/primitives";
 
-const th = "px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-dim first:pl-5 last:pr-5";
-const td = "px-3 py-2.5 first:pl-5 last:pr-5";
+const HOLDERS_PAGE = 25;
+const BACKERS_PAGE = 50;
+const NO_KEYS: ReadonlySet<string> = new Set();
 
-/** Marks keys that appear after the first render so new rows can flash. */
-function useFreshKeys(keys: string[] | undefined): Set<string> {
+/**
+ * Keys that arrived after the first render, kept for the length of the row entrance animation.
+ * Runs before paint so a new row never flashes in un-animated.
+ */
+function useFreshKeys(keys: string[] | undefined): ReadonlySet<string> {
   const seen = useRef<Set<string> | null>(null);
-  const fresh = new Set<string>();
-  if (keys) {
-    if (seen.current) for (const k of keys) if (!seen.current.has(k)) fresh.add(k);
-  }
-  useEffect(() => {
+  const [fresh, setFresh] = useState(NO_KEYS);
+  const signature = keys?.join("|");
+  useLayoutEffect(() => {
     if (!keys) return;
-    seen.current ??= new Set();
-    for (const k of keys) seen.current.add(k);
-  }, [keys]);
+    if (!seen.current) {
+      seen.current = new Set(keys);
+      return;
+    }
+    const known = seen.current;
+    const added = keys.filter((k) => !known.has(k));
+    if (added.length === 0) return;
+    for (const k of added) known.add(k);
+    setFresh((prev) => new Set([...prev, ...added]));
+    window.setTimeout(() => {
+      setFresh((prev) => {
+        const next = new Set(prev);
+        for (const k of added) next.delete(k);
+        return next;
+      });
+    }, 1_400);
+    // `signature` changes exactly when `keys` does.
+  }, [signature]);
   return fresh;
 }
 
-function TableShell({ head, children }: { head: ReactNode; children: ReactNode }) {
+/** Fixed-height scroll area with a sticky header row; the footer scrolls with the rows. */
+function ScrollTable({ head, children, footer }: { head: ReactNode; children: ReactNode; footer?: ReactNode }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-full text-[13px]">
-        <thead className="border-b border-line">
+    <div className="max-h-[440px] overflow-auto overscroll-contain lg:max-h-[480px]">
+      <table className="data-table">
+        <thead>
           <tr>{head}</tr>
         </thead>
-        <tbody className="divide-y divide-line">{children}</tbody>
+        <tbody>{children}</tbody>
       </table>
+      {footer}
     </div>
   );
 }
 
-function LoadingRows({ cols }: { cols: number }) {
+function LoadingRows({ cols, rows = 6 }: { cols: number; rows?: number }) {
   return (
     <>
-      {Array.from({ length: 5 }, (_, i) => (
+      {Array.from({ length: rows }, (_, i) => (
         <tr key={i}>
           {Array.from({ length: cols }, (_, j) => (
-            <td key={j} className={td}>
+            <td key={j}>
               <Skeleton className="h-4 w-full" />
             </td>
           ))}
         </tr>
       ))}
     </>
+  );
+}
+
+function FeedFooter({
+  count,
+  noun,
+  hasMore,
+  loadingMore,
+  loadError,
+  onMore,
+}: {
+  count: number;
+  noun: string;
+  hasMore: boolean;
+  loadingMore?: boolean;
+  loadError?: string | null;
+  onMore: () => void;
+}) {
+  if (count === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 border-t border-line px-4 py-3 text-xs text-dim">
+      {loadError ? <span className="text-down">Couldn&apos;t load more — {loadError}</span> : null}
+      {hasMore || loadError ? (
+        <Button size="sm" variant="secondary" loading={loadingMore} onClick={onMore}>
+          {loadError ? "Retry" : `Load older ${noun}`}
+        </Button>
+      ) : (
+        <span>
+          Showing all {count.toLocaleString("en-US")} {count === 1 ? noun.replace(/s$/, "") : noun}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function PagedFooter<T>({ feed, noun }: { feed: PagedFeed<T>; noun: string }) {
+  return (
+    <FeedFooter
+      count={feed.rows.length}
+      noun={noun}
+      hasMore={feed.hasMore}
+      loadingMore={feed.loadingMore}
+      loadError={feed.loadError}
+      onMore={feed.loadMore}
+    />
   );
 }
 
@@ -67,14 +140,14 @@ function TxLink({ signature }: { signature: string }) {
       target="_blank"
       rel="noreferrer"
       aria-label="View transaction"
-      className="inline-flex text-dim transition hover:text-lime"
+      className="relative inline-flex text-dim transition before:absolute before:-inset-2.5 before:content-[''] hover:text-lime"
     >
       <ExternalLink className="size-3.5" aria-hidden />
     </a>
   );
 }
 
-function SideBadge({ t }: { t: TradeRow }) {
+function SideCell({ t }: { t: TradeRow }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={cn("font-semibold", t.isBuy ? "text-up" : "text-down")}>{t.isBuy ? "Buy" : "Sell"}</span>
@@ -87,97 +160,121 @@ function SideBadge({ t }: { t: TradeRow }) {
   );
 }
 
+function TimeCell({ ts, now }: { ts: number; now: number }) {
+  return (
+    <td className="whitespace-nowrap text-dim" title={new Date(ts * 1000).toLocaleString()}>
+      {timeAgo(ts, now)}
+    </td>
+  );
+}
+
 export function TradesTable({ launch: l, agentOnly }: { launch: LaunchSummary; agentOnly?: boolean }) {
-  const { data, isLoading } = useTrades(l.mint, 100);
+  const feed = useTradeFeed(l.mint, agentOnly);
   const { publicKey } = useWallet();
   const me = publicKey?.toBase58();
   const now = useNow(5_000);
-  const rows = (data?.trades ?? []).filter((t) => !agentOnly || t.isAgent);
-  const fresh = useFreshKeys(data?.trades.map((t) => t.signature));
+  const fresh = useFreshKeys(feed.headKeys);
 
-  if (!isLoading && rows.length === 0) {
+  if (!feed.isLoading && feed.rows.length === 0) {
     return (
-      <EmptyState icon={agentOnly ? <Bot className="size-5" aria-hidden /> : <Inbox className="size-5" aria-hidden />} title={agentOnly ? "No agent trades yet" : "No trades yet"}>
+      <EmptyState
+        icon={agentOnly ? <Bot className="size-5" aria-hidden /> : <Inbox className="size-5" aria-hidden />}
+        title={agentOnly ? "No agent trades yet" : "No trades yet"}
+      >
         {agentOnly
           ? "Agents only trade when price leaves the EMA band and their cost-basis rules allow it."
-          : "Be the first to trade after the bundle."}
+          : "The bundle is in. Be the first public trade."}
       </EmptyState>
     );
   }
 
   return (
-    <TableShell
+    <ScrollTable
       head={
         <>
-          <th className={th}>Time</th>
-          <th className={th}>Side</th>
-          <th className={cn(th, "text-right")}>SOL</th>
-          <th className={cn(th, "hidden text-right sm:table-cell")}>${l.symbol}</th>
-          <th className={cn(th, "hidden text-right md:table-cell")}>Price</th>
-          <th className={cn(th, "text-right")}>Trader</th>
-          <th className={cn(th, "hidden w-8 sm:table-cell")}>
+          <th>Time</th>
+          <th>Side</th>
+          <th className="text-right">SOL</th>
+          <th className="hidden text-right sm:table-cell">${l.symbol}</th>
+          <th className="hidden text-right md:table-cell">Price</th>
+          <th className="text-right">Trader</th>
+          <th className="hidden w-8 sm:table-cell">
             <span className="sr-only">Transaction</span>
           </th>
         </>
       }
+      footer={<PagedFooter feed={feed} noun={agentOnly ? "agent trades" : "trades"} />}
     >
-      {isLoading ? (
+      {feed.isLoading ? (
         <LoadingRows cols={7} />
       ) : (
-        rows.map((t) => (
-          <tr key={t.signature} className={cn("transition-colors hover:bg-white/[0.025]", fresh.has(t.signature) && "animate-flash")}>
-            <td className={cn(td, "whitespace-nowrap text-dim tabular-nums")}>{timeAgo(t.timestamp, now)}</td>
-            <td className={td}>
-              <SideBadge t={t} />
-            </td>
-            <td className={cn(td, "text-right font-medium tabular-nums")}>{fmtLamports(t.solAmount)}</td>
-            <td className={cn(td, "hidden text-right tabular-nums text-muted sm:table-cell")}>{fmtTokens(t.tokenAmount)}</td>
-            <td className={cn(td, "hidden text-right tabular-nums text-muted md:table-cell")}>{fmtPrice(t.priceSol)}</td>
-            <td className={cn(td, "text-right")}>
-              {t.isAgent ? (
-                <span className="font-mono text-[12.5px] text-cyan">vault</span>
-              ) : t.trader === me ? (
-                <span className="font-mono text-[12.5px] text-lime">you</span>
-              ) : (
-                <AddressLink address={t.trader} />
-              )}
-            </td>
-            <td className={cn(td, "hidden sm:table-cell")}>
-              <TxLink signature={t.signature} />
-            </td>
-          </tr>
-        ))
+        feed.rows.map((t) => {
+          const key = tradeKey(t);
+          return (
+            <tr key={key} className={cn(fresh.has(key) && (t.isBuy ? "animate-row-in-up" : "animate-row-in-down"))}>
+              <TimeCell ts={t.timestamp} now={now} />
+              <td>
+                <SideCell t={t} />
+              </td>
+              <td className="text-right font-medium">{fmtLamports(t.solAmount)}</td>
+              <td className="hidden text-right text-muted sm:table-cell">{fmtTokens(t.tokenAmount)}</td>
+              <td className="hidden text-right text-muted md:table-cell">{fmtPrice(t.priceSol)}</td>
+              <td className="text-right">
+                {t.isAgent ? (
+                  <span className="font-mono text-[12.5px] text-cyan">vault</span>
+                ) : t.trader === me ? (
+                  <span className="font-mono text-[12.5px] text-lime">you</span>
+                ) : (
+                  <AddressLink address={t.trader} />
+                )}
+              </td>
+              <td className="hidden sm:table-cell">
+                <TxLink signature={t.signature} />
+              </td>
+            </tr>
+          );
+        })
       )}
-    </TableShell>
+    </ScrollTable>
   );
 }
 
 export function HoldersTable({ launch: l }: { launch: LaunchSummary }) {
-  const { data, isLoading } = useHolders(l.mint);
+  const [limit, setLimit] = useState(HOLDERS_PAGE);
+  const { data, isLoading, isFetching } = useHolders(l.mint, limit);
   const { publicKey } = useWallet();
   const me = publicKey?.toBase58();
   const rows = data?.holders ?? [];
   if (!isLoading && rows.length === 0) {
-    return <EmptyState icon={<Inbox className="size-5" aria-hidden />} title="No holders yet" />;
+    return <EmptyState icon={<Users className="size-5" aria-hidden />} title="No holders yet" />;
   }
   return (
-    <TableShell
+    <ScrollTable
       head={
         <>
-          <th className={cn(th, "w-10")}>#</th>
-          <th className={th}>Holder</th>
-          <th className={cn(th, "text-right")}>Amount</th>
-          <th className={cn(th, "w-40 text-right")}>Share</th>
+          <th className="w-10">#</th>
+          <th>Holder</th>
+          <th className="text-right">Amount</th>
+          <th className="w-40 text-right">Share</th>
         </>
+      }
+      footer={
+        <FeedFooter
+          count={rows.length}
+          noun="holders"
+          hasMore={rows.length >= limit && limit < 1_000}
+          loadingMore={isFetching && rows.length < limit}
+          onMore={() => setLimit((n) => Math.min(1_000, n + HOLDERS_PAGE * 2))}
+        />
       }
     >
       {isLoading ? (
         <LoadingRows cols={4} />
       ) : (
         rows.map((h, i) => (
-          <tr key={h.owner} className="hover:bg-white/[0.025]">
-            <td className={cn(td, "text-dim tabular-nums")}>{i + 1}</td>
-            <td className={td}>
+          <tr key={h.owner}>
+            <td className="text-dim">{i + 1}</td>
+            <td>
               <span className="inline-flex items-center gap-2">
                 <AddressLink address={h.owner} />
                 {h.label === "curve" ? <Badge tone="neutral">Bonding curve</Badge> : null}
@@ -185,34 +282,36 @@ export function HoldersTable({ launch: l }: { launch: LaunchSummary }) {
                 {h.owner === me ? <Badge tone="violet">You</Badge> : null}
               </span>
             </td>
-            <td className={cn(td, "text-right tabular-nums")}>{fmtTokens(h.amount)}</td>
-            <td className={cn(td, "text-right")}>
+            <td className="text-right">{fmtTokens(h.amount)}</td>
+            <td className="text-right">
               <div className="flex items-center justify-end gap-2.5">
                 <Meter
                   value={h.pct}
                   tone={h.label === "vault" ? "lime" : h.label === "curve" ? "violet" : "up"}
                   className="hidden w-16 sm:block"
                 />
-                <span className="w-14 tabular-nums">{h.pct.toFixed(2)}%</span>
+                <span className="w-14">{h.pct.toFixed(2)}%</span>
               </div>
             </td>
           </tr>
         ))
       )}
-    </TableShell>
+    </ScrollTable>
   );
 }
 
 export function BackersTable({ launch: l }: { launch: LaunchSummary }) {
   const { data, isLoading } = useBackers(l.mint);
+  const [shown, setShown] = useState(BACKERS_PAGE);
   const { publicKey } = useWallet();
   const me = publicKey?.toBase58();
-  const rows = data?.backers ?? [];
+  const all = data?.backers ?? [];
+  const rows = all.slice(0, shown);
   const live = l.status === "live";
-  if (!isLoading && rows.length === 0) {
+  if (!isLoading && all.length === 0) {
     return (
       <EmptyState
-        icon={<Inbox className="size-5" aria-hidden />}
+        icon={<Users className="size-5" aria-hidden />}
         title={l.status === "refunding" && BigInt(l.refunded) > 0n ? "All deposits refunded" : "No backers yet"}
       >
         {l.status === "refunding"
@@ -222,32 +321,40 @@ export function BackersTable({ launch: l }: { launch: LaunchSummary }) {
     );
   }
   return (
-    <TableShell
+    <ScrollTable
       head={
         <>
-          <th className={th}>Backer</th>
-          <th className={cn(th, "text-right")}>Deposited</th>
-          <th className={cn(th, "text-right")}>Share</th>
-          {live ? <th className={cn(th, "hidden text-right sm:table-cell")}>Fees earned</th> : null}
+          <th>Backer</th>
+          <th className="text-right">Deposited</th>
+          <th className="text-right">Share</th>
+          {live ? <th className="hidden text-right sm:table-cell">Fees earned</th> : null}
         </>
+      }
+      footer={
+        <FeedFooter
+          count={all.length}
+          noun="backers"
+          hasMore={all.length > shown}
+          onMore={() => setShown((n) => n + BACKERS_PAGE * 2)}
+        />
       }
     >
       {isLoading ? (
         <LoadingRows cols={live ? 4 : 3} />
       ) : (
         rows.map((b) => (
-          <tr key={b.owner} className="hover:bg-white/[0.025]">
-            <td className={td}>
+          <tr key={b.owner}>
+            <td>
               <span className="inline-flex items-center gap-2">
                 <AddressLink address={b.owner} />
                 {b.owner === me ? <Badge tone="violet">You</Badge> : null}
                 {b.owner === l.creator ? <Badge tone="neutral">Creator</Badge> : null}
               </span>
             </td>
-            <td className={cn(td, "text-right font-medium tabular-nums")}>{fmtLamports(b.deposited)} SOL</td>
-            <td className={cn(td, "text-right tabular-nums text-muted")}>{(b.shareBps / 100).toFixed(2)}%</td>
+            <td className="text-right font-medium">{fmtLamports(b.deposited)} SOL</td>
+            <td className="text-right text-muted">{(b.shareBps / 100).toFixed(2)}%</td>
             {live ? (
-              <td className={cn(td, "hidden text-right tabular-nums sm:table-cell")}>
+              <td className="hidden text-right sm:table-cell">
                 <span className="text-up">{fmtLamports(BigInt(b.claimable) + BigInt(b.feesClaimed))}</span>
                 <span className="text-dim"> SOL</span>
               </td>
@@ -255,65 +362,68 @@ export function BackersTable({ launch: l }: { launch: LaunchSummary }) {
           </tr>
         ))
       )}
-    </TableShell>
+    </ScrollTable>
   );
 }
 
 export function DepositsFeed({ launch: l }: { launch: LaunchSummary }) {
-  const { data, isLoading } = useDeposits(l.mint);
+  const feed = useDepositFeed(l.mint);
   const now = useNow(5_000);
-  const rows = data?.deposits ?? [];
-  const fresh = useFreshKeys(data?.deposits.map((d) => d.signature));
-  if (!isLoading && rows.length === 0) {
+  const fresh = useFreshKeys(feed.headKeys);
+  if (!feed.isLoading && feed.rows.length === 0) {
     return (
       <EmptyState icon={<Inbox className="size-5" aria-hidden />} title="No deposits yet">
-        Be the first backer.
+        Be the first backer — deposits fund the locked bundle and earn trading fees forever.
       </EmptyState>
     );
   }
   return (
-    <TableShell
+    <ScrollTable
       head={
         <>
-          <th className={th}>Time</th>
-          <th className={th}>Backer</th>
-          <th className={cn(th, "text-right")}>Amount</th>
-          <th className={cn(th, "hidden text-right sm:table-cell")}>Raised after</th>
-          <th className={cn(th, "hidden w-8 sm:table-cell")}>
+          <th>Time</th>
+          <th>Backer</th>
+          <th className="text-right">Amount</th>
+          <th className="hidden text-right sm:table-cell">Raised after</th>
+          <th className="hidden w-8 sm:table-cell">
             <span className="sr-only">Transaction</span>
           </th>
         </>
       }
+      footer={<PagedFooter feed={feed} noun="deposits" />}
     >
-      {isLoading ? (
+      {feed.isLoading ? (
         <LoadingRows cols={5} />
       ) : (
-        rows.map((d) => (
-          <tr key={d.signature} className={cn("hover:bg-white/[0.025]", fresh.has(d.signature) && "animate-flash")}>
-            <td className={cn(td, "whitespace-nowrap text-dim tabular-nums")}>{timeAgo(d.timestamp, now)}</td>
-            <td className={td}>
-              <AddressLink address={d.backer} />
-            </td>
-            <td className={cn(td, "text-right font-medium text-[#c2a6ff] tabular-nums")}>+{fmtLamports(d.amount)} SOL</td>
-            <td className={cn(td, "hidden text-right tabular-nums text-muted sm:table-cell")}>{fmtLamports(d.raised)} SOL</td>
-            <td className={cn(td, "hidden sm:table-cell")}>
-              <TxLink signature={d.signature} />
-            </td>
-          </tr>
-        ))
+        feed.rows.map((d) => {
+          const key = `${d.signature}:${d.amount}`;
+          return (
+            <tr key={key} className={cn(fresh.has(key) && "animate-row-in")}>
+              <TimeCell ts={d.timestamp} now={now} />
+              <td>
+                <AddressLink address={d.backer} />
+              </td>
+              <td className="text-right font-medium text-[#c2a6ff]">+{fmtLamports(d.amount)} SOL</td>
+              <td className="hidden text-right text-muted sm:table-cell">{fmtLamports(d.raised)} SOL</td>
+              <td className="hidden sm:table-cell">
+                <TxLink signature={d.signature} />
+              </td>
+            </tr>
+          );
+        })
       )}
-    </TableShell>
+    </ScrollTable>
   );
 }
 
-/** Agent decisions for this launch from the agent service, followed by its on-chain trades. */
+/** Agent decision for this launch from the agent service, followed by its on-chain trades. */
 export function AgentFeed({ launch: l }: { launch: LaunchSummary }) {
   const status = useAgentStatus();
   const now = useNow(2_000);
   const decision = status.data?.decisions.find((d) => d.mint === l.mint);
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3.5 text-[13px]">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line px-5 py-3.5 text-[13px]">
         <span className="inline-flex items-center gap-2 font-semibold">
           <span className={cn("size-2 rounded-full", decision ? "animate-pulse-dot bg-cyan text-cyan" : "bg-dim")} />
           Agent brain
@@ -324,7 +434,17 @@ export function AgentFeed({ launch: l }: { launch: LaunchSummary }) {
               {decision.action}
             </Badge>
             <span className="min-w-0 flex-1 text-muted">{decision.reason}</span>
-            <span className="text-xs text-dim tabular-nums">{timeAgo(decision.at, now)}</span>
+            <span className="text-xs text-dim">{timeAgo(decision.at, now)}</span>
+            {decision.signature ? (
+              <a
+                className="font-mono text-xs text-muted hover:text-lime"
+                href={explorerTx(decision.signature)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                tx {shortAddr(decision.signature, 4)}
+              </a>
+            ) : null}
           </>
         ) : (
           <span className="text-dim">
@@ -333,14 +453,6 @@ export function AgentFeed({ launch: l }: { launch: LaunchSummary }) {
         )}
       </div>
       <TradesTable launch={l} agentOnly />
-      {decision?.signature ? (
-        <div className="border-t border-line px-5 py-3 text-xs text-dim">
-          Latest agent tx{" "}
-          <a className="font-mono text-muted hover:text-lime" href={explorerTx(decision.signature)} target="_blank" rel="noreferrer">
-            {shortAddr(decision.signature, 8)}
-          </a>
-        </div>
-      ) : null}
     </div>
   );
 }

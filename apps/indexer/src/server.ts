@@ -6,6 +6,7 @@ import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, { LogController, type FastifyInstance } from "fastify";
 import type { Hub } from "./hub";
+import { registerRateLimits } from "./ratelimit";
 import { NotFoundError, registerRoutes, type RouteDeps } from "./routes";
 import { ValidationError } from "./sanitize";
 import { MAX_IMAGE_BYTES, registerUpload } from "./upload";
@@ -13,6 +14,9 @@ import { MAX_IMAGE_BYTES, registerUpload } from "./upload";
 export interface ServerOptions {
   filesDir: string;
   publicUrl: string;
+  rateLimitPerMin: number;
+  uploadLimitPerMin: number;
+  trustProxy: boolean;
 }
 
 const statusOf = (err: unknown): number => {
@@ -27,8 +31,14 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
   for (const dir of ["img", "meta"]) fs.mkdirSync(path.join(opts.filesDir, dir), { recursive: true });
 
   const app = Fastify({
-    logger: { level: process.env.LOG_LEVEL || "info" },
+    // One compact JSON line per event: ISO time, no pid/hostname.
+    logger: {
+      level: process.env.LOG_LEVEL || "info",
+      base: null,
+      timestamp: () => `,"time":"${new Date().toISOString()}"`,
+    },
     logController: new LogController({ disableRequestLogging: true }),
+    trustProxy: opts.trustProxy,
   });
 
   app.setErrorHandler((err, req, reply) => {
@@ -42,6 +52,8 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
   });
 
   await app.register(cors, { origin: "*", methods: ["GET", "POST", "OPTIONS"] });
+  // After CORS so 429s still carry Access-Control-Allow-Origin and browsers can read them.
+  registerRateLimits(app, { perMin: opts.rateLimitPerMin, uploadPerMin: opts.uploadLimitPerMin });
   await app.register(multipart, {
     throwFileSizeLimit: true,
     limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 10, parts: 12, fieldSize: 3 * 1024 * 1024 },
@@ -67,7 +79,11 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 }
 
 /** Registers `/ws`, the JSON API and the upload endpoint. */
-export function registerApi(app: FastifyInstance, deps: RouteDeps & { hub: Hub }, opts: ServerOptions): void {
+export function registerApi(
+  app: FastifyInstance,
+  deps: RouteDeps & { hub: Hub },
+  opts: Pick<ServerOptions, "filesDir" | "publicUrl">,
+): void {
   app.get("/ws", { websocket: true }, (socket) => deps.hub.add(socket));
   registerRoutes(app, deps);
   registerUpload(app, opts);

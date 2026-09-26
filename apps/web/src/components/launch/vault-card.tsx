@@ -20,25 +20,25 @@ function BandTrack({ price, zones }: { price: number; zones: AgentZones }) {
   return (
     <div>
       <div className="relative mt-7 h-2.5 rounded-full bg-white/[0.06]">
-        <div className="absolute inset-y-0 left-0 rounded-l-full bg-cyan/35" style={{ width: at(zones.buyBelow) }} />
+        <div className="absolute inset-y-0 left-0 rounded-l-full bg-lime/30" style={{ width: at(zones.buyBelow) }} />
         <div
-          className="absolute inset-y-0 right-0 rounded-r-full bg-violet/40"
+          className="absolute inset-y-0 right-0 rounded-r-full bg-pink/35"
           style={{ left: at(zones.sellAbove) }}
         />
-        <div className="absolute -top-1 h-4.5 w-px bg-white/50" style={{ left: at(zones.ema) }} title="EMA" />
+        <div className="absolute -top-1 h-4.5 w-0.5 rounded-full bg-violet" style={{ left: at(zones.ema) }} title="EMA" />
         <div
-          className="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-bg bg-lime shadow-[0_0_12px_rgb(198_255_61/0.7)] transition-[left] duration-700"
+          className="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-bg bg-white shadow-[0_0_12px_rgb(255_255_255/0.55)] transition-[left] duration-700"
           style={{ left: at(price) }}
         >
-          <span className="absolute bottom-full left-1/2 mb-1.5 -translate-x-1/2 rounded bg-lime px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap text-black">
+          <span className="absolute bottom-full left-1/2 mb-1.5 -translate-x-1/2 rounded bg-white px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap text-black">
             now
           </span>
         </div>
       </div>
-      <div className="mt-2 flex justify-between text-[11px] tabular-nums">
-        <span className="text-cyan">buy ≤ {fmtPrice(zones.buyBelow)}</span>
+      <div className="mt-2 flex justify-between text-[11px]">
+        <span className="text-lime">buy ≤ {fmtPrice(zones.buyBelow)}</span>
         <span className="text-dim">EMA {fmtPrice(zones.ema)}</span>
-        <span className="text-[#c2a6ff]">sell ≥ {fmtPrice(zones.sellAbove)}</span>
+        <span className="text-pink">sell ≥ {fmtPrice(zones.sellAbove)}</span>
       </div>
       <p className="mt-2.5 text-xs text-muted">
         {zone === "hold"
@@ -128,29 +128,29 @@ export function VaultCard({ launch: l, zones }: { launch: LaunchSummary; zones: 
           <div className="mt-3 grid gap-3">
             <div>
               <div className="mb-1.5 flex justify-between text-xs tabular-nums">
-                <span className="text-cyan">Buy {l.terms.agentBuyBpsPerWindow / 100}% of vault SOL</span>
+                <span className="text-lime">Buy {l.terms.agentBuyBpsPerWindow / 100}% of vault SOL</span>
                 <span className="text-dim">
                   {rolled ? "0" : fmtLamports(l.windowSolSpent)} / {fmtLamports(l.windowBuyCap)} SOL
                 </span>
               </div>
-              <Meter value={buyUsed} tone="up" label="Agent buy budget used" />
+              <Meter value={buyUsed} tone="lime" label="Agent buy budget used" />
             </div>
             <div>
               <div className="mb-1.5 flex justify-between text-xs tabular-nums">
-                <span className="text-[#c2a6ff]">Sell {l.terms.agentSellBpsPerWindow / 100}% of vault tokens</span>
+                <span className="text-pink">Sell {l.terms.agentSellBpsPerWindow / 100}% of vault tokens</span>
                 <span className="text-dim">
                   {rolled ? "0" : fmtTokens(l.windowTokensSold)} / {fmtTokens(l.windowSellCap)}
                 </span>
               </div>
-              <Meter value={sellUsed} tone="violet" label="Agent sell budget used" />
+              <Meter value={sellUsed} tone="pink" label="Agent sell budget used" />
             </div>
           </div>
         </div>
 
         <div className="mt-5">
           <div className="text-xs font-semibold text-muted">
-            Agents buy below <span className="text-cyan tabular-nums">{fmtPrice(zones.buyBelow)}</span> · sell above{" "}
-            <span className="text-[#c2a6ff] tabular-nums">{fmtPrice(zones.sellAbove)}</span>
+            Agents buy below <span className="text-lime">{fmtPrice(zones.buyBelow)}</span> · sell above{" "}
+            <span className="text-pink">{fmtPrice(zones.sellAbove)}</span>
           </div>
           <BandTrack price={l.priceSol} zones={zones} />
         </div>

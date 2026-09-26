@@ -78,4 +78,8 @@ export interface HolderRow {
   label: "curve" | "vault" | null;
 }
 
-export type WsMessage = { type: "event"; event: ActivityEvent } | { type: "launch"; launch: LaunchSummary };
+export type WsMessage =
+  | { type: "event"; event: ActivityEvent }
+  | { type: "launch"; launch: LaunchSummary }
+  /** The chain was reset (new genesis) and the index was rebuilt: clients should drop cached data and refetch. */
+  | { type: "reset"; genesisHash: string };

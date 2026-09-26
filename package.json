@@ -3,11 +3,21 @@
   "private": true,
   "packageManager": "pnpm@10.13.1",
   "scripts": {
+    "dev": "pnpm -s preflight && concurrently --kill-others --names indexer,agent,web --prefix-colors cyan,magenta,green \"pnpm:dev:indexer\" \"pnpm:dev:agent\" \"pnpm:dev:web\"",
+    "start": "pnpm -s preflight && pnpm --filter @moshsol/web build && concurrently --kill-others --names indexer,agent,web --prefix-colors cyan,magenta,green \"pnpm --filter @moshsol/indexer start\" \"pnpm --filter @moshsol/agent start\" \"pnpm --filter @moshsol/web start\"",
     "dev:web": "pnpm --filter @moshsol/web dev",
     "dev:indexer": "pnpm --filter @moshsol/indexer dev",
     "dev:agent": "pnpm --filter @moshsol/agent dev",
+    "preflight": "pnpm --silent --filter @moshsol/scripts run preflight",
+    "localnet": "node scripts/localnet.mjs",
+    "stop:localnet": "node scripts/localnet.mjs stop",
+    "reset:localnet": "node scripts/localnet.mjs reset",
     "setup:localnet": "pnpm --filter @moshsol/scripts run setup",
     "seed:localnet": "pnpm --filter @moshsol/scripts run seed",
+    "simulate:localnet": "pnpm --filter @moshsol/scripts run simulate",
     "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
   }
 }

@@ -5,9 +5,11 @@ import { AtSign, Globe, Lock, Send } from "lucide-react";
 import { fmtSolValue } from "@/lib/format";
 import type { Phase } from "@/lib/launch";
 import type { LaunchSummary } from "@/lib/types";
+import { cn } from "../ui/cn";
 import { AddressLink, AnimatedNumber, CopyButton, TokenAvatar } from "../ui/interactive";
 import { Badge } from "../ui/primitives";
 import { ChangeText, PhasePill } from "../ui/status";
+import { ShareButton } from "./share-button";
 
 function Social({ href, label, icon: Icon }: { href: string; label: string; icon: typeof Globe }) {
   return (
@@ -17,7 +19,7 @@ function Social({ href, label, icon: Icon }: { href: string; label: string; icon
       rel="noreferrer noopener"
       aria-label={label}
       title={label}
-      className="grid size-8 place-items-center rounded-lg border border-line bg-white/[0.04] text-muted transition hover:border-line-strong hover:text-ink"
+      className="grid size-10 place-items-center rounded-xl border border-line bg-white/[0.04] text-muted transition hover:border-line-strong hover:text-ink sm:size-8 sm:rounded-lg"
     >
       <Icon className="size-3.5" aria-hidden />
     </a>
@@ -25,14 +27,15 @@ function Social({ href, label, icon: Icon }: { href: string; label: string; icon
 }
 
 export function LaunchHeader({ launch: l, phase }: { launch: LaunchSummary; phase: Phase }) {
+  const live = phase === "live";
   return (
-    <header className="flex flex-col gap-5 pb-6 md:flex-row md:items-end md:justify-between">
+    <header className="animate-in flex flex-col gap-5 pb-6 md:flex-row md:items-end md:justify-between">
       <div className="flex min-w-0 gap-4">
-        <TokenAvatar src={l.image} symbol={l.symbol} size={72} className="hidden sm:block" />
-        <TokenAvatar src={l.image} symbol={l.symbol} size={56} className="sm:hidden" />
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-2xl font-semibold tracking-tight sm:text-3xl">{l.name}</h1>
+        <TokenAvatar src={l.image} symbol={l.symbol} size={64} className="hidden sm:block" />
+        <TokenAvatar src={l.image} symbol={l.symbol} size={52} className="sm:hidden" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+            <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight sm:text-[28px]">{l.name}</h1>
             <span className="text-lg font-medium text-muted">${l.symbol}</span>
             <PhasePill phase={phase} />
             {l.whitelisted ? (
@@ -41,9 +44,9 @@ export function LaunchHeader({ launch: l, phase }: { launch: LaunchSummary; phas
               </Badge>
             ) : null}
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px] text-dim">
-            <span className="inline-flex items-center gap-1.5">
-              Mint <AddressLink address={l.mint} label={shortAddr(l.mint, 6)} />
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-dim">
+            <span className="inline-flex items-center gap-2">
+              Mint <AddressLink address={l.mint} label={shortAddr(l.mint, 5)} />
               <CopyButton value={l.mint} label="Copy mint address" />
             </span>
             <span className="inline-flex items-center gap-1.5">
@@ -57,20 +60,28 @@ export function LaunchHeader({ launch: l, phase }: { launch: LaunchSummary; phas
               </span>
             ) : null}
           </div>
-          {l.description ? <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">{l.description}</p> : null}
+          {l.description ? (
+            <p className="mt-3 line-clamp-2 max-w-2xl text-sm leading-relaxed text-muted" title={l.description}>
+              {l.description}
+            </p>
+          ) : null}
         </div>
+        <ShareButton launch={l} compact className="self-start md:hidden" />
       </div>
-      {phase === "live" ? (
-        <div className="shrink-0 md:text-right">
-          <div className="text-xs font-medium text-dim">Price (SOL)</div>
-          <div className="text-3xl font-semibold tracking-tight">
-            <AnimatedNumber value={l.priceSol} format={fmtPrice} />
+      <div className={cn("flex shrink-0 items-end gap-4 md:justify-end", !live && "hidden md:flex")}>
+        {live ? (
+          <div className="md:text-right">
+            <div className="text-xs font-medium text-dim">Price · SOL</div>
+            <div className="text-[32px] leading-tight font-semibold tracking-tight">
+              <AnimatedNumber value={l.priceSol} format={fmtPrice} flash />
+            </div>
+            <div className="mt-0.5 text-sm">
+              <ChangeText value={l.change24h} /> <span className="text-dim">24h · mcap {fmtSolValue(l.marketCapSol)} SOL</span>
+            </div>
           </div>
-          <div className="mt-0.5 text-sm tabular-nums">
-            <ChangeText value={l.change24h} /> <span className="text-dim">24h · mcap {fmtSolValue(l.marketCapSol)} SOL</span>
-          </div>
-        </div>
-      ) : null}
+        ) : null}
+        <ShareButton launch={l} className="hidden md:block" />
+      </div>
     </header>
   );
 }

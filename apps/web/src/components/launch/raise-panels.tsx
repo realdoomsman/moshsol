@@ -133,7 +133,11 @@ export function BundleNowCard({ launch: l }: { launch: LaunchSummary }) {
       <CardHeader
         title="If it launched now"
         icon={<ShieldCheck className="size-3.5 text-lime" aria-hidden />}
-        right={<span className="text-[11px] text-dim">bundle ≤ {l.bundleSupplyBps / 100}% · reserve {l.reserveBps / 100}%</span>}
+        right={
+          <span className="hidden text-[11px] text-dim sm:inline">
+            bundle ≤ {l.bundleSupplyBps / 100}% · reserve {l.reserveBps / 100}%
+          </span>
+        }
       />
       <div className="px-5 pb-5">
         {b ? (
@@ -156,6 +160,9 @@ export function BundleNowCard({ launch: l }: { launch: LaunchSummary }) {
           <p className="text-sm text-dim">The bundle preview appears once the first deposit lands.</p>
         )}
         <p className="mt-4 text-xs leading-relaxed text-dim">
+          <span className="sm:hidden">
+            Bundle ≤ {l.bundleSupplyBps / 100}% of supply · reserve {l.reserveBps / 100}% of the raise.{" "}
+          </span>
           Launch fee {l.terms.launchFeeBps / 100}% · the bundle is bought before any public trade, then locked in the
           vault forever. Trading fee {l.terms.tradeFeeBps / 100}%, of which {l.terms.backerFeeShareBps / 100}% goes to
           backers.
