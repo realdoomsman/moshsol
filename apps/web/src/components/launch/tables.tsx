@@ -6,7 +6,7 @@ import { Bot, ExternalLink, Inbox, Users } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { explorerTx } from "@/lib/explorer";
 import { fmtLamports, fmtTokens } from "@/lib/format";
-import { useNow } from "@/lib/hooks";
+import { useMounted, useNow } from "@/lib/hooks";
 import {
   tradeKey,
   useAgentStatus,
@@ -161,8 +161,10 @@ function SideCell({ t }: { t: TradeRow }) {
 }
 
 function TimeCell({ ts, now }: { ts: number; now: number }) {
+  // Local time zone and locale exist only in the browser; the server-rendered row omits the tooltip.
+  const mounted = useMounted();
   return (
-    <td className="whitespace-nowrap text-dim" title={new Date(ts * 1000).toLocaleString()}>
+    <td className="whitespace-nowrap text-dim" title={mounted ? new Date(ts * 1000).toLocaleString() : undefined}>
       {timeAgo(ts, now)}
     </td>
   );

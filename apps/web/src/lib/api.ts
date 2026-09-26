@@ -23,10 +23,20 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Server renders never wait long on the indexer/agent: a slow request is dropped and the page
+ * falls back to loading that data in the browser.
+ */
+const SERVER_TIMEOUT_MS = 1_500;
+
 async function request<T>(base: string, path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${base}${path}`, { cache: "no-store", ...init });
+    res = await fetch(`${base}${path}`, {
+      cache: "no-store",
+      signal: typeof window === "undefined" ? AbortSignal.timeout(SERVER_TIMEOUT_MS) : undefined,
+      ...init,
+    });
   } catch {
     throw new ApiError(0, `Can't reach ${base}`);
   }

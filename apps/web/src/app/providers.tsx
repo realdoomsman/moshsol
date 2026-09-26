@@ -10,6 +10,7 @@ import { MotionConfig } from "motion/react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Toaster, toast } from "sonner";
 import { CLUSTER, IS_TEST_CLUSTER, RPC_URL, WS_URL } from "@/lib/env";
+import { ServerNowContext } from "@/lib/hooks";
 import { LiveProvider } from "@/lib/live";
 
 const BURNER_STORAGE_KEY = "moshsol:burner-secret";
@@ -54,7 +55,7 @@ function createBurner(): Adapter {
   }
 }
 
-export function Providers({ children }: { children: ReactNode }) {
+export function Providers({ now, children }: { now: number; children: ReactNode }) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -70,15 +71,17 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <MotionConfig reducedMotion="user">
-        <ConnectionProvider endpoint={RPC_URL} config={{ commitment: "confirmed", wsEndpoint: WS_URL }}>
-          <WalletProvider wallets={wallets} autoConnect onError={onError}>
-            <WalletModalProvider>
-              <LiveProvider>{children}</LiveProvider>
-            </WalletModalProvider>
-          </WalletProvider>
-        </ConnectionProvider>
-      </MotionConfig>
+      <ServerNowContext value={now}>
+        <MotionConfig reducedMotion="user">
+          <ConnectionProvider endpoint={RPC_URL} config={{ commitment: "confirmed", wsEndpoint: WS_URL }}>
+            <WalletProvider wallets={wallets} autoConnect onError={onError}>
+              <WalletModalProvider>
+                <LiveProvider>{children}</LiveProvider>
+              </WalletModalProvider>
+            </WalletProvider>
+          </ConnectionProvider>
+        </MotionConfig>
+      </ServerNowContext>
       <Toaster
         theme="dark"
         position="bottom-right"

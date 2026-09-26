@@ -1,7 +1,8 @@
 import { launchPda } from "@moshsol/sdk";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { cache } from "react";
-import { INDEXER_URL, RPC_URL } from "./env";
+import { ApiError, api } from "./api";
+import { RPC_URL } from "./env";
 import type { LaunchSummary } from "./types";
 
 export type ServerLaunch =
@@ -18,18 +19,15 @@ export function parseMint(mint: string): PublicKey | null {
   }
 }
 
-/** Indexer snapshot of a launch for server rendering (metadata, 404s, OG image). Deduped per request. */
+/**
+ * Indexer snapshot of a launch for server rendering (metadata, 404s, OG image, the page's query
+ * cache). Deduped per request, so `generateMetadata` and the page share one fetch.
+ */
 export const loadLaunch = cache(async (mint: string): Promise<ServerLaunch> => {
   try {
-    const res = await fetch(`${INDEXER_URL}/api/launches/${mint}`, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(4_000),
-    });
-    if (res.status === 404) return { state: "missing" };
-    if (!res.ok) return { state: "unreachable" };
-    return { state: "found", launch: (await res.json()) as LaunchSummary };
-  } catch {
-    return { state: "unreachable" };
+    return { state: "found", launch: await api.launch(mint) };
+  } catch (e) {
+    return e instanceof ApiError && e.status === 404 ? { state: "missing" } : { state: "unreachable" };
   }
 });
 

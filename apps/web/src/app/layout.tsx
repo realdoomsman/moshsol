@@ -1,11 +1,14 @@
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import type { Metadata, Viewport } from "next";
+import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { ActivityTicker } from "@/components/shell/activity-ticker";
 import { Footer } from "@/components/shell/footer";
 import { Header } from "@/components/shell/header";
 import { SITE_URL } from "@/lib/env";
+import { Hydrate, prefetch, serverQueryClient } from "@/lib/prefetch";
+import { activityQuery } from "@/lib/query-options";
 import "./globals.css";
 import { Providers } from "./providers";
 
@@ -27,14 +30,27 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+/** Renders alongside the page (both prefetch concurrently), so the ticker's first paint shows events. */
+async function PrefetchedTicker() {
+  const client = serverQueryClient();
+  await prefetch(client, activityQuery());
+  return (
+    <Hydrate client={client}>
+      <ActivityTicker />
+    </Hydrate>
+  );
+}
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // Every page renders live indexer data per request (never prerendered at build time).
+  await connection();
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body>
         <div className="app-bg" aria-hidden />
-        <Providers>
+        <Providers now={Math.floor(Date.now() / 1000)}>
           <Header />
-          <ActivityTicker />
+          <PrefetchedTicker />
           <main className="mx-auto w-full max-w-[1400px] px-4 pt-6 sm:px-6 lg:px-8">{children}</main>
           <Footer />
         </Providers>

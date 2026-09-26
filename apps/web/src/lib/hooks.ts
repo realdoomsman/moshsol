@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
 
 const noopSubscribe = () => () => undefined;
 
@@ -13,11 +13,22 @@ export function useMounted(): boolean {
   );
 }
 
+/**
+ * Unix seconds at which the server rendered this document. Clock-dependent UI (phases, countdowns,
+ * "2m ago") renders against it on the server and while hydrating, so both passes agree.
+ */
+export const ServerNowContext = createContext<number | null>(null);
+
 /** Wall clock in unix seconds, ticking every `ms`. */
 export function useNow(ms = 1_000): number {
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const serverNow = useContext(ServerNowContext);
+  const hydrating = !useMounted();
+  const [now, setNow] = useState(() => (hydrating && serverNow !== null ? serverNow : Math.floor(Date.now() / 1000)));
   useEffect(() => {
-    const id = window.setInterval(() => setNow(Math.floor(Date.now() / 1000)), ms);
+    const tick = () => setNow(Math.floor(Date.now() / 1000));
+    // Catch up from the server's clock right after hydration.
+    tick();
+    const id = window.setInterval(tick, ms);
     return () => window.clearInterval(id);
   }, [ms]);
   return now;

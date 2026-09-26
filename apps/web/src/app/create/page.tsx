@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
 import { CreateForm } from "@/components/create/create-form";
+import { Hydrate, prefetch, serverQueryClient } from "@/lib/prefetch";
+import { platformQuery } from "@/lib/query-options";
 
 export const metadata: Metadata = { title: "Create a launch" };
 
-export default function CreatePage() {
+export default async function CreatePage() {
+  // Fees, raise bounds and the preview defaults come from the platform params.
+  const client = serverQueryClient();
+  await prefetch(client, platformQuery());
   return (
     <div className="pt-4 pb-8">
       <div className="mb-8 max-w-2xl">
@@ -13,7 +18,9 @@ export default function CreatePage() {
           an on-chain vault forever — traded only by rate-limited agents, with backers earning the fees.
         </p>
       </div>
-      <CreateForm />
+      <Hydrate client={client}>
+        <CreateForm />
+      </Hydrate>
     </div>
   );
 }

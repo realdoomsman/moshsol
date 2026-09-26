@@ -2,15 +2,32 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useMemo, useState } from "react";
-import { ApiError, api, type LaunchFilter, type LaunchSort, type Timeframe } from "./api";
+import { ApiError, type LaunchFilter, type LaunchSort, type Timeframe } from "./api";
 import { useFallbackInterval } from "./live";
-import type { DepositRow, LaunchSummary, TradeRow } from "./types";
+import {
+  activityQuery,
+  agentStatusQuery,
+  agentsQuery,
+  backersQuery,
+  candlesQuery,
+  depositFeed,
+  FEED_PAGE,
+  type Feed,
+  feedHeadQuery,
+  holdersQuery,
+  launchesQuery,
+  launchQuery,
+  platformQuery,
+  portfolioQuery,
+  recentTradesQuery,
+  statsQuery,
+  tradeFeed,
+} from "./query-options";
+import type { DepositRow, TradeRow } from "./types";
 
 export function usePlatform() {
   return useQuery({
-    queryKey: ["platform"],
-    queryFn: api.platform,
-    staleTime: 60_000,
+    ...platformQuery(),
     // Everything that quotes fees depends on this; keep trying through indexer restarts.
     refetchInterval: (q) => (q.state.status === "error" ? 3_000 : false),
   });
@@ -18,29 +35,23 @@ export function usePlatform() {
 
 export function useStats() {
   const interval = useFallbackInterval(10_000);
-  return useQuery({ queryKey: ["stats"], queryFn: api.stats, refetchInterval: interval });
+  return useQuery({ ...statsQuery(), refetchInterval: interval });
 }
 
 export function useLaunches(p: { status: LaunchFilter; sort: LaunchSort; q?: string }) {
   const interval = useFallbackInterval(8_000);
   return useQuery({
-    queryKey: ["launches", p.status, p.sort, p.q ?? ""],
-    queryFn: () => api.launches({ ...p, limit: 200 }),
+    ...launchesQuery(p),
     refetchInterval: interval,
     placeholderData: (prev) => prev,
   });
 }
 
-/**
- * Launch summary. `initial` is the server-rendered snapshot (null = not indexed yet). Retries 404s
- * briefly: a launch created seconds ago may not be indexed yet.
- */
-export function useLaunch(mint: string, initial?: LaunchSummary | null) {
+/** Launch summary. Retries 404s briefly: a launch created seconds ago may not be indexed yet. */
+export function useLaunch(mint: string) {
   const interval = useFallbackInterval(5_000);
   return useQuery({
-    queryKey: ["launch", mint],
-    queryFn: () => api.launch(mint),
-    initialData: initial ?? undefined,
+    ...launchQuery(mint),
     refetchInterval: (q) => (q.state.error instanceof ApiError && q.state.error.status === 404 ? 1_500 : interval),
     retry: (count, err) => !(err instanceof ApiError && err.status === 404) && count < 3,
   });
@@ -50,8 +61,7 @@ export function useLaunch(mint: string, initial?: LaunchSummary | null) {
 export function useTrades(mint: string, limit: number, enabled = true) {
   const interval = useFallbackInterval(5_000);
   return useQuery({
-    queryKey: ["trades", mint, "recent", limit],
-    queryFn: () => api.trades(mint, { limit }),
+    ...recentTradesQuery(mint, limit),
     refetchInterval: interval,
     enabled,
   });
@@ -60,8 +70,7 @@ export function useTrades(mint: string, limit: number, enabled = true) {
 export function useCandles(mint: string, tf: Timeframe, enabled = true) {
   const interval = useFallbackInterval(5_000);
   return useQuery({
-    queryKey: ["candles", mint, tf],
-    queryFn: () => api.candles(mint, tf),
+    ...candlesQuery(mint, tf),
     refetchInterval: interval,
     enabled,
     placeholderData: (prev) => prev,
@@ -70,7 +79,7 @@ export function useCandles(mint: string, tf: Timeframe, enabled = true) {
 
 export function useBackers(mint: string) {
   const interval = useFallbackInterval(8_000);
-  return useQuery({ queryKey: ["backers", mint], queryFn: () => api.backers(mint), refetchInterval: interval });
+  return useQuery({ ...backersQuery(mint), refetchInterval: interval });
 }
 
 export interface PagedFeed<T> {
@@ -97,15 +106,14 @@ interface OlderPages<T> {
  * rows it already has.
  */
 function usePagedFeed<T extends { timestamp: number }>(p: {
-  queryKey: readonly unknown[];
-  pageSize: number;
+  feed: Feed<T>;
   interval: number;
-  fetchPage: (before: number | undefined) => Promise<T[]>;
   rowKey: (row: T) => string;
 }): PagedFeed<T> {
-  const { queryKey, pageSize, fetchPage, rowKey } = p;
-  const id = JSON.stringify(queryKey);
-  const head = useQuery({ queryKey: [...queryKey, "head"], queryFn: () => fetchPage(undefined), refetchInterval: p.interval });
+  const { feed, rowKey } = p;
+  const { fetchPage } = feed;
+  const id = JSON.stringify(feed.queryKey);
+  const head = useQuery({ ...feedHeadQuery(feed), refetchInterval: p.interval });
   const [pages, setPages] = useState<OlderPages<T>>({ id, rows: [], exhausted: false });
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -134,14 +142,14 @@ function usePagedFeed<T extends { timestamp: number }>(p: {
         const seen = new Set(rows.map(rowKey));
         let page = await fetchPage(last.timestamp + 1);
         let fresh = page.filter((r) => !seen.has(rowKey(r)));
-        if (fresh.length === 0 && page.length >= pageSize) {
+        if (fresh.length === 0 && page.length >= FEED_PAGE) {
           // A full page inside one second: step past that second.
           page = await fetchPage(last.timestamp);
           fresh = page.filter((r) => !seen.has(rowKey(r)));
         }
         setPages((cur) => {
           const base = cur.id === id ? cur.rows : [];
-          return { id, rows: [...base, ...fresh], exhausted: page.length < pageSize || fresh.length === 0 };
+          return { id, rows: [...base, ...fresh], exhausted: page.length < FEED_PAGE || fresh.length === 0 };
         });
       } catch (e) {
         setLoadError(e instanceof Error ? e.message : String(e));
@@ -149,13 +157,13 @@ function usePagedFeed<T extends { timestamp: number }>(p: {
         setLoadingMore(false);
       }
     })();
-  }, [rows, loadingMore, fetchPage, rowKey, pageSize, id]);
+  }, [rows, loadingMore, fetchPage, rowKey, id]);
 
   return {
     rows,
     headKeys: head.data?.map(rowKey),
     isLoading: head.isLoading,
-    hasMore: !older.exhausted && (head.data?.length ?? 0) >= pageSize,
+    hasMore: !older.exhausted && (head.data?.length ?? 0) >= FEED_PAGE,
     loadingMore,
     loadError,
     loadMore,
@@ -166,37 +174,22 @@ function usePagedFeed<T extends { timestamp: number }>(p: {
 export const tradeKey = (t: TradeRow) => `${t.signature}:${t.isBuy ? "b" : "s"}:${t.tokenAmount}`;
 const depositKey = (d: DepositRow) => `${d.signature}:${d.amount}`;
 
-export const FEED_PAGE = 50;
-
 export function useTradeFeed(mint: string, agentOnly = false): PagedFeed<TradeRow> {
   const interval = useFallbackInterval(5_000);
-  const fetchPage = useCallback(
-    async (before: number | undefined) => (await api.trades(mint, { limit: FEED_PAGE, before, agent: agentOnly })).trades,
-    [mint, agentOnly],
-  );
-  return usePagedFeed({
-    queryKey: ["trades", mint, agentOnly ? "agent" : "all"],
-    pageSize: FEED_PAGE,
-    interval,
-    fetchPage,
-    rowKey: tradeKey,
-  });
+  const feed = useMemo(() => tradeFeed(mint, agentOnly), [mint, agentOnly]);
+  return usePagedFeed({ feed, interval, rowKey: tradeKey });
 }
 
 export function useDepositFeed(mint: string): PagedFeed<DepositRow> {
   const interval = useFallbackInterval(8_000);
-  const fetchPage = useCallback(
-    async (before: number | undefined) => (await api.deposits(mint, { limit: FEED_PAGE, before })).deposits,
-    [mint],
-  );
-  return usePagedFeed({ queryKey: ["deposits", mint], pageSize: FEED_PAGE, interval, fetchPage, rowKey: depositKey });
+  const feed = useMemo(() => depositFeed(mint), [mint]);
+  return usePagedFeed({ feed, interval, rowKey: depositKey });
 }
 
 export function useHolders(mint: string, limit: number) {
   const interval = useFallbackInterval(10_000);
   return useQuery({
-    queryKey: ["holders", mint, limit],
-    queryFn: () => api.holders(mint, limit),
+    ...holdersQuery(mint, limit),
     refetchInterval: interval,
     placeholderData: (prev) => prev,
   });
@@ -205,8 +198,7 @@ export function useHolders(mint: string, limit: number) {
 export function usePortfolio(wallet: string | null) {
   const interval = useFallbackInterval(8_000);
   return useQuery({
-    queryKey: ["portfolio", wallet],
-    queryFn: () => api.portfolio(wallet!),
+    ...portfolioQuery(wallet!),
     enabled: !!wallet,
     refetchInterval: interval,
   });
@@ -214,18 +206,17 @@ export function usePortfolio(wallet: string | null) {
 
 export function useActivity() {
   const interval = useFallbackInterval(5_000);
-  return useQuery({ queryKey: ["activity"], queryFn: () => api.activity(40), refetchInterval: interval });
+  return useQuery({ ...activityQuery(), refetchInterval: interval });
 }
 
 export function useAgents() {
   const interval = useFallbackInterval(8_000);
-  return useQuery({ queryKey: ["agents"], queryFn: api.agents, refetchInterval: interval });
+  return useQuery({ ...agentsQuery(), refetchInterval: interval });
 }
 
 export function useAgentStatus() {
   return useQuery({
-    queryKey: ["agent-status"],
-    queryFn: api.agentStatus,
+    ...agentStatusQuery(),
     refetchInterval: 4_000,
     retry: false,
   });

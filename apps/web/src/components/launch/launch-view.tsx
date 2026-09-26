@@ -6,7 +6,7 @@ import { useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ApiError } from "@/lib/api";
 import { fmtSolValue } from "@/lib/format";
-import { useMounted, useNow } from "@/lib/hooks";
+import { useNow } from "@/lib/hooks";
 import { phaseOf, type Phase } from "@/lib/launch";
 import { useLaunch } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
@@ -237,14 +237,12 @@ function RaiseLayout({ launch: l, phase }: { launch: LaunchSummary; phase: Phase
   );
 }
 
-export function LaunchView({ mint, initial }: { mint: string; initial: LaunchSummary | null }) {
-  const mounted = useMounted();
-  const { data, error, isLoading } = useLaunch(mint, initial);
+export function LaunchView({ mint }: { mint: string }) {
+  const { data, error, isLoading } = useLaunch(mint);
   const now = useNow();
   const [openedAt] = useState(() => Math.floor(Date.now() / 1000));
 
-  // Everything below depends on the wall clock; render it only on the client so SSR can't disagree.
-  if (!mounted || (isLoading && !data)) return <LaunchSkeleton />;
+  if (isLoading && !data) return <LaunchSkeleton />;
   if (!data) {
     const notFound = error instanceof ApiError && error.status === 404;
     if (notFound && now - openedAt < 60) {

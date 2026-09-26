@@ -24,7 +24,7 @@ import { CandlestickChart, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Timeframe } from "@/lib/api";
 import { fmtSolValue } from "@/lib/format";
-import { useLocalStorage } from "@/lib/hooks";
+import { useLocalStorage, useMounted } from "@/lib/hooks";
 import { useCandles, useTrades } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { cn } from "../ui/cn";
@@ -123,6 +123,7 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
   const refs = useRef<ChartRefs | null>(null);
   const fitted = useRef("");
   const [ready, setReady] = useState(false);
+  const mounted = useMounted();
   const [hover, setHover] = useState<number | null>(null);
   const mult = unit === "mcap" ? SUPPLY : 1;
   const fmt = unit === "mcap" ? fmtSolValue : fmtPrice;
@@ -338,7 +339,8 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
         {shown ? (
           <div className="pointer-events-none absolute top-1 left-3 z-10 grid max-w-[calc(100%-5.5rem)] gap-1 font-mono text-[11px] leading-tight sm:left-4">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-              <span className="hidden text-muted sm:inline">{dateTime.format(new Date(shown.time * 1000))}</span>
+              {/* Local time zone exists only in the browser; the server-rendered legend leaves it blank. */}
+              <span className="hidden text-muted sm:inline">{mounted ? dateTime.format(new Date(shown.time * 1000)) : null}</span>
               <LegendValue k="O" v={fmt(shown.open)} className="hidden sm:inline" />
               <LegendValue k="H" v={fmt(shown.high)} className="hidden sm:inline" />
               <LegendValue k="L" v={fmt(shown.low)} className="hidden sm:inline" />
