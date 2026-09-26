@@ -1,7 +1,7 @@
 "use client";
 
 import { Flame, Rocket, Search, SearchX, Sparkles } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LaunchSort } from "@/lib/api";
 import { useDebounced, useNow } from "@/lib/hooks";
 import { phaseOf } from "@/lib/launch";
@@ -49,6 +49,15 @@ export function Explore() {
   }, [data, now]);
 
   const list = grouped[tab];
+
+  // A search whose matches all sit in another tab jumps there once per new result set; a manual
+  // tab change afterwards sticks (the effect doesn't depend on `tab`).
+  useEffect(() => {
+    if (!q || !data || grouped[tab].length > 0) return;
+    const next = (["live", "raising", "ended"] as const).find((t) => grouped[t].length > 0);
+    if (next) setTab(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, data]);
 
   return (
     <>
