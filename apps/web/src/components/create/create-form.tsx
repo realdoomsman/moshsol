@@ -22,7 +22,6 @@ import { api } from "@/lib/api";
 import { useMoshClient, useSolBalance } from "@/lib/chain";
 import { INDEXER_URL } from "@/lib/env";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
-import { useDebounced } from "@/lib/hooks";
 import { usePlatform } from "@/lib/queries";
 import { useTx } from "@/lib/tx";
 import { Button } from "../ui/button";
@@ -151,13 +150,11 @@ export function CreateForm() {
   );
   const err = (f: DraftField) => (showAll || touched[f] ? (v.errors[f] ?? null) : null);
 
-  // Memoized by the primitives so the debounce timer only restarts on real edits, not on every
-  // re-render (live data re-renders this form continuously).
-  const rawBundleInputs = useMemo(
+  // previewBundle is a handful of bigint ops — cheap enough to run on every keystroke.
+  const bundleInputs = useMemo(
     () => ({ min: draft.raiseMin, max: draft.raiseMax, bundle: draft.bundlePct, reserve: draft.reservePct }),
     [draft.raiseMin, draft.raiseMax, draft.bundlePct, draft.reservePct],
   );
-  const bundleInputs = useDebounced(rawBundleInputs, 120);
   const previews = useMemo(() => {
     if (!params) return null;
     const toLamports = (s: string) => {
