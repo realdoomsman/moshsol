@@ -11,10 +11,9 @@ import {
   type BundlePreview,
 } from "@moshsol/sdk";
 import { ACCOUNT_SIZE, ExtensionType, getMintLen } from "@solana/spl-token";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { Keypair } from "@solana/web3.js";
-import { useQuery } from "@tanstack/react-query";
 import { AtSign, Clock, Globe, Lock, Rocket, Send, ShieldCheck, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -72,27 +71,25 @@ function fmtDuration(secs: number): string {
   return `${Math.round(secs / 60)} min`;
 }
 
-/** Rent for the launch, mint (+ on-mint metadata TLV) and the curve/vault token accounts. */
-function useCreateRent(nameLen: number, symbolLen: number) {
-  const { connection } = useConnection();
+/**
+ * Rent for the launch, mint (+ on-mint metadata TLV) and the curve/vault token accounts.
+ * Rent-exempt minimum is `(len + 128) * 3480 * 2` lamports on every Solana cluster, so this is
+ * computed locally instead of spending public-RPC quota on getMinimumBalanceForRentExemption.
+ */
+function useCreateRent(nameLen: number, symbolLen: number): bigint {
   const client = useMoshClient();
-  return useQuery({
-    queryKey: ["create-rent", nameLen, symbolLen],
-    staleTime: 5 * 60_000,
-    queryFn: async () => {
-      // The metadata URI is only known after upload; the indexer issues `${INDEXER_URL}/files/meta/<id>.json`.
-      const uriLen = `${INDEXER_URL}/files/meta/`.length + 40;
-      const metadataLen = 4 + 32 + 32 + 4 * 4 + nameLen + symbolLen + uriLen;
-      const sizes = [
-        client.program.account.launch.size,
-        getMintLen([ExtensionType.MetadataPointer]) + metadataLen,
-        ACCOUNT_SIZE,
-        ACCOUNT_SIZE,
-      ];
-      const rents = await Promise.all(sizes.map((s) => connection.getMinimumBalanceForRentExemption(s, "confirmed")));
-      return rents.reduce((a, b) => a + BigInt(b), 0n);
-    },
-  });
+  return useMemo(() => {
+    // The metadata URI is only known after upload; the indexer issues `${INDEXER_URL}/files/meta/<id>.json`.
+    const uriLen = `${INDEXER_URL}/files/meta/`.length + 40;
+    const metadataLen = 4 + 32 + 32 + 4 * 4 + nameLen + symbolLen + uriLen;
+    const sizes = [
+      client.program.account.launch.size,
+      getMintLen([ExtensionType.MetadataPointer]) + metadataLen,
+      ACCOUNT_SIZE,
+      ACCOUNT_SIZE,
+    ];
+    return sizes.reduce((sum, len) => sum + BigInt((len + 128) * 3480 * 2), 0n);
+  }, [client, nameLen, symbolLen]);
 }
 
 function BundleColumn({ title, raised, p }: { title: string; raised: bigint; p: BundlePreview }) {
@@ -154,10 +151,13 @@ export function CreateForm() {
   );
   const err = (f: DraftField) => (showAll || touched[f] ? (v.errors[f] ?? null) : null);
 
-  const bundleInputs = useDebounced(
-    { min: draft.raiseMin, max: draft.raiseMax, bundle: draft.bundlePct, reserve: draft.reservePct },
-    120,
+  // Memoized by the primitives so the debounce timer only restarts on real edits, not on every
+  // re-render (live data re-renders this form continuously).
+  const rawBundleInputs = useMemo(
+    () => ({ min: draft.raiseMin, max: draft.raiseMax, bundle: draft.bundlePct, reserve: draft.reservePct }),
+    [draft.raiseMin, draft.raiseMax, draft.bundlePct, draft.reservePct],
   );
+  const bundleInputs = useDebounced(rawBundleInputs, 120);
   const previews = useMemo(() => {
     if (!params) return null;
     const toLamports = (s: string) => {
@@ -187,7 +187,7 @@ export function CreateForm() {
   const symbolLen = new TextEncoder().encode(draft.symbol.trim()).length;
   const rent = useCreateRent(Math.max(nameLen, 1), Math.max(symbolLen, 1));
   const createFee = params ? BigInt(params.createFeeLamports) : null;
-  const totalCost = rent.data !== undefined && createFee !== null ? rent.data + createFee + TX_FEE_LAMPORTS : null;
+  const totalCost = createFee !== null ? rent + createFee + TX_FEE_LAMPORTS : null;
   const insufficient = balance.data !== undefined && totalCost !== null && balance.data < totalCost;
   const selfExcluded =
     !!publicKey && draft.whitelistOn && v.whitelist.length > 0 && !v.whitelist.some((k) => k.equals(publicKey));
@@ -656,7 +656,7 @@ export function CreateForm() {
                 </span>
               }
             >
-              {rent.data !== undefined ? `≈ ${fmtLamports(rent.data)} SOL` : "—"}
+              {`≈ ${fmtLamports(rent)} SOL`}
             </Row>
             <Row label="Network fee">≈ {fmtLamports(TX_FEE_LAMPORTS)} SOL</Row>
             <div className="my-1 h-px bg-line" />
