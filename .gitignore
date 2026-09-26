@@ -10,3 +10,4 @@ test-ledger/
 apps/indexer/data/
 .localnet/
 .devnet/
+*.tsbuildinfo
