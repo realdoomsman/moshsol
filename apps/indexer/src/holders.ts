@@ -1,4 +1,4 @@
-import { TOKEN_2022_PROGRAM_ID, TOTAL_SUPPLY, curvePda, vaultPda, type LaunchJson } from "@moshsol/sdk";
+import { TOKEN_2022_PROGRAM_ID, TOTAL_SUPPLY, curvePda, tokenAta, vaultPda } from "@moshsol/sdk";
 import { PublicKey, type Connection } from "@solana/web3.js";
 import type { Store } from "./db";
 import type { HolderRow } from "./types";
@@ -15,10 +15,9 @@ export interface HolderSet {
  * Token-2022 holder snapshots, cached per mint for `ttlMs`; concurrent requests share one RPC call.
  *
  * Preferred source is getProgramAccounts (memcmp mint @0, sliced to owner+amount) — exact.
- * Public RPCs exclude the token programs from secondary indexes (and rate-limit
- * getTokenLargestAccounts), so on the first such error we switch permanently to the indexed trade
- * ledger: curve/vault balances from the launch snapshot plus each trader's net curve buys. That
- * ledger ignores wallet-to-wallet transfers, so treat it as an estimate.
+ * Public RPCs exclude the token programs from secondary indexes, so on the first such error we
+ * switch permanently to reading the actual token accounts of the curve, the vault and every
+ * wallet that ever traded the launch (from the indexed trade ledger).
  */
 export class Holders {
   private readonly cache = new Map<string, HolderSet>();
@@ -83,14 +82,29 @@ export class Holders {
       }
     }
     if (this.gpaUnavailable) {
-      const snapshot = this.store.launch(launch)?.snapshot;
-      if (snapshot) {
-        const l = JSON.parse(snapshot) as LaunchJson;
-        add(curvePda(launchKey, this.programId), launchKey, BigInt(l.tokenReserve));
-        add(vaultPda(launchKey, this.programId), launchKey, BigInt(l.vaultTokens));
-      }
-      for (const { trader, net } of this.store.traderNetTokens(launch)) {
-        add(new PublicKey(trader), new PublicKey(trader), net);
+      // Exact balances for the curve, the vault and every wallet that ever traded this launch
+      // (their Token-2022 ATAs), fetched 100 at a time. Only wallets that received tokens by
+      // transfer without ever trading are missed.
+      const mintKey = new PublicKey(mint);
+      const entries: { tokenAccount: PublicKey; owner: PublicKey }[] = [
+        { tokenAccount: curvePda(launchKey, this.programId), owner: launchKey },
+        { tokenAccount: vaultPda(launchKey, this.programId), owner: launchKey },
+        ...this.store.traders(launch).map((t) => {
+          const owner = new PublicKey(t);
+          return { tokenAccount: tokenAta(owner, mintKey), owner };
+        }),
+      ];
+      for (let i = 0; i < entries.length; i += 100) {
+        const batch = entries.slice(i, i + 100);
+        const infos = await this.connection.getMultipleAccountsInfo(
+          batch.map((e) => e.tokenAccount),
+          "confirmed",
+        );
+        batch.forEach((e, j) => {
+          const data = infos[j]?.data;
+          // Token account layout: mint(32) owner(32) amount(u64 LE) …
+          if (data && data.length >= 72) add(e.tokenAccount, e.owner, data.readBigUInt64LE(64));
+        });
       }
     }
     const holders: HolderRow[] = [];
