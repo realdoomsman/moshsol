@@ -5,7 +5,7 @@ import { Bot, ShieldCheck } from "lucide-react";
 import { fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { useAgentStatus } from "@/lib/queries";
-import type { AgentZones } from "@/lib/trade";
+import type { AgentZones } from "@moshsol/sdk";
 import type { LaunchSummary } from "@/lib/types";
 import { cn } from "../ui/cn";
 import { Hint } from "../ui/interactive";

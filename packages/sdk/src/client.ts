@@ -491,13 +491,17 @@ export function describeError(err: unknown): string {
   const all = [msg, ...logs].join("\n");
   const m = all.match(/Error Message: ([^.\n]+)/);
   if (m) return m[1]!;
-  const code = all.match(/custom program error: 0x([0-9a-f]+)/i);
-  if (code) {
-    const n = parseInt(code[1]!, 16);
+  // Log form ("custom program error: 0x1783") or TransactionError JSON ({"Custom":6019}).
+  const hex = all.match(/custom program error: 0x([0-9a-f]+)/i);
+  const dec = all.match(/"Custom":\s*(\d+)/);
+  const n = hex ? parseInt(hex[1]!, 16) : dec ? Number(dec[1]) : null;
+  if (n !== null) {
     const e = IDL.errors.find((x) => x.code === n);
     if (e) return e.msg;
   }
   if (/User rejected/i.test(msg)) return "Transaction rejected in wallet";
-  if (/insufficient (funds|lamports)/i.test(all)) return "Insufficient SOL balance";
+  if (/insufficient (funds|lamports)|AccountNotFound|InsufficientFundsForFee/i.test(all)) {
+    return "Insufficient SOL balance";
+  }
   return msg.length > 160 ? `${msg.slice(0, 160)}…` : msg;
 }

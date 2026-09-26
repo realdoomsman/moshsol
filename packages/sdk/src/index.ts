@@ -4,3 +4,4 @@ export * from "./math";
 export * from "./merkle";
 export * from "./format";
 export * from "./client";
+export * from "./agents";

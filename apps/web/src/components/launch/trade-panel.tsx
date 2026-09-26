@@ -20,7 +20,7 @@ import { useMoshClient, useSolBalance, useTokenBalance } from "@/lib/chain";
 import { fmtLamports, fmtTokens } from "@/lib/format";
 import { useLocalStorage } from "@/lib/hooks";
 import { usePlatform } from "@/lib/queries";
-import { solForTokens } from "@/lib/trade";
+import { solForTokens } from "@moshsol/sdk";
 import { useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
 import { Button } from "../ui/button";

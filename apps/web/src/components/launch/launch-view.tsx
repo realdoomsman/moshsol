@@ -8,7 +8,7 @@ import { fmtLamports, fmtSolValue } from "@/lib/format";
 import { useMediaQuery, useNow } from "@/lib/hooks";
 import { phaseOf, type Phase } from "@/lib/launch";
 import { useLaunch } from "@/lib/queries";
-import { agentZones } from "@/lib/trade";
+import { agentZones } from "@moshsol/sdk";
 import type { LaunchSummary } from "@/lib/types";
 import { ButtonLink } from "../ui/button";
 import { Segmented } from "../ui/interactive";

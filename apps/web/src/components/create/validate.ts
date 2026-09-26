@@ -2,8 +2,6 @@ import { LIMITS, solToLamports } from "@moshsol/sdk";
 import { PublicKey } from "@solana/web3.js";
 import { IMAGE_TYPES, MAX_IMAGE_BYTES } from "./image-drop";
 
-/** Program hard cap on `raise_max` (programs/moshsol/src/constants.rs `MAX_RAISE_LAMPORTS`; not exported by the SDK). */
-export const MAX_RAISE_LAMPORTS = 100_000n * 1_000_000_000n;
 export const MAX_DESCRIPTION = 500;
 
 export const DURATION_PRESETS = [
@@ -151,7 +149,7 @@ export function validateDraft(d: CreateDraft, p: { minRaiseLamports: bigint; max
   else if (raiseMin < p.minRaiseLamports) errors.raiseMin = `At least ${minSol} SOL`;
   if (raiseMax === null) errors.raiseMax = "Enter a maximum";
   else if (raiseMin !== null && raiseMax < raiseMin) errors.raiseMax = "Must be ≥ the minimum";
-  else if (raiseMax > MAX_RAISE_LAMPORTS) errors.raiseMax = "At most 100,000 SOL";
+  else if (raiseMax > LIMITS.maxRaiseLamports) errors.raiseMax = "At most 100,000 SOL";
 
   let maxPerWallet = 0n;
   if (d.perWallet.trim()) {

@@ -31,4 +31,5 @@ export const LIMITS = {
   minBundleSupplyBps: 100,
   maxReserveBps: 8_000,
   maxProofLen: 24,
+  maxRaiseLamports: 100_000n * 1_000_000_000n,
 } as const;

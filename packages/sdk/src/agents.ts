@@ -1,4 +1,6 @@
-import { quoteBuy, solInForTokens, type CurveState, type LaunchJson } from "@moshsol/sdk";
+/** Quote and agent-rule helpers shared by the web app and the vault agent. */
+import { quoteBuy, solInForTokens, type CurveState } from "./math";
+import type { LaunchJson } from "./client";
 
 /** Smallest gross SOL input (fee included) whose buy quote yields at least `tokens`. */
 export function solForTokens(c: CurveState, tokens: bigint, tradeFeeBps: number): bigint {
