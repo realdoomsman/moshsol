@@ -1,9 +1,12 @@
 /**
  * Initializes the platform and writes <KEYS_DIR>/config.json (default .localnet/).
  * Idempotent: re-running only tops up balances (localnet) and prints the current config.
+ * With `--update`, pushes these params to an existing platform (admin only; live launches keep
+ * the terms frozen at their creation).
  *
  *   RPC_URL=https://api.devnet.solana.com KEYS_DIR=.devnet PROFILE=production pnpm setup:localnet
  *
+ * Optional overrides: MIN_RAISE_SOL (default 1), CREATE_FEE_SOL (default 0.02).
  * On non-local clusters the admin keypair must already be funded (no airdrops).
  */
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -18,10 +21,10 @@ const LOCALNET_PARAMS: PlatformParams = {
   backerFeeShareBps: 5_000,
   creatorFeeShareBps: 3_000,
   launchFeeBps: 100,
-  createFeeLamports: new BN(0.02 * LAMPORTS_PER_SOL),
+  createFeeLamports: new BN(Math.round(Number(process.env.CREATE_FEE_SOL ?? 0.02) * LAMPORTS_PER_SOL)),
   virtualSolReserves: new BN(30 * LAMPORTS_PER_SOL),
   maxBundleSupplyBps: 2_500,
-  minRaiseLamports: new BN(LAMPORTS_PER_SOL),
+  minRaiseLamports: new BN(Math.round(Number(process.env.MIN_RAISE_SOL ?? 1) * LAMPORTS_PER_SOL)),
   agentBuyBpsPerWindow: 1_000,
   agentSellBpsPerWindow: 500,
   agentMaxImpactBps: 300,
@@ -49,8 +52,8 @@ async function main() {
     const bal = await connection.getBalance(kp.publicKey);
     if (bal >= min * LAMPORTS_PER_SOL) continue;
     if (isLocal) await airdrop(connection, kp.publicKey, min * 2);
-    else if (kp === admin && bal < 0.05 * LAMPORTS_PER_SOL) {
-      throw new Error(`fund the admin ${admin.publicKey.toBase58()} (≥0.05 SOL) before running setup`);
+    else if (kp === admin && bal < 0.01 * LAMPORTS_PER_SOL) {
+      throw new Error(`fund the admin ${admin.publicKey.toBase58()} (≥0.01 SOL) before running setup`);
     }
   }
 
@@ -65,8 +68,11 @@ async function main() {
     });
     const sig = await send(client, admin, [ix]);
     console.log(`platform initialized: ${sig}`);
+  } else if (process.argv.includes("--update")) {
+    const sig = await send(client, admin, [await client.updatePlatformIx(admin.publicKey, LOCALNET_PARAMS)]);
+    console.log(`platform params updated: ${sig}`);
   } else {
-    console.log("platform already initialized");
+    console.log("platform already initialized (pass --update to push params)");
   }
 
   const config = {
