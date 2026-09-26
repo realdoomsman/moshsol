@@ -9,7 +9,7 @@ import { startStatusServer } from "./status";
 const LOW_BALANCE_LAMPORTS = 0.01 * LAMPORTS_PER_SOL;
 
 const cfg = loadConfig();
-const signer = loadKeypair(cfg.keypairPath);
+const signer = loadKeypair(cfg.keypairSource);
 const client = new MoshClient(new Connection(cfg.rpcUrl, "confirmed"));
 const agent = new Agent(cfg, client, signer);
 const server = await startStatusServer(cfg.statusHost, cfg.statusPort, () => agent.snapshot());

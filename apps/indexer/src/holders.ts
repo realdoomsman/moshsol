@@ -1,5 +1,6 @@
-import { TOKEN_2022_PROGRAM_ID, TOTAL_SUPPLY, curvePda, vaultPda } from "@moshsol/sdk";
+import { TOKEN_2022_PROGRAM_ID, TOTAL_SUPPLY, curvePda, vaultPda, type LaunchJson } from "@moshsol/sdk";
 import { PublicKey, type Connection } from "@solana/web3.js";
+import type { Store } from "./db";
 import type { HolderRow } from "./types";
 
 export interface HolderSet {
@@ -11,17 +12,25 @@ export interface HolderSet {
 }
 
 /**
- * Token-2022 holder snapshots via getProgramAccounts (memcmp mint @0, sliced to owner+amount),
- * cached per mint for `ttlMs`; concurrent requests share one RPC call.
+ * Token-2022 holder snapshots, cached per mint for `ttlMs`; concurrent requests share one RPC call.
+ *
+ * Preferred source is getProgramAccounts (memcmp mint @0, sliced to owner+amount) — exact.
+ * Public RPCs exclude the token programs from secondary indexes (and rate-limit
+ * getTokenLargestAccounts), so on the first such error we switch permanently to the indexed trade
+ * ledger: curve/vault balances from the launch snapshot plus each trader's net curve buys. That
+ * ledger ignores wallet-to-wallet transfers, so treat it as an estimate.
  */
 export class Holders {
   private readonly cache = new Map<string, HolderSet>();
   private readonly inflight = new Map<string, Promise<HolderSet>>();
 
+  private gpaUnavailable = false;
+
   constructor(
     private readonly connection: Connection,
     private readonly programId: PublicKey,
     private readonly ttlMs: number,
+    private readonly store: Store,
   ) {}
 
   cached(mint: string): HolderSet | undefined {
@@ -49,20 +58,40 @@ export class Holders {
       [curvePda(launchKey, this.programId).toBase58(), "curve"],
       [vaultPda(launchKey, this.programId).toBase58(), "vault"],
     ]);
-    const accounts = await this.connection.getProgramAccounts(TOKEN_2022_PROGRAM_ID, {
-      commitment: "confirmed",
-      filters: [{ memcmp: { offset: 0, bytes: mint } }],
-      // Token account layout: mint(32) owner(32) amount(u64 LE) …
-      dataSlice: { offset: 32, length: 40 },
-    });
     const byOwner = new Map<string, { amount: bigint; label: "curve" | "vault" | null }>();
-    for (const { pubkey, account } of accounts) {
-      if (account.data.length < 40) continue;
-      const amount = account.data.readBigUInt64LE(32);
-      const label = labels.get(pubkey.toBase58()) ?? null;
+    const add = (tokenAccount: PublicKey, owner: PublicKey, amount: bigint) => {
+      const label = labels.get(tokenAccount.toBase58()) ?? null;
       // Curve/vault rows are keyed (and shown) by their PDA token account so they never merge with users.
-      const key = label ? pubkey.toBase58() : new PublicKey(account.data.subarray(0, 32)).toBase58();
+      const key = label ? tokenAccount.toBase58() : owner.toBase58();
       byOwner.set(key, { amount: (byOwner.get(key)?.amount ?? 0n) + amount, label });
+    };
+    if (!this.gpaUnavailable) {
+      try {
+        const accounts = await this.connection.getProgramAccounts(TOKEN_2022_PROGRAM_ID, {
+          commitment: "confirmed",
+          filters: [{ memcmp: { offset: 0, bytes: mint } }],
+          // Token account layout: mint(32) owner(32) amount(u64 LE) …
+          dataSlice: { offset: 32, length: 40 },
+        });
+        for (const { pubkey, account } of accounts) {
+          if (account.data.length < 40) continue;
+          add(pubkey, new PublicKey(account.data.subarray(0, 32)), account.data.readBigUInt64LE(32));
+        }
+      } catch (err) {
+        if (!/secondary indexes|unavailable for key/i.test(String((err as Error).message))) throw err;
+        this.gpaUnavailable = true;
+      }
+    }
+    if (this.gpaUnavailable) {
+      const snapshot = this.store.launch(launch)?.snapshot;
+      if (snapshot) {
+        const l = JSON.parse(snapshot) as LaunchJson;
+        add(curvePda(launchKey, this.programId), launchKey, BigInt(l.tokenReserve));
+        add(vaultPda(launchKey, this.programId), launchKey, BigInt(l.vaultTokens));
+      }
+      for (const { trader, net } of this.store.traderNetTokens(launch)) {
+        add(new PublicKey(trader), new PublicKey(trader), net);
+      }
     }
     const holders: HolderRow[] = [];
     let count = 0;

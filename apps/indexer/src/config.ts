@@ -24,7 +24,8 @@ const port = envInt("PORT", 8787);
 
 export const config = {
   port,
-  host: process.env.HOST || "127.0.0.1",
+  // PaaS hosts assign PORT and need a public bind; locally stay on loopback.
+  host: process.env.HOST || (process.env.RAILWAY_ENVIRONMENT || process.env.RENDER ? "0.0.0.0" : "127.0.0.1"),
   rpcUrl,
   wsUrl: process.env.WS_URL || wsFromRpc(rpcUrl),
   dbPath: path.resolve(process.env.DB_PATH || path.join(APP_DIR, "data", "indexer.db")),
@@ -36,9 +37,10 @@ export const config = {
   uploadLimitPerMin: envInt("UPLOAD_LIMIT_PER_MIN", 20, 0),
   /** Honour X-Forwarded-For for the client IP (set when behind a reverse proxy). */
   trustProxy: ["1", "true", "yes"].includes((process.env.TRUST_PROXY ?? "").trim().toLowerCase()),
-  pollMs: 4_000,
-  fullRefreshMs: 15_000,
+  // Cadences are tunable so public RPCs (devnet/mainnet rate limits) aren't hammered.
+  pollMs: envInt("POLL_MS", 4_000),
+  fullRefreshMs: envInt("FULL_REFRESH_MS", 15_000),
   /** Genesis/cursor verification cadence; also runs after every RPC outage or WS reconnect. */
-  chainCheckMs: 30_000,
-  holdersTtlMs: 30_000,
+  chainCheckMs: envInt("CHAIN_CHECK_MS", 30_000),
+  holdersTtlMs: envInt("HOLDERS_TTL_MS", 30_000),
 } as const;

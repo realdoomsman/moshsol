@@ -7,8 +7,8 @@ export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url
 
 export interface AgentConfig {
   rpcUrl: string;
-  /** Absolute path of the agent authority keypair (JSON secret-key array). */
-  keypairPath: string;
+  /** Where the agent authority keypair comes from: inline JSON (AGENT_KEYPAIR_JSON) or a file path. */
+  keypairSource: { kind: "env"; json: string } | { kind: "file"; path: string };
   pollMs: number;
   statusPort: number;
   statusHost: string;
@@ -41,14 +41,19 @@ export function loadConfig(): AgentConfig {
   }
   const priority = int("PRIORITY_MICROLAMPORTS", 0, 0, 1_000_000_000);
   const keypair = process.env.AGENT_KEYPAIR?.trim() || ".localnet/agent.json";
+  const keypairJson = process.env.AGENT_KEYPAIR_JSON?.trim();
   const dryRun = (process.env.DRY_RUN ?? "").trim().toLowerCase();
   return {
     rpcUrl: process.env.RPC_URL?.trim() || "http://127.0.0.1:8899",
-    // Relative paths resolve from the repo root: `pnpm --filter` runs scripts with cwd = apps/agent.
-    keypairPath: path.resolve(REPO_ROOT, keypair),
+    // Hosted deployments pass the secret inline; locally a file path resolves from the repo root
+    // (`pnpm --filter` runs scripts with cwd = apps/agent).
+    keypairSource: keypairJson
+      ? { kind: "env", json: keypairJson }
+      : { kind: "file", path: path.resolve(REPO_ROOT, keypair) },
     pollMs: int("POLL_MS", 4000, 250, 3_600_000),
-    statusPort: int("STATUS_PORT", 8788, 0, 65_535),
-    statusHost: process.env.STATUS_HOST?.trim() || "127.0.0.1",
+    // PaaS hosts (Railway, Render, …) assign PORT; STATUS_PORT wins when both are set.
+    statusPort: int("STATUS_PORT", int("PORT", 8788, 0, 65_535), 0, 65_535),
+    statusHost: process.env.STATUS_HOST?.trim() || (process.env.PORT ? "0.0.0.0" : "127.0.0.1"),
     dryRun: dryRun === "1" || dryRun === "true" || dryRun === "yes",
     cooldownMs: int("COOLDOWN_MS", 15_000, 0, 86_400_000),
     // 0.01 SOL: below this a vault trade barely moves price and mostly adds noise to the tape.
@@ -61,16 +66,21 @@ export function loadConfig(): AgentConfig {
   };
 }
 
-export function loadKeypair(file: string): Keypair {
+export function loadKeypair(source: AgentConfig["keypairSource"]): Keypair {
   let raw: string;
-  try {
-    raw = fs.readFileSync(file, "utf8");
-  } catch (err) {
-    throw new Error(`cannot read agent keypair ${file}: ${(err as Error).message}`);
+  const label = source.kind === "env" ? "AGENT_KEYPAIR_JSON" : source.path;
+  if (source.kind === "env") {
+    raw = source.json;
+  } else {
+    try {
+      raw = fs.readFileSync(source.path, "utf8");
+    } catch (err) {
+      throw new Error(`cannot read agent keypair ${source.path}: ${(err as Error).message}`);
+    }
   }
   const bytes: unknown = JSON.parse(raw);
   if (!Array.isArray(bytes) || bytes.length !== 64 || !bytes.every((b) => Number.isInteger(b) && b >= 0 && b < 256)) {
-    throw new Error(`agent keypair ${file} must be a JSON array of 64 bytes`);
+    throw new Error(`agent keypair ${label} must be a JSON array of 64 bytes`);
   }
   return Keypair.fromSecretKey(Uint8Array.from(bytes as number[]));
 }

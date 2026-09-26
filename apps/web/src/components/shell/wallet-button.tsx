@@ -11,7 +11,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSolBalance } from "@/lib/chain";
-import { IS_TEST_CLUSTER } from "@/lib/env";
+import { CLUSTER, IS_TEST_CLUSTER } from "@/lib/env";
 import { explorerAddress, explorerTx } from "@/lib/explorer";
 import { fmtSolValue } from "@/lib/format";
 import { useMounted } from "@/lib/hooks";
@@ -19,7 +19,26 @@ import { humanError } from "@/lib/tx";
 import { Button } from "../ui/button";
 import { cn } from "../ui/cn";
 
-const AIRDROP_SOL = 2;
+// The public devnet faucet rate-limits aggressively; ask for less there.
+const AIRDROP_SOL = CLUSTER === "devnet" ? 1 : 2;
+const WEB_FAUCET = "https://faucet.solana.com";
+const AIRDROP_TIMEOUT_MS = 20_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("Airdrop timed out")), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e: unknown) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
 
 export function AirdropButton({ compact }: { compact?: boolean }) {
   const { publicKey } = useWallet();
@@ -37,9 +56,18 @@ export function AirdropButton({ compact }: { compact?: boolean }) {
     setBusy(true);
     const id = toast.loading(`Requesting ${AIRDROP_SOL} test SOL…`);
     try {
-      const signature = await connection.requestAirdrop(publicKey, AIRDROP_SOL * LAMPORTS_PER_SOL);
-      const bh = await connection.getLatestBlockhash("confirmed");
-      await connection.confirmTransaction({ signature, ...bh }, "confirmed");
+      // web3.js retries 429s and confirmTransaction waits for blockhash expiry; cap the whole
+      // round trip so a throttled faucet fails fast into the fallback below.
+      const signature = await withTimeout(
+        (async () => {
+          const sig = await connection.requestAirdrop(publicKey, AIRDROP_SOL * LAMPORTS_PER_SOL);
+          const bh = await connection.getLatestBlockhash("confirmed");
+          const res = await connection.confirmTransaction({ signature: sig, ...bh }, "confirmed");
+          if (res.value.err) throw new Error("Airdrop transaction failed");
+          return sig;
+        })(),
+        AIRDROP_TIMEOUT_MS,
+      );
       toast.success(`+${AIRDROP_SOL} SOL airdropped`, {
         id,
         description: (
@@ -50,7 +78,24 @@ export function AirdropButton({ compact }: { compact?: boolean }) {
       });
       qc.invalidateQueries({ queryKey: ["sol"] });
     } catch (err) {
-      toast.error("Airdrop failed", { id, description: humanError(err) });
+      if (CLUSTER === "devnet") {
+        // RPC airdrops are IP rate-limited; the web faucet (GitHub sign-in) almost always works.
+        await navigator.clipboard?.writeText(publicKey.toBase58()).catch(() => {});
+        toast.error("Devnet faucet is rate-limited right now", {
+          id,
+          duration: 12_000,
+          description: (
+            <span>
+              Your address is copied —{" "}
+              <a className="font-medium text-lime hover:underline" href={WEB_FAUCET} target="_blank" rel="noreferrer">
+                get devnet SOL at faucet.solana.com
+              </a>
+            </span>
+          ),
+        });
+      } else {
+        toast.error("Airdrop failed", { id, description: humanError(err) });
+      }
     } finally {
       setBusy(false);
     }

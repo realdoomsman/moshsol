@@ -15,7 +15,7 @@ const connection = new Connection(config.rpcUrl, { commitment: "confirmed" });
 const client = new MoshClient(connection);
 const store = new Store(config.dbPath);
 const hub = new Hub();
-const holders = new Holders(connection, client.programId, config.holdersTtlMs);
+const holders = new Holders(connection, client.programId, config.holdersTtlMs, store);
 const files = { filesDir: config.filesDir, publicUrl: config.publicUrl };
 
 const app = await createServer({

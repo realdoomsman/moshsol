@@ -280,6 +280,9 @@ const SQL = {
   launchByAddress: "SELECT * FROM launches WHERE address = ?",
   launchByMint: "SELECT * FROM launches WHERE mint = ?",
   allLaunches: "SELECT * FROM launches WHERE snapshot IS NOT NULL ORDER BY idx DESC",
+  traderNetTokens: `
+    SELECT trader, SUM(CASE WHEN is_buy = 1 THEN CAST(token_amount AS INTEGER) ELSE -CAST(token_amount AS INTEGER) END) AS net
+    FROM trades WHERE launch = ? AND is_agent = 0 GROUP BY trader HAVING net > 0`,
   metaDue:
     "SELECT * FROM launches WHERE meta_status = 'pending' OR (meta_status = 'error' AND meta_attempts < ? AND meta_next_at <= ?)",
   setSnapshot: "UPDATE launches SET snapshot = ?, snapshot_slot = ?, status = ? WHERE address = ?",
@@ -428,6 +431,14 @@ export class Store {
   /** Launches with an on-chain snapshot, newest first. */
   launches(): LaunchDbRow[] {
     return rows<LaunchDbRow>(this.stmts.allLaunches);
+  }
+
+  /** Net tokens bought through the curve per public trader (ignores wallet-to-wallet transfers). */
+  traderNetTokens(launch: string): { trader: string; net: bigint }[] {
+    return rows<{ trader: string; net: number | bigint }>(this.stmts.traderNetTokens, [launch]).map((r) => ({
+      trader: r.trader,
+      net: BigInt(r.net),
+    }));
   }
 
   /** Pending metadata plus failed fetches whose backoff elapsed and that have attempts left. */

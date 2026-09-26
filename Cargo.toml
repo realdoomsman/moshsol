@@ -6,6 +6,8 @@ resolver = "2"
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
+# Size-optimized: program rent on devnet/mainnet scales with the .so size.
+opt-level = "s"
 
 [profile.release.build-override]
 opt-level = 3

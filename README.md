@@ -190,10 +190,40 @@ between transactions), `SIM_TRADERS` (10), `SIM_BACKERS` (6), `SIM_MEDIAN_TRADE_
 - **429 from the indexer.** Raise `RATE_LIMIT_PER_MIN` / `UPLOAD_LIMIT_PER_MIN` (everything on one machine
   shares the 127.0.0.1 budget).
 
-## Deploy to devnet / mainnet
+## Live deployment (devnet + Railway)
 
-1. `CLUSTER=devnet bash scripts/deploy.sh` — creates `.devnet/admin.json` on first run; fund it (~4 SOL) and re-run. The admin is the upgrade authority (required to initialize).
-2. `RPC_URL=https://api.devnet.solana.com KEYS_DIR=.devnet PROFILE=production pnpm setup:localnet` (hourly agent windows, 30-min EMA).
-3. Run indexer + agent against the cluster (`RPC_URL`, `WS_URL`, `AGENT_KEYPAIR=.devnet/agent.json`, and for the indexer a public `PUBLIC_URL`, plus `TRUST_PROXY=1` behind a reverse proxy); use a dedicated RPC (Helius/Triton) for `logsSubscribe` + `getProgramAccounts`. `pnpm preflight` checks the RPC, program and platform before you start.
-4. Build the web with `NEXT_PUBLIC_CLUSTER=devnet NEXT_PUBLIC_RPC_URL=… NEXT_PUBLIC_INDEXER_URL=… NEXT_PUBLIC_AGENT_URL=… NEXT_PUBLIC_SITE_URL=…`.
-5. Before mainnet: external audit, move `admin` to a Squads multisig (`propose_admin` → `accept_admin`), transfer the program upgrade authority to the multisig, keep low `raise_max` caps during beta, and store uploads on Arweave/IPFS instead of the indexer disk.
+| | |
+|---|---|
+| Site | https://web-production-04955.up.railway.app |
+| Indexer API | https://indexer-production-454b.up.railway.app (`/api/health`) |
+| Agent status | https://agent-production-47e4.up.railway.app/status |
+| Program (devnet) | `C1c2ggJWMy2Ta4ogc297mGWk7Fj617dAxQr91BJKpTSW` |
+| Platform admin / upgrade authority | `FwYLuQQev8VnGnXySMd7NSJvSYwqhe3tgcdyWzEVpnAs` (`.devnet/admin.json`) |
+| Agent authority | `3qLLfTodvtLMSfUmzLMXLwm7L2uQrRz2MsGjEwWmFj2t` (`.devnet/agent.json`, set on Railway as `AGENT_KEYPAIR_JSON`) |
+| Treasury | `J2zc2wKWtPE7nGHzSwmpZNEz6qSGpCGoDSVwkjKNrKyn` |
+
+`.devnet/*.json` are the only copies of those keys — back them up; they are gitignored.
+
+Railway project `moshsol` has three services built from this repo with per-service Dockerfiles
+(`RAILWAY_DOCKERFILE_PATH` = `apps/<service>/Dockerfile`, build context = repo root):
+
+| Service | Variables | Notes |
+|---|---|---|
+| `indexer` | `RPC_URL`, `WS_URL`, `PUBLIC_URL` (its own Railway domain), `PORT=8787`, `POLL_MS=8000`, `FULL_REFRESH_MS=30000`, `HOLDERS_TTL_MS=120000`, `CHAIN_CHECK_MS=60000` | Volume mounted at `/data` (SQLite DB + uploaded images/metadata). |
+| `agent` | `RPC_URL`, `AGENT_KEYPAIR_JSON` (secret), `PORT=8788`, `POLL_MS=10000` | Keep ~0.1+ SOL on the agent key for fees. |
+| `web` | `NEXT_PUBLIC_CLUSTER=devnet`, `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_INDEXER_URL`, `NEXT_PUBLIC_AGENT_URL`, `NEXT_PUBLIC_SITE_URL`, `PORT=3000` | `NEXT_PUBLIC_*` are baked in at build time — redeploy after changing them. |
+
+Redeploy after code changes (from the repo root): `railway up --service indexer|agent|web --ci`.
+
+**RPC note.** The public `api.devnet.solana.com` works but is rate-limited and refuses
+`getProgramAccounts` on the token programs; the indexer then derives holders from its own trade
+ledger (transfers between wallets aren't counted), and the in-app faucet falls back to a
+faucet.solana.com link. For real traffic set `RPC_URL`/`WS_URL` (indexer, agent) and
+`NEXT_PUBLIC_RPC_URL`/`NEXT_PUBLIC_WS_URL` (web) to a dedicated provider (Helius, Triton, QuickNode).
+
+## Deploy to another cluster
+
+1. `CLUSTER=devnet bash scripts/deploy.sh` (or `CLUSTER=mainnet-beta`) — creates `.<cluster>/admin.json` on first run; fund it (~3 SOL for the ~530 KB program) and re-run. The admin is the upgrade authority (required to initialize).
+2. `RPC_URL=<rpc> KEYS_DIR=.<cluster> PROFILE=production pnpm setup:localnet` (hourly agent windows, 30-min EMA), then fund `.<cluster>/agent.json` for fees.
+3. Create the Railway services as above (or any Docker host) pointing at the cluster.
+4. Before mainnet: external audit, move `admin` to a Squads multisig (`propose_admin` → `accept_admin`), transfer the program upgrade authority to the multisig, keep low `raise_max` caps during beta, use a dedicated RPC, and store uploads on Arweave/IPFS instead of the indexer volume.

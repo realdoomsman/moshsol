@@ -654,7 +654,10 @@ export class ChainSync {
       const lastTradeMs = (aggs.get(row.address)?.last_ts ?? row.launch_ts ?? 0) * 1000;
       const fresh = now - row.holders_at < this.opts.holdersTtlMs || lastTradeMs < row.holders_at;
       if (row.holders_at !== 0 && fresh) continue;
-      await this.updateHolders(row.mint, row.address);
+      // Holder counts are best-effort decoration; an RPC hiccup here must never fail the sync loop.
+      await this.updateHolders(row.mint, row.address).catch((err: unknown) => {
+        this.log.warn({ mint: row.mint, error: String((err as Error)?.message ?? err) }, "holders refresh failed");
+      });
     }
   }
 
