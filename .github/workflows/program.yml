@@ -1,0 +1,39 @@
+name: Program
+
+on:
+  push:
+    branches: [master]
+    paths: ["programs/**", "tests/**", "Cargo.toml", "Cargo.lock", "Anchor.toml", ".github/workflows/program.yml"]
+  pull_request:
+    paths: ["programs/**", "tests/**", "Cargo.toml", "Cargo.lock", "Anchor.toml", ".github/workflows/program.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: program-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  program:
+    name: Anchor build + litesvm tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/anchor
+            ~/.cache/solana
+            ~/.local/share/solana
+            target
+          key: program-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: program-${{ runner.os }}-
+      - name: Install Solana (Agave) + Anchor
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          command -v anchor || cargo install --locked anchor-cli --version 0.31.0
+      - run: anchor build
+      - run: cargo test -p moshsol-tests
