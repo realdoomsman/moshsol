@@ -308,7 +308,8 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
   const shown = (hover !== null ? series.bars.get(hover) : undefined) ?? series.last;
   const change = shown && shown.open > 0 ? ((shown.close - shown.open) / shown.open) * 100 : null;
   const empty = !candles.isLoading && series.candles.length === 0;
-  const fresh = !empty && l.tradeCount === 0;
+  // tradeCount includes the launch's bundle buy.
+  const fresh = !empty && l.tradeCount <= 1;
 
   return (
     <div className="card overflow-hidden">

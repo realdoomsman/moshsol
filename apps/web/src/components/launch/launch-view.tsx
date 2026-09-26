@@ -47,7 +47,12 @@ function KeyStats({ launch: l }: { launch: LaunchSummary }) {
       <Stat label="Liquidity" value={`${fmtSolValue(lamportsToSol(l.realSol))} SOL`} sub="can't be pulled" />
       <Stat label="Holders" value={l.holders.toLocaleString("en-US")} />
       <Stat label="Backers" value={l.backerCount.toLocaleString("en-US")} />
-      <Stat label="Trades" value={l.tradeCount.toLocaleString("en-US")} sub={`${l.agentBuys + l.agentSells} by agents`} />
+      {/* The program counts the launch's bundle buy in tradeCount; it isn't a market trade. */}
+      <Stat
+        label="Trades"
+        value={Math.max(0, l.tradeCount - (l.launchedAt > 0 ? 1 : 0)).toLocaleString("en-US")}
+        sub={`${l.agentBuys + l.agentSells} by agents`}
+      />
     </Card>
   );
 }

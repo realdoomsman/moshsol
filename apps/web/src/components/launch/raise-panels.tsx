@@ -84,6 +84,10 @@ export function RaiseHero({ launch: l, phase }: { launch: LaunchSummary; phase: 
               <span className="inline-flex items-center gap-1.5 text-lime">
                 <CheckCircle2 className="size-4" aria-hidden /> met
               </span>
+            ) : failed ? (
+              <span className="inline-flex items-center gap-1.5 text-dim">
+                <XCircle className="size-4" aria-hidden /> {fmtLamports(l.raiseMin)} SOL · not met
+              </span>
             ) : (
               `${fmtLamports(BigInt(l.raiseMin) - BigInt(l.raised))} to go`
             )}

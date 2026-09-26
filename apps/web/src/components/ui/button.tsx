@@ -22,12 +22,18 @@ const SIZES: Record<ButtonSize, string> = {
   lg: "h-12 gap-2 rounded-xl px-5 text-[15px]",
 };
 
+// Disabled-but-not-busy buttons drop their fill so they never read as actionable; busy buttons
+// (spinner) keep their colour so the pending action stays recognisable.
+const INERT =
+  "data-[inert=true]:border data-[inert=true]:border-line data-[inert=true]:bg-white/[0.04] data-[inert=true]:text-dim data-[inert=true]:shadow-none data-[inert=true]:opacity-100 data-[inert=true]:brightness-100";
+
 export function buttonClass(variant: ButtonVariant = "secondary", size: ButtonSize = "md", className?: string) {
   return cn(
     "inline-flex select-none items-center justify-center whitespace-nowrap font-semibold transition duration-150",
-    "active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45",
+    "active:scale-[0.98] disabled:pointer-events-none disabled:opacity-60",
     VARIANTS[variant],
     SIZES[size],
+    INERT,
     className,
   );
 }
@@ -45,6 +51,7 @@ export function Button({ variant, size, loading, icon, className, children, disa
       type="button"
       className={buttonClass(variant, size, className)}
       disabled={disabled || loading}
+      data-inert={disabled && !loading ? true : undefined}
       aria-busy={loading || undefined}
       {...rest}
     >
