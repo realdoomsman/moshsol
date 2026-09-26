@@ -37,16 +37,17 @@ pub struct AgentTrade<'info> {
 fn prelude(launch: &mut Launch, platform: &Platform, now: i64) -> Result<()> {
     require!(!platform.params.agents_paused, MoshError::AgentsPaused);
     require!(launch.status == LaunchStatus::Live, MoshError::NotLive);
-    launch.roll_window(now, &platform.params)?;
-    launch.update_ema(now, platform.params.ema_period_secs)
+    launch.roll_window(now)?;
+    launch.update_ema(now)
 }
 
-/// Buy with vault SOL — only on dips (price at least `band` under the EMA).
+/// Buy with vault SOL — only on dips (price at least `band` under the EMA) and only at or
+/// below the vault's average cost, so the vault can never be steered into buying high.
 pub fn agent_buy(ctx: Context<AgentTrade>, sol_in: u64, min_tokens_out: u64) -> Result<()> {
-    let params = ctx.accounts.platform.params;
     let now = Clock::get()?.unix_timestamp;
     let launch = &mut ctx.accounts.launch;
     prelude(launch, &ctx.accounts.platform, now)?;
+    let terms = launch.terms;
     require!(sol_in > 0, MoshError::ZeroAmount);
     require!(sol_in <= launch.vault_sol, MoshError::InsufficientVault);
     require!(
@@ -55,7 +56,7 @@ pub fn agent_buy(ctx: Context<AgentTrade>, sol_in: u64, min_tokens_out: u64) -> 
     );
 
     let before = launch.price_q64()?;
-    let ceiling = launch.ema_price / BPS as u128 * (BPS - params.agent_band_bps as u64) as u128;
+    let ceiling = launch.ema_price / BPS as u128 * (BPS - terms.agent_band_bps as u64) as u128;
     require!(before <= ceiling, MoshError::AgentBuyNotDip);
 
     let tokens = math::tokens_out(launch.curve_sol(), launch.token_reserve, sol_in)?;
@@ -63,12 +64,33 @@ pub fn agent_buy(ctx: Context<AgentTrade>, sol_in: u64, min_tokens_out: u64) -> 
     require!(tokens < launch.token_reserve, MoshError::InsufficientLiquidity);
     require!(tokens >= min_tokens_out, MoshError::Slippage);
 
+    // Two ways a buy can be allowed:
+    //  1. fill price (sol_in / tokens) at or below the vault's average cost, or
+    //  2. a buy-back paid from earlier sell proceeds at a fill price at least `band` below the
+    //     average agent sell price — every sell→buy-back round trip leaves the vault with more
+    //     tokens than it sold.
+    let (cost_sol, cost_tokens) = launch.cost_basis();
+    let below_cost = (sol_in as u128) * (cost_tokens as u128) <= (tokens as u128) * (cost_sol as u128);
+    if !below_cost {
+        let below_avg_sell = launch.agent_tokens_sold > 0
+            && (sol_in as u128) * (launch.agent_tokens_sold as u128) * BPS as u128
+                <= (tokens as u128)
+                    * (launch.agent_sol_received as u128)
+                    * (BPS - terms.agent_band_bps as u64) as u128;
+        require!(
+            below_avg_sell && sol_in <= launch.buyback_sol,
+            MoshError::AgentAboveCostBasis
+        );
+        launch.buyback_sol -= sol_in;
+    }
+
     launch.apply_buy(sol_in, tokens)?;
     launch.vault_sol -= sol_in;
     launch.vault_tokens += tokens;
+    launch.vault_cost_sol += sol_in;
     let after = launch.price_q64()?;
     require!(
-        math::move_bps(before, after) <= params.agent_max_impact_bps as u64,
+        math::move_bps(before, after) <= terms.agent_max_impact_bps as u64,
         MoshError::AgentPriceImpact
     );
 
@@ -114,12 +136,13 @@ pub fn agent_buy(ctx: Context<AgentTrade>, sol_in: u64, min_tokens_out: u64) -> 
     Ok(())
 }
 
-/// Sell vault tokens — only into rallies (price at least `band` over the EMA).
+/// Sell vault tokens — only into rallies (price at least `band` over the EMA) and only at a
+/// fill price above the vault's average cost plus band, so the vault never realizes a loss.
 pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) -> Result<()> {
-    let params = ctx.accounts.platform.params;
     let now = Clock::get()?.unix_timestamp;
     let launch = &mut ctx.accounts.launch;
     prelude(launch, &ctx.accounts.platform, now)?;
+    let terms = launch.terms;
     require!(tokens_in > 0, MoshError::ZeroAmount);
     require!(tokens_in <= launch.vault_tokens, MoshError::InsufficientVault);
     require!(
@@ -128,7 +151,7 @@ pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) ->
     );
 
     let before = launch.price_q64()?;
-    let floor = launch.ema_price / BPS as u128 * (BPS + params.agent_band_bps as u64) as u128;
+    let floor = launch.ema_price / BPS as u128 * (BPS + terms.agent_band_bps as u64) as u128;
     require!(before >= floor, MoshError::AgentSellNotRally);
 
     let sol = math::sol_out(launch.curve_sol(), launch.token_reserve, tokens_in)?;
@@ -136,18 +159,32 @@ pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) ->
     require!(sol <= launch.real_sol, MoshError::InsufficientLiquidity);
     require!(sol >= min_sol_out, MoshError::Slippage);
 
+    // sol / tokens_in >= (cost_sol / vault_tokens) * (1 + band). Bounded well below u128::MAX:
+    // sol, cost < 2^57 and tokens < 2^50, times 2^14 for bps.
+    let lhs = (sol as u128) * (launch.vault_tokens as u128) * BPS as u128;
+    let rhs = (tokens_in as u128)
+        * (launch.vault_cost_sol as u128)
+        * (BPS + terms.agent_band_bps as u64) as u128;
+    require!(lhs >= rhs, MoshError::AgentBelowCostBasis);
+
+    // Average-cost method: remove the sold tokens' share of the basis.
+    let cost_removed = ((launch.vault_cost_sol as u128) * (tokens_in as u128)
+        / (launch.vault_tokens as u128)) as u64;
+    launch.vault_cost_sol -= cost_removed;
     launch.apply_sell(tokens_in, sol)?;
     launch.vault_tokens -= tokens_in;
     launch.vault_sol += sol;
     let after = launch.price_q64()?;
     require!(
-        math::move_bps(before, after) <= params.agent_max_impact_bps as u64,
+        math::move_bps(before, after) <= terms.agent_max_impact_bps as u64,
         MoshError::AgentPriceImpact
     );
 
     launch.window_tokens_sold += tokens_in;
     launch.agent_sells = launch.agent_sells.saturating_add(1);
     launch.agent_sol_received = launch.agent_sol_received.saturating_add(sol);
+    launch.agent_tokens_sold = launch.agent_tokens_sold.saturating_add(tokens_in);
+    launch.buyback_sol = launch.buyback_sol.saturating_add(sol);
     launch.record_volume(sol);
 
     let mint_key = ctx.accounts.mint.key();

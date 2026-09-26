@@ -56,4 +56,10 @@ pub enum MoshError {
     AlreadyRefunded,
     #[msg("No pending admin or signer mismatch")]
     NoPendingAdmin,
+    #[msg("Agents may only buy below the vault's average cost, or buy back with sell proceeds below the average sell price")]
+    AgentAboveCostBasis,
+    #[msg("Agents may only sell above the vault's average cost plus band")]
+    AgentBelowCostBasis,
+    #[msg("Only the program upgrade authority can initialize the platform")]
+    NotUpgradeAuthority,
 }

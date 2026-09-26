@@ -273,7 +273,7 @@ fn curve_stays_solvent_when_everyone_exits() {
 }
 
 #[test]
-fn agents_only_buy_dips_within_limits() {
+fn agent_never_buys_above_cost_without_sell_proceeds() {
     let mut env = Env::new();
     let (_c, mint, _b) = env.live_launch(&[20 * SOL]);
 
@@ -286,7 +286,8 @@ fn agents_only_buy_dips_within_limits() {
     let rogue = env.user(2);
     assert_err(env.agent_buy_as(&rogue, &mint, SOL / 10, 0), MoshError::Unauthorized);
 
-    // Pump, let the EMA catch up, then dump.
+    // Pump, let the EMA follow, dump back: a real dip vs the EMA, but the price is still above
+    // the bundle's average entry and the vault has no sell proceeds, so buying is refused.
     let whale = env.user(40);
     env.warp(10);
     ok(env.buy(&whale, &mint, 12 * SOL, 0));
@@ -294,66 +295,26 @@ fn agents_only_buy_dips_within_limits() {
     let bal = env.token_balance(&ata(&whale.pubkey(), &mint));
     ok(env.sell(&whale, &mint, bal, 0));
     env.warp(600);
-
     let l = env.launch(&mint);
-    // A single oversized trade breaches the 3% impact limit.
-    assert_err(env.agent_buy(&mint, 12 * SOL / 10, 0), MoshError::AgentPriceImpact);
-    let vault_sol_before = l.vault_sol;
-    ok(env.agent_buy(&mint, SOL / 2, 1));
-    let l = env.launch(&mint);
-    assert_eq!(l.vault_sol, vault_sol_before - SOL / 2);
-    assert_eq!(l.agent_buys, 1);
-    assert_eq!(l.window_sol_spent, SOL / 2);
-    env.assert_invariants(&mint);
-
-    // Window cap = 10% of vault SOL at window start.
-    let cap = l.window_buy_cap;
-    let remaining = cap - l.window_sol_spent;
-    assert_err(env.agent_buy(&mint, remaining + 1, 0), MoshError::AgentWindowLimit);
-    ok(env.agent_buy(&mint, remaining / 2, 0));
-    ok(env.agent_buy(&mint, remaining - remaining / 2, 0));
-    assert_eq!(env.launch(&mint).window_sol_spent, cap);
-    assert_err(env.agent_buy(&mint, 1_000, 0), MoshError::AgentWindowLimit);
-
-    // Circuit breaker.
-    let mut p = test_params();
-    p.agents_paused = true;
-    let admin = env.admin.insecure_clone();
-    ok(env.update_platform(&admin, p));
-    assert_err(env.agent_buy(&mint, 1_000, 0), MoshError::AgentsPaused);
-    p.agents_paused = false;
-    ok(env.update_platform(&admin, p));
-
-    // A new window resets spending; create a fresh dip after the EMA has caught up.
-    env.warp(3_600);
-    let t2 = env.user(20);
-    ok(env.buy(&t2, &mint, 5 * SOL, 0));
-    env.warp(1_800);
-    let bal = env.token_balance(&ata(&t2.pubkey(), &mint));
-    ok(env.sell(&t2, &mint, bal, 0));
-    env.warp(300);
-    ok(env.agent_buy(&mint, 1_000, 0));
-    let l = env.launch(&mint);
-    assert_eq!(l.window_sol_spent, 1_000);
-    assert_eq!(l.window_buy_cap, (l.vault_sol + 1_000) / 10);
+    assert!(l.price_q64().unwrap() < l.ema_price, "price is under the EMA");
+    assert_err(env.agent_buy(&mint, SOL / 10, 0), MoshError::AgentAboveCostBasis);
     env.assert_invariants(&mint);
 }
 
 #[test]
-fn agents_only_sell_rallies_within_limits() {
+fn agent_sells_rallies_above_cost_then_buys_back_below_avg_sell() {
     let mut env = Env::new();
     let (_c, mint, _b) = env.live_launch(&[20 * SOL]);
+    let initial = env.launch(&mint);
     let whale = env.user(40);
     env.warp(60);
     ok(env.buy(&whale, &mint, 15 * SOL, 0));
     env.warp(300);
 
     let l = env.launch(&mint);
-    let before_price = l.price_q64().unwrap();
-    assert!(before_price > l.ema_price);
+    assert!(l.price_q64().unwrap() > l.ema_price);
     let cap = math::bps(l.vault_tokens, 500).unwrap();
-    // Window was snapshotted at launch; selling above it fails.
-    assert_eq!(l.window_sell_cap, cap);
+    assert_eq!(l.window_sell_cap, cap, "window snapshotted at launch");
     assert_err(env.agent_sell(&mint, cap + 1, 0), MoshError::AgentWindowLimit);
 
     let chunk = cap / 4;
@@ -364,7 +325,107 @@ fn agents_only_sell_rallies_within_limits() {
     assert_eq!(l2.vault_sol, l.vault_sol + quote);
     assert_eq!(l2.vault_tokens, l.vault_tokens - chunk);
     assert_eq!(l2.agent_sol_received, quote);
+    assert_eq!(l2.agent_tokens_sold, chunk);
+    assert_eq!(l2.buyback_sol, quote);
+    // Average-cost method: the basis shrinks pro rata, the average stays the same.
+    let removed = (l.vault_cost_sol as u128 * chunk as u128 / l.vault_tokens as u128) as u64;
+    assert_eq!(l2.vault_cost_sol, l.vault_cost_sol - removed);
+    ok(env.agent_sell(&mint, chunk, 0));
     env.assert_invariants(&mint);
+
+    // Whale exits: price falls well below the agent's average sell price.
+    env.warp(5);
+    let bal = env.token_balance(&ata(&whale.pubkey(), &mint));
+    ok(env.sell(&whale, &mint, bal, 0));
+    env.warp(300);
+
+    let l = env.launch(&mint);
+    let budget = l.buyback_sol;
+    assert!(budget > 0 && budget < l.window_buy_cap, "budget {budget} cap {}", l.window_buy_cap);
+    // Above average cost, so only the buy-back budget may be spent.
+    assert_err(env.agent_buy(&mint, budget + 1, 0), MoshError::AgentAboveCostBasis);
+    ok(env.agent_buy(&mint, budget / 2, 1));
+    ok(env.agent_buy(&mint, budget - budget / 2, 1));
+    let l = env.launch(&mint);
+    assert_eq!(l.buyback_sol, 0);
+    assert_err(env.agent_buy(&mint, 1_000, 0), MoshError::AgentAboveCostBasis);
+
+    // Round trip: same SOL back in the vault, more tokens than it started with.
+    assert_eq!(l.vault_sol, initial.vault_sol);
+    assert!(l.vault_tokens > initial.vault_tokens, "vault gained tokens selling high, buying low");
+    env.assert_invariants(&mint);
+}
+
+#[test]
+fn agent_window_caps_impact_and_circuit_breaker() {
+    let mut p = test_params();
+    p.agent_max_impact_bps = 100;
+    let mut env = Env::with_params(p);
+    let (_c, mint, _b) = env.live_launch(&[20 * SOL]);
+    let whale = env.user(40);
+    env.warp(60);
+    ok(env.buy(&whale, &mint, 15 * SOL, 0));
+    env.warp(300);
+
+    let cap = env.launch(&mint).window_sell_cap;
+    assert_err(env.agent_sell(&mint, cap, 0), MoshError::AgentPriceImpact);
+    for _ in 0..8 {
+        ok(env.agent_sell(&mint, cap / 8, 0));
+    }
+    let l = env.launch(&mint);
+    assert_eq!(l.window_tokens_sold, cap / 8 * 8);
+    assert_err(env.agent_sell(&mint, cap - l.window_tokens_sold + 1, 0), MoshError::AgentWindowLimit);
+
+    let admin = env.admin.insecure_clone();
+    p.agents_paused = true;
+    ok(env.update_platform(&admin, p));
+    assert_err(env.agent_sell(&mint, 1_000_000_000, 0), MoshError::AgentsPaused);
+    p.agents_paused = false;
+    ok(env.update_platform(&admin, p));
+
+    // Next window: fresh cap from the current vault, counters reset.
+    env.warp(3_600);
+    ok(env.agent_sell(&mint, 1_000_000_000, 0));
+    let l = env.launch(&mint);
+    assert_eq!(l.window_tokens_sold, 1_000_000_000);
+    assert_eq!(l.window_sell_cap, math::bps(l.vault_tokens + 1_000_000_000, 500).unwrap());
+    env.assert_invariants(&mint);
+}
+
+#[test]
+fn launch_terms_are_frozen_at_creation() {
+    let mut env = Env::new();
+    let (_c, mint, _b) = env.live_launch(&[10 * SOL]);
+    let admin = env.admin.insecure_clone();
+    let mut p = test_params();
+    p.trade_fee_bps = 200;
+    p.backer_fee_share_bps = 0;
+    p.creator_fee_share_bps = 0;
+    ok(env.update_platform(&admin, p));
+
+    let t = env.user(10);
+    ok(env.buy(&t, &mint, SOL, 0));
+    let l = env.launch(&mint);
+    assert_eq!(l.terms.trade_fee_bps, 100);
+    assert_eq!(l.backer_fees_accrued, SOL / 200, "backers keep their 50% of a 1% fee");
+
+    let creator = env.user(5);
+    let newer = env.create_ok(&creator, default_args());
+    assert_eq!(env.launch(&newer).terms.trade_fee_bps, 200);
+    assert_eq!(env.launch(&newer).terms.backer_fee_share_bps, 0);
+}
+
+#[test]
+fn only_upgrade_authority_can_initialize() {
+    let mut env = Env::bare();
+    let squatter = env.user(5);
+    assert_err(env.initialize_platform(&squatter, test_params()), MoshError::NotUpgradeAuthority);
+    let mut bad = test_params();
+    bad.trade_fee_bps = 0;
+    let admin = env.admin.insecure_clone();
+    assert_err(env.initialize_platform(&admin, bad), MoshError::InvalidParam);
+    ok(env.initialize_platform(&admin, test_params()));
+    assert_eq!(env.platform().admin, admin.pubkey());
 }
 
 #[test]

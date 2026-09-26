@@ -325,26 +325,6 @@ export type Moshsol = {
           "signer": true
         },
         {
-          "name": "platform",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  108,
-                  97,
-                  116,
-                  102,
-                  111,
-                  114,
-                  109
-                ]
-              }
-            ]
-          }
-        },
-        {
           "name": "launch",
           "writable": true,
           "pda": {
@@ -936,6 +916,91 @@ export type Moshsol = {
           }
         },
         {
+          "name": "programData",
+          "docs": [
+            "The program's ProgramData account; only its upgrade authority may initialize, which",
+            "prevents anyone from front-running initialization after deploy."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  163,
+                  152,
+                  41,
+                  228,
+                  202,
+                  131,
+                  135,
+                  185,
+                  41,
+                  38,
+                  96,
+                  77,
+                  223,
+                  204,
+                  204,
+                  4,
+                  91,
+                  234,
+                  128,
+                  15,
+                  60,
+                  122,
+                  79,
+                  74,
+                  138,
+                  238,
+                  227,
+                  81,
+                  228,
+                  159,
+                  200,
+                  7
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                2,
+                168,
+                246,
+                145,
+                78,
+                136,
+                161,
+                176,
+                226,
+                16,
+                21,
+                62,
+                247,
+                99,
+                174,
+                43,
+                0,
+                194,
+                185,
+                61,
+                22,
+                193,
+                36,
+                210,
+                192,
+                83,
+                122,
+                16,
+                4,
+                128,
+                0,
+                0
+              ]
+            }
+          }
+        },
+        {
           "name": "systemProgram",
           "address": "11111111111111111111111111111111"
         }
@@ -975,26 +1040,6 @@ export type Moshsol = {
         {
           "name": "cranker",
           "signer": true
-        },
-        {
-          "name": "platform",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  108,
-                  97,
-                  116,
-                  102,
-                  111,
-                  114,
-                  109
-                ]
-              }
-            ]
-          }
         },
         {
           "name": "launch",
@@ -1220,26 +1265,6 @@ export type Moshsol = {
           "name": "trader",
           "writable": true,
           "signer": true
-        },
-        {
-          "name": "platform",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  112,
-                  108,
-                  97,
-                  116,
-                  102,
-                  111,
-                  114,
-                  109
-                ]
-              }
-            ]
-          }
         },
         {
           "name": "launch",
@@ -1823,6 +1848,21 @@ export type Moshsol = {
       "code": 6026,
       "name": "noPendingAdmin",
       "msg": "No pending admin or signer mismatch"
+    },
+    {
+      "code": 6027,
+      "name": "agentAboveCostBasis",
+      "msg": "Agents may only buy below the vault's average cost, or buy back with sell proceeds below the average sell price"
+    },
+    {
+      "code": 6028,
+      "name": "agentBelowCostBasis",
+      "msg": "Agents may only sell above the vault's average cost plus band"
+    },
+    {
+      "code": 6029,
+      "name": "notUpgradeAuthority",
+      "msg": "Only the program upgrade authority can initialize the platform"
     }
   ],
   "types": [
@@ -2048,6 +2088,14 @@ export type Moshsol = {
             "type": "i64"
           },
           {
+            "name": "terms",
+            "type": {
+              "defined": {
+                "name": "launchTerms"
+              }
+            }
+          },
+          {
             "name": "raiseMin",
             "type": "u64"
           },
@@ -2124,6 +2172,13 @@ export type Moshsol = {
             "type": "u64"
           },
           {
+            "name": "vaultCostSol",
+            "docs": [
+              "SOL cost basis of the tokens currently in the vault (average-cost method)."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "accFeePerShare",
             "type": "u128"
           },
@@ -2170,7 +2225,8 @@ export type Moshsol = {
           {
             "name": "emaPrice",
             "docs": [
-              "Time-weighted EMA of the spot price, Q64.64 lamports per base unit."
+              "Time-weighted EMA of the spot price, Q64.64 lamports per base unit. Updated with weight",
+              "dt / (dt + period) so it can never be snapped to a new level in one step."
             ],
             "type": "u128"
           },
@@ -2192,6 +2248,21 @@ export type Moshsol = {
           },
           {
             "name": "agentSolReceived",
+            "type": "u64"
+          },
+          {
+            "name": "agentTokensSold",
+            "docs": [
+              "Cumulative tokens sold by agents (with agent_sol_received gives the average sell price)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "buybackSol",
+            "docs": [
+              "SOL from agent sells not yet used for buy-backs. Buy-backs above average cost may only",
+              "spend this budget, and only below the average agent sell price."
+            ],
             "type": "u64"
           },
           {
@@ -2298,6 +2369,58 @@ export type Moshsol = {
           },
           {
             "name": "refunding"
+          }
+        ]
+      }
+    },
+    {
+      "name": "launchTerms",
+      "docs": [
+        "Economic terms copied from the platform at `create_launch`. They can never change for the",
+        "life of the launch, so backers know exactly what they signed up for."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "tradeFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "backerFeeShareBps",
+            "type": "u16"
+          },
+          {
+            "name": "creatorFeeShareBps",
+            "type": "u16"
+          },
+          {
+            "name": "launchFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "agentBuyBpsPerWindow",
+            "type": "u16"
+          },
+          {
+            "name": "agentSellBpsPerWindow",
+            "type": "u16"
+          },
+          {
+            "name": "agentMaxImpactBps",
+            "type": "u16"
+          },
+          {
+            "name": "agentBandBps",
+            "type": "u16"
+          },
+          {
+            "name": "agentWindowSecs",
+            "type": "u32"
+          },
+          {
+            "name": "emaPeriodSecs",
+            "type": "u32"
           }
         ]
       }

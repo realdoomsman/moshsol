@@ -15,6 +15,8 @@ pub const ACC_PRECISION: u128 = 1_000_000_000_000_000_000;
 
 // Hard limits the admin can never exceed. These make the trust claims verifiable on-chain.
 pub const MAX_TRADE_FEE_BPS: u16 = 200; // 2%
+/// Non-zero floor so price-manipulation round trips always cost the manipulator.
+pub const MIN_TRADE_FEE_BPS: u16 = 30; // 0.3%
 pub const MAX_LAUNCH_FEE_BPS: u16 = 500; // 5% of raise
 pub const MAX_CREATE_FEE_LAMPORTS: u64 = 1_000_000_000; // 1 SOL
 pub const MAX_BUNDLE_SUPPLY_BPS: u16 = 3_000; // bundle can never buy more than 30% of supply
@@ -23,9 +25,9 @@ pub const MAX_AGENT_WINDOW_BPS: u16 = 2_000; // agents can move at most 20% of t
 pub const MAX_AGENT_IMPACT_BPS: u16 = 1_000; // single agent trade can move price at most 10%
 pub const MIN_AGENT_BAND_BPS: u16 = 50; // agents must buy at least 0.5% under / sell 0.5% over the EMA
 pub const MAX_AGENT_BAND_BPS: u16 = 5_000;
-pub const MIN_WINDOW_SECS: u32 = 60;
+pub const MIN_WINDOW_SECS: u32 = 300;
 pub const MAX_WINDOW_SECS: u32 = 86_400;
-pub const MIN_EMA_PERIOD_SECS: u32 = 60;
+pub const MIN_EMA_PERIOD_SECS: u32 = 300;
 pub const MAX_EMA_PERIOD_SECS: u32 = 7 * 86_400;
 pub const MIN_VIRTUAL_SOL: u64 = 1_000_000_000; // 1 SOL
 pub const MAX_VIRTUAL_SOL: u64 = 1_000_000_000_000; // 1000 SOL

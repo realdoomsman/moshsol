@@ -64,6 +64,9 @@ pub fn default_args() -> CreateLaunchArgs {
 pub fn platform_pda() -> Pubkey {
     Pubkey::find_program_address(&[PLATFORM_SEED], &moshsol::ID).0
 }
+pub fn program_data_pda() -> Pubkey {
+    Pubkey::find_program_address(&[moshsol::ID.as_ref()], &solana_sdk::bpf_loader_upgradeable::ID).0
+}
 pub fn launch_pda(mint: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[LAUNCH_SEED, mint.as_ref()], &moshsol::ID).0
 }
@@ -163,6 +166,14 @@ impl Env {
     }
 
     pub fn with_params(params: PlatformParams) -> Self {
+        let mut env = Self::bare();
+        let admin = env.admin.insecure_clone();
+        ok(env.initialize_platform(&admin, params));
+        env
+    }
+
+    /// Program loaded, admin set as upgrade authority, platform NOT initialized.
+    pub fn bare() -> Self {
         let mut svm = LiteSVM::new();
         let so = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/deploy/moshsol.so");
         svm.add_program_from_file(moshsol::ID, so).expect("build the program first: anchor build");
@@ -173,24 +184,56 @@ impl Env {
         svm.airdrop(&fee_recipient.pubkey(), SOL).unwrap();
         svm.airdrop(&agent.pubkey(), SOL).unwrap();
         let mut env = Self { svm, admin, fee_recipient, agent };
+        let admin_pk = env.admin.pubkey();
+        env.set_upgrade_authority(Some(admin_pk));
+        env
+    }
+
+    /// litesvm loads programs with the non-upgradeable loader, so fake the ProgramData account
+    /// the program checks (UpgradeableLoaderState::ProgramData { slot, upgrade_authority }).
+    pub fn set_upgrade_authority(&mut self, authority: Option<Pubkey>) {
+        let mut data = vec![3u8, 0, 0, 0];
+        data.extend_from_slice(&0u64.to_le_bytes());
+        match authority {
+            Some(a) => {
+                data.push(1);
+                data.extend_from_slice(a.as_ref());
+            }
+            None => data.push(0),
+        }
+        let lamports = self.svm.minimum_balance_for_rent_exemption(data.len());
+        self.svm
+            .set_account(
+                program_data_pda(),
+                solana_sdk::account::Account {
+                    lamports,
+                    data,
+                    owner: solana_sdk::bpf_loader_upgradeable::ID,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .unwrap();
+    }
+
+    pub fn initialize_platform(&mut self, signer: &Keypair, params: PlatformParams) -> TxResult {
         let ix = Instruction {
             program_id: moshsol::ID,
             accounts: moshsol::accounts::InitializePlatform {
-                admin: env.admin.pubkey(),
+                admin: signer.pubkey(),
                 platform: platform_pda(),
+                program_data: program_data_pda(),
                 system_program: system_program::ID,
             }
             .to_account_metas(None),
             data: moshsol::instruction::InitializePlatform {
-                fee_recipient: env.fee_recipient.pubkey(),
-                agent_authority: env.agent.pubkey(),
+                fee_recipient: self.fee_recipient.pubkey(),
+                agent_authority: self.agent.pubkey(),
                 params,
             }
             .data(),
         };
-        let admin = env.admin.insecure_clone();
-        ok(env.send(&[ix], &[&admin]));
-        env
+        self.send(&[ix], &[signer])
     }
 
     pub fn send(&mut self, ixs: &[Instruction], signers: &[&Keypair]) -> TxResult {
@@ -357,7 +400,6 @@ impl Env {
             program_id: moshsol::ID,
             accounts: moshsol::accounts::LaunchToken {
                 cranker: cranker.pubkey(),
-                platform: platform_pda(),
                 launch,
                 mint: *mint,
                 curve_tokens: curve_pda(&launch),
@@ -376,7 +418,6 @@ impl Env {
             program_id: moshsol::ID,
             accounts: moshsol::accounts::Buy {
                 trader: trader.pubkey(),
-                platform: platform_pda(),
                 launch,
                 mint: *mint,
                 curve_tokens: curve_pda(&launch),
@@ -397,7 +438,6 @@ impl Env {
             program_id: moshsol::ID,
             accounts: moshsol::accounts::Sell {
                 trader: trader.pubkey(),
-                platform: platform_pda(),
                 launch,
                 mint: *mint,
                 curve_tokens: curve_pda(&launch),

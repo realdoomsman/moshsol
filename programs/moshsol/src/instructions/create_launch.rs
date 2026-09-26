@@ -8,7 +8,7 @@ use anchor_spl::token_interface::{self, Mint, MintTo, SetAuthority, TokenAccount
 use crate::constants::*;
 use crate::errors::MoshError;
 use crate::events::LaunchCreated;
-use crate::state::{Launch, LaunchStatus, Platform};
+use crate::state::{Launch, LaunchStatus, LaunchTerms, Platform};
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct CreateLaunchArgs {
@@ -207,6 +207,7 @@ pub fn create_launch(ctx: Context<CreateLaunch>, args: CreateLaunchArgs) -> Resu
         vault_bump: ctx.bumps.vault_tokens,
         created_at: now,
         launched_at: 0,
+        terms: LaunchTerms::from(&params),
         raise_min: args.raise_min,
         raise_max: args.raise_max,
         max_per_wallet: args.max_per_wallet,
@@ -224,6 +225,9 @@ pub fn create_launch(ctx: Context<CreateLaunch>, args: CreateLaunchArgs) -> Resu
         vault_tokens: 0,
         bundle_sol: 0,
         bundle_tokens: 0,
+        vault_cost_sol: 0,
+        agent_tokens_sold: 0,
+        buyback_sol: 0,
         acc_fee_per_share: 0,
         backer_fees_accrued: 0,
         backer_fees_claimed: 0,

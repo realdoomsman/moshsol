@@ -21,7 +21,7 @@ import {
 } from "@solana/web3.js";
 import idlJson from "./idl/moshsol.json";
 import type { Moshsol } from "./idl/moshsol";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "./constants";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, BPF_LOADER_UPGRADEABLE_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "./constants";
 import { backerPda, curvePda, launchPda, platformPda, tokenAta, vaultPda } from "./pda";
 import { marketCapSol, q64ToSolPerToken, spotPrice } from "./math";
 
@@ -47,6 +47,14 @@ export function statusOf(l: { status: LaunchAccount["status"] }): LaunchStatus {
 
 const big = (v: BN | number | bigint): bigint => BigInt(v.toString());
 
+/** u16/u32 terms decode to plain numbers. */
+export type LaunchTermsJson = IdlTypes<Moshsol>["launchTerms"];
+
+/** SOL per whole token for a (lamports, base units) pair. */
+function perToken(sol: BN, tokens: BN): number {
+  return tokens.isZero() ? 0 : Number(sol.toString()) / 1e9 / (Number(tokens.toString()) / 1e6);
+}
+
 /** JSON-safe launch snapshot (u64/u128 as decimal strings) shared by indexer, agent and web. */
 export interface LaunchJson {
   address: string;
@@ -56,6 +64,8 @@ export interface LaunchJson {
   status: LaunchStatus;
   createdAt: number;
   launchedAt: number;
+  /** Economic terms frozen at creation — use these (not platform params) for quotes. */
+  terms: LaunchTermsJson;
   raiseMin: string;
   raiseMax: string;
   maxPerWallet: string;
@@ -74,6 +84,8 @@ export interface LaunchJson {
   vaultTokens: string;
   bundleSol: string;
   bundleTokens: string;
+  /** SOL cost basis of the tokens currently in the vault (average-cost method). */
+  vaultCostSol: string;
   accFeePerShare: string;
   backerFeesAccrued: string;
   backerFeesClaimed: string;
@@ -91,6 +103,9 @@ export interface LaunchJson {
   agentSells: number;
   agentSolSpent: string;
   agentSolReceived: string;
+  agentTokensSold: string;
+  /** SOL from agent sells still available for buy-backs. */
+  buybackSol: string;
   volumeSol: string;
   tradeCount: number;
   /** Derived: SOL per whole token. */
@@ -99,6 +114,10 @@ export interface LaunchJson {
   emaSol: number;
   /** Derived: fully diluted market cap in SOL. */
   marketCapSol: number;
+  /** Derived: vault average cost in SOL per whole token (bundle entry if the vault is empty). */
+  vaultAvgCostSol: number;
+  /** Derived: average agent sell price in SOL per whole token, null before the first sell. */
+  agentAvgSellSol: number | null;
 }
 
 export function launchToJson(address: PublicKey, l: LaunchAccount): LaunchJson {
@@ -114,6 +133,7 @@ export function launchToJson(address: PublicKey, l: LaunchAccount): LaunchJson {
     status: statusOf(l),
     createdAt: n(l.createdAt),
     launchedAt: n(l.launchedAt),
+    terms: { ...l.terms },
     raiseMin: s(l.raiseMin),
     raiseMax: s(l.raiseMax),
     maxPerWallet: s(l.maxPerWallet),
@@ -132,6 +152,7 @@ export function launchToJson(address: PublicKey, l: LaunchAccount): LaunchJson {
     vaultTokens: s(l.vaultTokens),
     bundleSol: s(l.bundleSol),
     bundleTokens: s(l.bundleTokens),
+    vaultCostSol: s(l.vaultCostSol),
     accFeePerShare: s(l.accFeePerShare),
     backerFeesAccrued: s(l.backerFeesAccrued),
     backerFeesClaimed: s(l.backerFeesClaimed),
@@ -149,11 +170,18 @@ export function launchToJson(address: PublicKey, l: LaunchAccount): LaunchJson {
     agentSells: l.agentSells,
     agentSolSpent: s(l.agentSolSpent),
     agentSolReceived: s(l.agentSolReceived),
+    agentTokensSold: s(l.agentTokensSold),
+    buybackSol: s(l.buybackSol),
     volumeSol: s(l.volumeSol),
     tradeCount: n(l.tradeCount),
     priceSol: spotPrice(curve),
     emaSol: q64ToSolPerToken(big(l.emaPrice)),
     marketCapSol: marketCapSol(curve),
+    vaultAvgCostSol: perToken(
+      l.vaultTokens.isZero() ? l.bundleSol : l.vaultCostSol,
+      l.vaultTokens.isZero() ? l.bundleTokens : l.vaultTokens,
+    ),
+    agentAvgSellSol: l.agentTokensSold.isZero() ? null : perToken(l.agentSolReceived, l.agentTokensSold),
   };
 }
 
@@ -247,6 +275,10 @@ export class MoshClient {
       .accountsStrict({
         admin: p.admin,
         platform: platformPda(this.programId),
+        programData: PublicKey.findProgramAddressSync(
+          [this.programId.toBuffer()],
+          BPF_LOADER_UPGRADEABLE_PROGRAM_ID,
+        )[0],
         systemProgram: SystemProgram.programId,
       })
       .instruction();
@@ -337,7 +369,6 @@ export class MoshClient {
       .launch()
       .accountsStrict({
         cranker,
-        platform: platformPda(this.programId),
         launch,
         mint,
         curveTokens: curvePda(launch, this.programId),
@@ -353,7 +384,6 @@ export class MoshClient {
       .buy(bn(solIn), bn(minTokensOut))
       .accountsStrict({
         trader,
-        platform: platformPda(this.programId),
         launch,
         mint,
         curveTokens: curvePda(launch, this.programId),
@@ -371,7 +401,6 @@ export class MoshClient {
       .sell(bn(tokensIn), bn(minSolOut))
       .accountsStrict({
         trader,
-        platform: platformPda(this.programId),
         launch,
         mint,
         curveTokens: curvePda(launch, this.programId),

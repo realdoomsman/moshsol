@@ -51,7 +51,10 @@ pub struct PlatformParams {
 
 impl PlatformParams {
     pub fn validate(&self) -> Result<()> {
-        require!(self.trade_fee_bps <= MAX_TRADE_FEE_BPS, MoshError::InvalidParam);
+        require!(
+            (MIN_TRADE_FEE_BPS..=MAX_TRADE_FEE_BPS).contains(&self.trade_fee_bps),
+            MoshError::InvalidParam
+        );
         require!(
             (self.backer_fee_share_bps as u64 + self.creator_fee_share_bps as u64) <= BPS,
             MoshError::InvalidParam
@@ -99,6 +102,39 @@ pub enum LaunchStatus {
     Refunding,
 }
 
+/// Economic terms copied from the platform at `create_launch`. They can never change for the
+/// life of the launch, so backers know exactly what they signed up for.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
+pub struct LaunchTerms {
+    pub trade_fee_bps: u16,
+    pub backer_fee_share_bps: u16,
+    pub creator_fee_share_bps: u16,
+    pub launch_fee_bps: u16,
+    pub agent_buy_bps_per_window: u16,
+    pub agent_sell_bps_per_window: u16,
+    pub agent_max_impact_bps: u16,
+    pub agent_band_bps: u16,
+    pub agent_window_secs: u32,
+    pub ema_period_secs: u32,
+}
+
+impl From<&PlatformParams> for LaunchTerms {
+    fn from(p: &PlatformParams) -> Self {
+        Self {
+            trade_fee_bps: p.trade_fee_bps,
+            backer_fee_share_bps: p.backer_fee_share_bps,
+            creator_fee_share_bps: p.creator_fee_share_bps,
+            launch_fee_bps: p.launch_fee_bps,
+            agent_buy_bps_per_window: p.agent_buy_bps_per_window,
+            agent_sell_bps_per_window: p.agent_sell_bps_per_window,
+            agent_max_impact_bps: p.agent_max_impact_bps,
+            agent_band_bps: p.agent_band_bps,
+            agent_window_secs: p.agent_window_secs,
+            ema_period_secs: p.ema_period_secs,
+        }
+    }
+}
+
 #[account]
 #[derive(InitSpace)]
 pub struct Launch {
@@ -111,6 +147,7 @@ pub struct Launch {
     pub vault_bump: u8,
     pub created_at: i64,
     pub launched_at: i64,
+    pub terms: LaunchTerms,
 
     // ---- raise ----
     pub raise_min: u64,
@@ -135,6 +172,8 @@ pub struct Launch {
     pub vault_tokens: u64,
     pub bundle_sol: u64,
     pub bundle_tokens: u64,
+    /// SOL cost basis of the tokens currently in the vault (average-cost method).
+    pub vault_cost_sol: u64,
 
     // ---- fees ----
     pub acc_fee_per_share: u128,
@@ -150,13 +189,19 @@ pub struct Launch {
     pub window_sol_spent: u64,
     pub window_sell_cap: u64,
     pub window_tokens_sold: u64,
-    /// Time-weighted EMA of the spot price, Q64.64 lamports per base unit.
+    /// Time-weighted EMA of the spot price, Q64.64 lamports per base unit. Updated with weight
+    /// dt / (dt + period) so it can never be snapped to a new level in one step.
     pub ema_price: u128,
     pub last_trade_ts: i64,
     pub agent_buys: u32,
     pub agent_sells: u32,
     pub agent_sol_spent: u64,
     pub agent_sol_received: u64,
+    /// Cumulative tokens sold by agents (with agent_sol_received gives the average sell price).
+    pub agent_tokens_sold: u64,
+    /// SOL from agent sells not yet used for buy-backs. Buy-backs above average cost may only
+    /// spend this budget, and only below the average agent sell price.
+    pub buyback_sol: u64,
 
     // ---- stats ----
     pub volume_sol: u64,
@@ -207,10 +252,11 @@ impl Launch {
         Ok(())
     }
 
-    /// Splits a trade fee between backers, creator and platform. Returns (backer, creator, platform).
-    pub fn distribute_fee(&mut self, fee: u64, params: &PlatformParams) -> Result<(u64, u64, u64)> {
-        let backer = math::bps(fee, params.backer_fee_share_bps)?;
-        let creator = math::bps(fee, params.creator_fee_share_bps)?;
+    /// Splits a trade fee between backers, creator and platform using the launch's fixed terms.
+    /// Returns (backer, creator, platform).
+    pub fn distribute_fee(&mut self, fee: u64) -> Result<(u64, u64, u64)> {
+        let backer = math::bps(fee, self.terms.backer_fee_share_bps)?;
+        let creator = math::bps(fee, self.terms.creator_fee_share_bps)?;
         let platform = fee - backer - creator;
         if backer > 0 {
             // raised > 0 is guaranteed for live launches (launch requires raise_min > 0)
@@ -238,35 +284,49 @@ impl Launch {
         Ok((backer, creator, platform))
     }
 
-    /// Folds the price that prevailed since the last trade into the EMA. Must be called
-    /// *before* the reserves change so same-slot manipulation cannot move the EMA.
-    pub fn update_ema(&mut self, now: i64, period_secs: u32) -> Result<()> {
+    /// Folds the price that prevailed since the last trade into the EMA with weight
+    /// dt / (dt + period). Must be called *before* the reserves change so same-slot manipulation
+    /// cannot move the EMA, and the weight never reaches 1 so no idle gap can snap the EMA to a
+    /// price an attacker is holding.
+    pub fn update_ema(&mut self, now: i64) -> Result<()> {
         let p = self.price_q64()?;
         if self.ema_price == 0 {
             self.ema_price = p;
         } else {
             let dt = now.saturating_sub(self.last_trade_ts).max(0) as u128;
-            let period = period_secs as u128;
-            let w = dt.min(period);
+            let den = dt + self.terms.ema_period_secs as u128;
+            // |p - ema| < 2^104 and dt < 2^40 for any realistic launch; checked anyway.
+            let step = |d: u128| -> Result<u128> {
+                Ok(d.checked_mul(dt).ok_or(MoshError::MathOverflow)? / den)
+            };
             if p >= self.ema_price {
-                self.ema_price += (p - self.ema_price) * w / period;
+                self.ema_price += step(p - self.ema_price)?;
             } else {
-                self.ema_price -= (self.ema_price - p) * w / period;
+                self.ema_price -= step(self.ema_price - p)?;
             }
         }
         self.last_trade_ts = now;
         Ok(())
     }
 
-    pub fn roll_window(&mut self, now: i64, params: &PlatformParams) -> Result<()> {
-        if now >= self.window_start.saturating_add(params.agent_window_secs as i64) {
+    pub fn roll_window(&mut self, now: i64) -> Result<()> {
+        if now >= self.window_start.saturating_add(self.terms.agent_window_secs as i64) {
             self.window_start = now;
-            self.window_buy_cap = math::bps(self.vault_sol, params.agent_buy_bps_per_window)?;
-            self.window_sell_cap = math::bps(self.vault_tokens, params.agent_sell_bps_per_window)?;
+            self.window_buy_cap = math::bps(self.vault_sol, self.terms.agent_buy_bps_per_window)?;
+            self.window_sell_cap = math::bps(self.vault_tokens, self.terms.agent_sell_bps_per_window)?;
             self.window_sol_spent = 0;
             self.window_tokens_sold = 0;
         }
         Ok(())
+    }
+
+    /// Average vault cost as (sol, tokens). Falls back to the bundle's entry if the vault is empty.
+    pub fn cost_basis(&self) -> (u64, u64) {
+        if self.vault_tokens > 0 {
+            (self.vault_cost_sol, self.vault_tokens)
+        } else {
+            (self.bundle_sol, self.bundle_tokens)
+        }
     }
 
     pub fn record_volume(&mut self, sol: u64) {

@@ -6,13 +6,11 @@ use crate::constants::*;
 use crate::errors::MoshError;
 use crate::events::Launched;
 use crate::math;
-use crate::state::{Launch, LaunchStatus, Platform};
+use crate::state::{Launch, LaunchStatus};
 
 #[derive(Accounts)]
 pub struct LaunchToken<'info> {
     pub cranker: Signer<'info>,
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
-    pub platform: Box<Account<'info, Platform>>,
     #[account(
         mut,
         seeds = [LAUNCH_SEED, mint.key().as_ref()],
@@ -35,7 +33,6 @@ pub struct LaunchToken<'info> {
 /// - the creator, any time the minimum is met;
 /// - anyone, once the minimum is met and either the deadline passed or the raise is full.
 pub fn launch(ctx: Context<LaunchToken>) -> Result<()> {
-    let params = ctx.accounts.platform.params;
     let now = Clock::get()?.unix_timestamp;
     let launch = &mut ctx.accounts.launch;
 
@@ -45,7 +42,7 @@ pub fn launch(ctx: Context<LaunchToken>) -> Result<()> {
     let ready = now >= launch.raise_deadline || launch.raised >= launch.raise_max;
     require!(is_creator || ready, MoshError::RaiseStillOpen);
 
-    let launch_fee = math::bps(launch.raised, params.launch_fee_bps)?;
+    let launch_fee = math::bps(launch.raised, launch.terms.launch_fee_bps)?;
     let net = launch.raised - launch_fee;
     let budget = net - math::bps(net, launch.reserve_bps)?;
     let cap = math::bps(TOTAL_SUPPLY, launch.bundle_supply_bps)?;
@@ -68,13 +65,14 @@ pub fn launch(ctx: Context<LaunchToken>) -> Result<()> {
     launch.vault_tokens = tokens;
     launch.bundle_sol = spent;
     launch.bundle_tokens = tokens;
+    launch.vault_cost_sol = spent;
     launch.record_volume(spent);
 
     let price = launch.price_q64()?;
     launch.ema_price = price;
     launch.last_trade_ts = now;
     launch.window_start = i64::MIN / 2; // force a fresh window
-    launch.roll_window(now, &params)?;
+    launch.roll_window(now)?;
 
     let mint_key = ctx.accounts.mint.key();
     let seeds: &[&[u8]] = &[LAUNCH_SEED, mint_key.as_ref(), &[launch.bump]];

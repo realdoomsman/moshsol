@@ -3,6 +3,7 @@ import idl from "./idl/moshsol.json";
 
 export const PROGRAM_ID = new PublicKey(idl.address);
 export { TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
+export const BPF_LOADER_UPGRADEABLE_PROGRAM_ID = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
 export const SEEDS = {
   platform: "platform",

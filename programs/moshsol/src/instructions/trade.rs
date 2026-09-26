@@ -9,14 +9,12 @@ use crate::constants::*;
 use crate::errors::MoshError;
 use crate::events::Trade;
 use crate::math;
-use crate::state::{Launch, LaunchStatus, Platform};
+use crate::state::{Launch, LaunchStatus};
 
 #[derive(Accounts)]
 pub struct Buy<'info> {
     #[account(mut)]
     pub trader: Signer<'info>,
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
-    pub platform: Box<Account<'info, Platform>>,
     #[account(
         mut,
         seeds = [LAUNCH_SEED, mint.key().as_ref()],
@@ -41,15 +39,14 @@ pub struct Buy<'info> {
 }
 
 pub fn buy(ctx: Context<Buy>, sol_in: u64, min_tokens_out: u64) -> Result<()> {
-    let params = ctx.accounts.platform.params;
     let now = Clock::get()?.unix_timestamp;
     let launch = &mut ctx.accounts.launch;
     require!(launch.status == LaunchStatus::Live, MoshError::NotLive);
     require!(sol_in > 0, MoshError::ZeroAmount);
 
-    launch.update_ema(now, params.ema_period_secs)?;
+    launch.update_ema(now)?;
 
-    let fee = math::bps(sol_in, params.trade_fee_bps)?;
+    let fee = math::bps(sol_in, launch.terms.trade_fee_bps)?;
     let net = sol_in - fee;
     let tokens = math::tokens_out(launch.curve_sol(), launch.token_reserve, net)?;
     require!(tokens > 0, MoshError::ZeroAmount);
@@ -68,7 +65,7 @@ pub fn buy(ctx: Context<Buy>, sol_in: u64, min_tokens_out: u64) -> Result<()> {
     )?;
 
     launch.apply_buy(net, tokens)?;
-    launch.distribute_fee(fee, &params)?;
+    launch.distribute_fee(fee)?;
     launch.record_volume(sol_in);
 
     let mint_key = ctx.accounts.mint.key();
@@ -112,8 +109,6 @@ pub fn buy(ctx: Context<Buy>, sol_in: u64, min_tokens_out: u64) -> Result<()> {
 pub struct Sell<'info> {
     #[account(mut)]
     pub trader: Signer<'info>,
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
-    pub platform: Box<Account<'info, Platform>>,
     #[account(
         mut,
         seeds = [LAUNCH_SEED, mint.key().as_ref()],
@@ -135,17 +130,16 @@ pub struct Sell<'info> {
 }
 
 pub fn sell(ctx: Context<Sell>, tokens_in: u64, min_sol_out: u64) -> Result<()> {
-    let params = ctx.accounts.platform.params;
     let now = Clock::get()?.unix_timestamp;
     let launch = &mut ctx.accounts.launch;
     require!(launch.status == LaunchStatus::Live, MoshError::NotLive);
     require!(tokens_in > 0, MoshError::ZeroAmount);
 
-    launch.update_ema(now, params.ema_period_secs)?;
+    launch.update_ema(now)?;
 
     let gross = math::sol_out(launch.curve_sol(), launch.token_reserve, tokens_in)?;
     require!(gross <= launch.real_sol, MoshError::InsufficientLiquidity);
-    let fee = math::bps(gross, params.trade_fee_bps)?;
+    let fee = math::bps(gross, launch.terms.trade_fee_bps)?;
     let net = gross - fee;
     require!(net > 0, MoshError::ZeroAmount);
     require!(net >= min_sol_out, MoshError::Slippage);
@@ -165,7 +159,7 @@ pub fn sell(ctx: Context<Sell>, tokens_in: u64, min_sol_out: u64) -> Result<()> 
     )?;
 
     launch.apply_sell(tokens_in, gross)?;
-    launch.distribute_fee(fee, &params)?;
+    launch.distribute_fee(fee)?;
     launch.record_volume(gross);
 
     pay_out(

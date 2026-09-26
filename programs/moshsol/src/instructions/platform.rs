@@ -16,6 +16,16 @@ pub struct InitializePlatform<'info> {
         bump
     )]
     pub platform: Account<'info, Platform>,
+    /// The program's ProgramData account; only its upgrade authority may initialize, which
+    /// prevents anyone from front-running initialization after deploy.
+    #[account(
+        seeds = [crate::ID.as_ref()],
+        bump,
+        seeds::program = anchor_lang::solana_program::bpf_loader_upgradeable::ID,
+        constraint = program_data.upgrade_authority_address == Some(admin.key())
+            @ MoshError::NotUpgradeAuthority
+    )]
+    pub program_data: Account<'info, ProgramData>,
     pub system_program: Program<'info, System>,
 }
 
