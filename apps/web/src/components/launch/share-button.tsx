@@ -1,6 +1,6 @@
 "use client";
 
-import { fmtPrice } from "@moshsol/sdk";
+import { fmtPrice } from "@holdfast/sdk";
 import { Check, Link2, Share2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
@@ -19,12 +19,12 @@ function XLogo({ className }: { className?: string }) {
 
 function shareText(l: LaunchSummary): string {
   if (l.status === "live") {
-    return `$${l.symbol} on @moshsol — ${fmtPrice(l.priceSol)} SOL, ${fmtSolValue(l.marketCapSol)} SOL mcap. The bundle is locked in the vault forever.`;
+    return `$${l.symbol} on @holdfast — ${fmtPrice(l.priceSol)} SOL, ${fmtSolValue(l.marketCapSol)} SOL mcap. The bundle is locked in the vault forever.`;
   }
   if (l.status === "raising") {
-    return `Backing $${l.symbol} on @moshsol — the bundle gets locked in the vault forever and backers earn every trade fee.`;
+    return `Backing $${l.symbol} on @holdfast — the bundle gets locked in the vault forever and backers earn every trade fee.`;
   }
-  return `$${l.symbol} on @moshsol`;
+  return `$${l.symbol} on @holdfast`;
 }
 
 export function ShareButton({ launch: l, compact, className }: { launch: LaunchSummary; compact?: boolean; className?: string }) {

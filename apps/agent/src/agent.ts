@@ -5,7 +5,7 @@ import {
   launchPda,
   type LaunchAccount,
   type MoshClient,
-} from "@moshsol/sdk";
+} from "@holdfast/sdk";
 import type { AgentConfig } from "./config";
 import { log } from "./log";
 import type { Decision, StatusSnapshot } from "./status";

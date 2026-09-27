@@ -1,4 +1,4 @@
-import { fmtPrice, lamportsToSol } from "@moshsol/sdk";
+import { fmtPrice, lamportsToSol } from "@holdfast/sdk";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { LaunchView } from "@/components/launch/launch-view";
@@ -42,8 +42,8 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   return {
     title,
     description,
-    openGraph: { title: `${title} · moshsol`, description, type: "website", siteName: "moshsol" },
-    twitter: { card: "summary_large_image", title: `${title} · moshsol`, description },
+    openGraph: { title: `${title} · holdfast`, description, type: "website", siteName: "holdfast" },
+    twitter: { card: "summary_large_image", title: `${title} · holdfast`, description },
   };
 }
 

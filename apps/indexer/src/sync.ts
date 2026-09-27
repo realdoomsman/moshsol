@@ -9,7 +9,7 @@ import {
   type MoshClient,
   type MoshEvent,
   type PlatformAccount,
-} from "@moshsol/sdk";
+} from "@holdfast/sdk";
 import { PublicKey, type ConfirmedSignatureInfo, type Connection } from "@solana/web3.js";
 import type { FastifyBaseLogger } from "fastify";
 import type { ActivityDbRow, EventDbRow, MetaUpdate, Store } from "./db";

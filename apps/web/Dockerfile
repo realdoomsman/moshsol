@@ -9,7 +9,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/sdk/package.json packages/sdk/
 COPY apps/web/package.json apps/web/
-RUN pnpm install --frozen-lockfile --filter @moshsol/web...
+RUN pnpm install --frozen-lockfile --filter @holdfast/web...
 
 COPY tsconfig.base.json ./
 COPY packages/sdk packages/sdk
@@ -21,8 +21,8 @@ ARG NEXT_PUBLIC_WS_URL
 ARG NEXT_PUBLIC_INDEXER_URL
 ARG NEXT_PUBLIC_AGENT_URL
 ARG NEXT_PUBLIC_SITE_URL
-RUN pnpm --filter @moshsol/web build
+RUN pnpm --filter @holdfast/web build
 
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["pnpm", "--filter", "@moshsol/web", "start"]
+CMD ["pnpm", "--filter", "@holdfast/web", "start"]

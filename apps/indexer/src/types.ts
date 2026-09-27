@@ -1,4 +1,4 @@
-import type { LaunchJson } from "@moshsol/sdk";
+import type { LaunchJson } from "@holdfast/sdk";
 
 /** Wire types of the indexer HTTP/WS API (see the shared contract). */
 

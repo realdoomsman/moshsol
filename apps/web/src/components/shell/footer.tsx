@@ -1,4 +1,4 @@
-import { PROGRAM_ID, shortAddr } from "@moshsol/sdk";
+import { PROGRAM_ID, shortAddr } from "@holdfast/sdk";
 import { ArrowUpRight, Lock } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -99,14 +99,14 @@ export function Footer() {
         </Column>
       </div>
       <div className="relative mx-auto flex max-w-[1400px] flex-col gap-2 border-t border-line px-4 py-5 text-xs text-dim sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
-        <span>moshsol · bundle-locked launches on Solana</span>
-        <span>Prices, vaults and trades are read from Solana via the moshsol indexer.</span>
+        <span>holdfast · bundle-locked launches on Solana</span>
+        <span>Prices, vaults and trades are read from Solana via the holdfast indexer.</span>
       </div>
       <div
         aria-hidden
         className="pointer-events-none relative -mb-[2.6vw] text-center text-[15vw] leading-[0.8] font-bold tracking-[-0.06em] text-white/[0.025] select-none"
       >
-        moshsol
+        holdfast
       </div>
     </footer>
   );

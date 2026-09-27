@@ -1,6 +1,6 @@
 "use client";
 
-import { fmtPrice, shortAddr, timeAgo } from "@moshsol/sdk";
+import { fmtPrice, shortAddr, timeAgo } from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { Bot, ExternalLink } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";

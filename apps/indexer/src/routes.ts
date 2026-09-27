@@ -7,7 +7,7 @@ import {
   tokensToUi,
   type LaunchJson,
   type MoshClient,
-} from "@moshsol/sdk";
+} from "@holdfast/sdk";
 import { PublicKey } from "@solana/web3.js";
 import type { FastifyInstance } from "fastify";
 import type { LaunchDbRow, Store, TradeDbRow } from "./db";

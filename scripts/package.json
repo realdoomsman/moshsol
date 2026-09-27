@@ -1,5 +1,5 @@
 {
-  "name": "@moshsol/scripts",
+  "name": "@holdfast/scripts",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@moshsol/sdk": "workspace:*",
+    "@holdfast/sdk": "workspace:*",
     "@solana/web3.js": "^1.98.0",
     "@coral-xyz/anchor": "0.31.1"
   },

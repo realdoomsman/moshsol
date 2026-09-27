@@ -5,7 +5,7 @@ const repoRoot = path.resolve(process.cwd(), "../..");
 
 const config: NextConfig = {
   reactStrictMode: true,
-  transpilePackages: ["@moshsol/sdk"],
+  transpilePackages: ["@holdfast/sdk"],
   turbopack: { root: repoRoot },
   outputFileTracingRoot: repoRoot,
   agentRules: false,

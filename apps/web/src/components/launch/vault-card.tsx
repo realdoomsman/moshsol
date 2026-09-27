@@ -1,11 +1,11 @@
 "use client";
 
-import { countdown, fmtPrice, lamportsToSol, timeAgo, tokensToUi } from "@moshsol/sdk";
+import { countdown, fmtPrice, lamportsToSol, timeAgo, tokensToUi } from "@holdfast/sdk";
 import { Bot, ShieldCheck } from "lucide-react";
 import { fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { useAgentStatus } from "@/lib/queries";
-import type { AgentZones } from "@moshsol/sdk";
+import type { AgentZones } from "@holdfast/sdk";
 import type { LaunchSummary } from "@/lib/types";
 import { cn } from "../ui/cn";
 import { Hint } from "../ui/interactive";

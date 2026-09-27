@@ -1,4 +1,4 @@
-import { compact, lamportsToSol, tokensToUi } from "@moshsol/sdk";
+import { compact, lamportsToSol, tokensToUi } from "@holdfast/sdk";
 
 /** SOL amount with magnitude-aware precision ("1.25K", "32.4", "0.0521"). */
 export function fmtSolValue(v: number): string {

@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/sdk/package.json packages/sdk/
 COPY apps/indexer/package.json apps/indexer/
-RUN pnpm install --frozen-lockfile --filter @moshsol/indexer...
+RUN pnpm install --frozen-lockfile --filter @holdfast/indexer...
 
 COPY tsconfig.base.json ./
 COPY packages/sdk packages/sdk
@@ -16,4 +16,4 @@ COPY apps/indexer apps/indexer
 # Persist DB + uploads on a mounted volume (Railway: mount at /data).
 ENV NODE_ENV=production HOST=0.0.0.0 DB_PATH=/data/indexer.db FILES_DIR=/data/files TRUST_PROXY=1
 EXPOSE 8787
-CMD ["pnpm", "--filter", "@moshsol/indexer", "start"]
+CMD ["pnpm", "--filter", "@holdfast/indexer", "start"]

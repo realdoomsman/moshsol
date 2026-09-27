@@ -1,6 +1,6 @@
 "use client";
 
-import { fmtPrice, shortAddr } from "@moshsol/sdk";
+import { fmtPrice, shortAddr } from "@holdfast/sdk";
 import { AtSign, Globe, Lock, Send } from "lucide-react";
 import type { CSSProperties } from "react";
 import { fmtSolValue } from "@/lib/format";

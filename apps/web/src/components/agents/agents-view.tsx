@@ -1,6 +1,6 @@
 "use client";
 
-import { fmtPrice, lamportsToSol, shortAddr, timeAgo } from "@moshsol/sdk";
+import { fmtPrice, lamportsToSol, shortAddr, timeAgo } from "@holdfast/sdk";
 import {
   Activity,
   ArrowDownRight,

@@ -1,6 +1,6 @@
 "use client";
 
-import { lamportsToSol } from "@moshsol/sdk";
+import { lamportsToSol } from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey, type TransactionInstruction } from "@solana/web3.js";

@@ -1,6 +1,6 @@
 import { Wallet } from "@coral-xyz/anchor";
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, type Signer, type TransactionInstruction } from "@solana/web3.js";
-import { MoshClient } from "@moshsol/sdk";
+import { MoshClient } from "@holdfast/sdk";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

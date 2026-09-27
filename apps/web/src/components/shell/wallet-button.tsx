@@ -1,6 +1,6 @@
 "use client";
 
-import { lamportsToSol, shortAddr } from "@moshsol/sdk";
+import { lamportsToSol, shortAddr } from "@holdfast/sdk";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";

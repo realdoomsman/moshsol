@@ -26,7 +26,7 @@ import {
   type LaunchAccount,
   type MoshClient,
   type Whitelist,
-} from "@moshsol/sdk";
+} from "@holdfast/sdk";
 import { LOCALNET_DIR, RPC_URL, airdrop, clientFor, loadOrCreateKeypair, send } from "./common";
 
 const INDEXER_URL = (process.env.INDEXER_URL ?? "http://127.0.0.1:8787").replace(/\/+$/, "");

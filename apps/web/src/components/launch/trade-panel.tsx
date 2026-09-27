@@ -9,7 +9,7 @@ import {
   solToLamports,
   tokensToUi,
   uiToTokens,
-} from "@moshsol/sdk";
+} from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey } from "@solana/web3.js";
@@ -20,7 +20,7 @@ import { useMoshClient, useSolBalance, useTokenBalance } from "@/lib/chain";
 import { fmtLamports, fmtTokens } from "@/lib/format";
 import { useLocalStorage } from "@/lib/hooks";
 import { usePlatform } from "@/lib/queries";
-import { solForTokens } from "@moshsol/sdk";
+import { solForTokens } from "@holdfast/sdk";
 import { useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
 import { Button } from "../ui/button";
@@ -61,7 +61,7 @@ export function TradePanel({
 
   const [buyIn, setBuyIn] = useState<"sol" | "token">("sol");
   const [amount, setAmount] = useState("");
-  const [slippageBps, setSlippageBps] = useLocalStorage("moshsol:slippage-bps", 100);
+  const [slippageBps, setSlippageBps] = useLocalStorage("holdfast:slippage-bps", 100);
   const [showSettings, setShowSettings] = useState(false);
   const [customSlip, setCustomSlip] = useState("");
 

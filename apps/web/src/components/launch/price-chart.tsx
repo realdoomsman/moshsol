@@ -1,6 +1,6 @@
 "use client";
 
-import { fmtPrice, type AgentZones } from "@moshsol/sdk";
+import { fmtPrice, type AgentZones } from "@holdfast/sdk";
 import {
   AreaSeries,
   CandlestickSeries,
@@ -151,9 +151,9 @@ function LineKey({ color, dashed, label }: { color: string; dashed?: boolean; la
 }
 
 export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones: AgentZones }) {
-  const [tfChoice, setTfChoice] = useLocalStorage<string | null>("moshsol:chart-tf", null);
-  const [unit, setUnit] = useLocalStorage<Unit>("moshsol:chart-unit", "mcap");
-  const [typeChoice, setTypeChoice] = useLocalStorage<ChartType>("moshsol:chart-type", "auto");
+  const [tfChoice, setTfChoice] = useLocalStorage<string | null>("holdfast:chart-tf", null);
+  const [unit, setUnit] = useLocalStorage<Unit>("holdfast:chart-unit", "mcap");
+  const [typeChoice, setTypeChoice] = useLocalStorage<ChartType>("holdfast:chart-type", "auto");
   const minute = useCandles(l.mint, 60);
   const autoTf = useMemo(() => autoTimeframe(minute.data?.candles), [minute.data]);
   const tf = TIMEFRAMES.find((t) => t.value === tfChoice)?.tf ?? autoTf;

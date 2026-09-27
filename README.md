@@ -1,4 +1,4 @@
-# moshsol
+# holdfast
 
 A Solana memecoin launchpad where every launch is backed by a **bundle that can never be dumped**.
 Backers fund the bundle before launch; at launch it buys the first slice of supply and is locked
@@ -36,7 +36,7 @@ flowchart LR
 |---|---|
 | `programs/moshsol` | Anchor 0.31 program (raise → launch → curve + vault + agents + fee accounting) |
 | `tests/program` | litesvm integration tests (time travel for deadlines/windows, invariants after every step) |
-| `packages/sdk` | `@moshsol/sdk`: IDL, PDAs, bigint curve math mirroring the program, ix builders, event parser, merkle whitelist, formatters |
+| `packages/sdk` | `@holdfast/sdk`: IDL, PDAs, bigint curve math mirroring the program, ix builders, event parser, merkle whitelist, formatters |
 | `apps/indexer` | Data backend: event indexer (backfill + reconnecting live logs + poller, chain-reset detection), SQLite, REST + WebSocket API, rate-limited image/metadata uploads |
 | `apps/agent` | Vault agent: mirrors on-chain EMA/window math, sizes trades to pull price back toward the EMA within limits, status API |
 | `apps/web` | Next.js site: explore, create, raise/launch/trade pages, portfolio, agent transparency, docs |
@@ -204,7 +204,7 @@ between transactions), `SIM_TRADERS` (10), `SIM_BACKERS` (6), `SIM_MEDIAN_TRADE_
 
 `.devnet/*.json` are the only copies of those keys — back them up; they are gitignored.
 
-Railway project `moshsol` has three services, each connected to this GitHub repo (`master`) with its
+Railway project `holdfast` has three services, each connected to this GitHub repo (`master`) with its
 own Dockerfile (`apps/<service>/Dockerfile`, build context = repo root), a healthcheck, restart on
 failure, and watch paths so a push only rebuilds what it touched (`apps/<service>/**`,
 `packages/sdk/**`, lockfile):

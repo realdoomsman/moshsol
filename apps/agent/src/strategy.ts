@@ -14,7 +14,7 @@ import {
   tokensOut,
   tokensToUi,
   type LaunchAccount,
-} from "@moshsol/sdk";
+} from "@holdfast/sdk";
 
 /**
  * Pure decision logic. Everything here mirrors programs/moshsol (state.rs `roll_window`,

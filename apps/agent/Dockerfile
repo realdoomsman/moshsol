@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/sdk/package.json packages/sdk/
 COPY apps/agent/package.json apps/agent/
-RUN pnpm install --frozen-lockfile --filter @moshsol/agent...
+RUN pnpm install --frozen-lockfile --filter @holdfast/agent...
 
 COPY tsconfig.base.json ./
 COPY packages/sdk packages/sdk
@@ -16,4 +16,4 @@ COPY apps/agent apps/agent
 
 ENV NODE_ENV=production STATUS_HOST=0.0.0.0
 EXPOSE 8788
-CMD ["pnpm", "--filter", "@moshsol/agent", "start"]
+CMD ["pnpm", "--filter", "@holdfast/agent", "start"]

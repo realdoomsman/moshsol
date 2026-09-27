@@ -1,6 +1,6 @@
 "use client";
 
-import { shortAddr } from "@moshsol/sdk";
+import { shortAddr } from "@holdfast/sdk";
 import { Rocket } from "lucide-react";
 import { useParams } from "next/navigation";
 import { ButtonLink } from "@/components/ui/button";
@@ -30,7 +30,7 @@ export default function LaunchNotFound() {
         </span>
       ) : null}
       <span className="block">
-        That isn&apos;t a moshsol launch mint on this cluster. Double-check the link, or find it on the explore page.
+        That isn&apos;t a holdfast launch mint on this cluster. Double-check the link, or find it on the explore page.
       </span>
     </NotFoundPanel>
   );

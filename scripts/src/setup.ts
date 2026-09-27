@@ -11,7 +11,7 @@
  */
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
-import { PROGRAM_ID, platformPda, type PlatformParams } from "@moshsol/sdk";
+import { PROGRAM_ID, platformPda, type PlatformParams } from "@holdfast/sdk";
 import fs from "node:fs";
 import path from "node:path";
 import { LOCALNET_DIR, RPC_URL, airdrop, clientFor, loadOrCreateKeypair, send } from "./common";

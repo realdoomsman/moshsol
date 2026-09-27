@@ -1,5 +1,5 @@
 {
-  "name": "@moshsol/web",
+  "name": "@holdfast/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",
-    "@moshsol/sdk": "workspace:*",
+    "@holdfast/sdk": "workspace:*",
     "@solana/spl-token": "^0.4.13",
     "@solana/wallet-adapter-base": "^0.9.28",
     "@solana/wallet-adapter-react": "^0.15.40",

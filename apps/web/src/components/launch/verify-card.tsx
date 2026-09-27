@@ -1,6 +1,6 @@
 "use client";
 
-import { PROGRAM_ID, TOTAL_SUPPLY, curvePda, shortAddr, vaultPda } from "@moshsol/sdk";
+import { PROGRAM_ID, TOTAL_SUPPLY, curvePda, shortAddr, vaultPda } from "@holdfast/sdk";
 import { PublicKey } from "@solana/web3.js";
 import { CheckCircle2, ExternalLink, FileCheck2, XCircle } from "lucide-react";
 import type { ReactNode } from "react";

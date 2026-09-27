@@ -1,4 +1,4 @@
-import { shortAddr } from "@moshsol/sdk";
+import { shortAddr } from "@holdfast/sdk";
 import { fmtLamports } from "./format";
 import type { ActivityEvent } from "./types";
 

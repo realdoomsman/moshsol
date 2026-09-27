@@ -1,4 +1,4 @@
-import { launchPda } from "@moshsol/sdk";
+import { launchPda } from "@holdfast/sdk";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { cache } from "react";
 import { ApiError, api } from "./api";

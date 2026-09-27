@@ -1,4 +1,4 @@
-import { MoshClient } from "@moshsol/sdk";
+import { MoshClient } from "@holdfast/sdk";
 import { Connection } from "@solana/web3.js";
 import { config } from "./config";
 import { Store } from "./db";

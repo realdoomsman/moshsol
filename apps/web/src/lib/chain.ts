@@ -1,6 +1,6 @@
 "use client";
 
-import { MoshClient, TOKEN_2022_PROGRAM_ID, tokenAta } from "@moshsol/sdk";
+import { MoshClient, TOKEN_2022_PROGRAM_ID, tokenAta } from "@holdfast/sdk";
 import { getMint } from "@solana/spl-token";
 import { useConnection } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";

@@ -1,6 +1,6 @@
 "use client";
 
-import { buildWhitelist, fmtPrice, lamportsToSol, previewBundle, solToLamports } from "@moshsol/sdk";
+import { buildWhitelist, fmtPrice, lamportsToSol, previewBundle, solToLamports } from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey } from "@solana/web3.js";

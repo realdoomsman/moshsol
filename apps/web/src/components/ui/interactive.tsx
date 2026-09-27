@@ -1,6 +1,6 @@
 "use client";
 
-import { countdown, shortAddr } from "@moshsol/sdk";
+import { countdown, shortAddr } from "@holdfast/sdk";
 import { Check, Copy, Info } from "lucide-react";
 import { motion, useReducedMotion, useSpring, useTransform } from "motion/react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";

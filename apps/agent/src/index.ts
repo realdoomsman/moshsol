@@ -1,5 +1,5 @@
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { MoshClient, describeError } from "@moshsol/sdk";
+import { MoshClient, describeError } from "@holdfast/sdk";
 import { Agent } from "./agent";
 import { loadConfig, loadKeypair } from "./config";
 import { log } from "./log";

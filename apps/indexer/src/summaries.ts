@@ -1,4 +1,4 @@
-import type { LaunchJson } from "@moshsol/sdk";
+import type { LaunchJson } from "@holdfast/sdk";
 import type { LaunchDbRow, Store, TradeAggDbRow } from "./db";
 import type { LaunchSummary } from "./types";
 

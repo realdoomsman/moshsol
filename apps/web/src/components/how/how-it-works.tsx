@@ -1,6 +1,6 @@
 "use client";
 
-import { lamportsToSol } from "@moshsol/sdk";
+import { lamportsToSol } from "@holdfast/sdk";
 import {
   Bot,
   ChevronDown,
@@ -172,7 +172,7 @@ export function HowItWorks() {
     },
     {
       q: "Does the token migrate to a DEX?",
-      a: "No. Liquidity lives on the moshsol curve forever, so it can never be pulled.",
+      a: "No. Liquidity lives on the holdfast curve forever, so it can never be pulled.",
     },
     {
       q: "How do I verify all of this?",

@@ -10,7 +10,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { Connection, Keypair } from "@solana/web3.js";
-import { MoshClient, PROGRAM_ID } from "@moshsol/sdk";
+import { MoshClient, PROGRAM_ID } from "@holdfast/sdk";
 import { ROOT, RPC_URL } from "./common";
 
 const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(RPC_URL);

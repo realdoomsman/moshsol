@@ -1,4 +1,4 @@
-import type { LaunchJson } from "@moshsol/sdk";
+import type { LaunchJson } from "@holdfast/sdk";
 
 /** UI lifecycle derived from on-chain status plus the clock. */
 export type Phase = "raising" | "ready" | "failed" | "live" | "refunding";

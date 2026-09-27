@@ -18,10 +18,10 @@ const description =
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: { default: "moshsol — launches that can't be dumped", template: "%s · moshsol" },
+  title: { default: "holdfast — launches that can't be dumped", template: "%s · holdfast" },
   description,
-  applicationName: "moshsol",
-  openGraph: { siteName: "moshsol", type: "website", title: "moshsol — launches that can't be dumped", description },
+  applicationName: "holdfast",
+  openGraph: { siteName: "holdfast", type: "website", title: "holdfast — launches that can't be dumped", description },
 };
 
 export const viewport: Viewport = {

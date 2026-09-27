@@ -1,4 +1,4 @@
-import type { LaunchJson, LaunchStatus } from "@moshsol/sdk";
+import type { LaunchJson, LaunchStatus } from "@holdfast/sdk";
 
 /** Shapes served by apps/indexer (see shared contract). Lamport/base-unit amounts are decimal strings. */
 

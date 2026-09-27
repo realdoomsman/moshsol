@@ -42,7 +42,7 @@ import {
   type LaunchJson,
   type MoshClient,
   type PlatformAccount,
-} from "@moshsol/sdk";
+} from "@holdfast/sdk";
 import { LOCALNET_DIR, RPC_URL, airdrop, clientFor, loadOrCreateKeypair, send } from "./common";
 
 // ---------------------------------------------------------------- config

@@ -1,6 +1,6 @@
 "use client";
 
-import { fmtPrice, lamportsToSol, tokensToUi } from "@moshsol/sdk";
+import { fmtPrice, lamportsToSol, tokensToUi } from "@holdfast/sdk";
 import { ArrowRight, Bot, Clock, Lock, Plus, ShieldCheck, Users } from "lucide-react";
 import Link from "next/link";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";

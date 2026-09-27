@@ -1,4 +1,4 @@
-import { TOKEN_2022_PROGRAM_ID, TOTAL_SUPPLY, curvePda, tokenAta, vaultPda } from "@moshsol/sdk";
+import { TOKEN_2022_PROGRAM_ID, TOTAL_SUPPLY, curvePda, tokenAta, vaultPda } from "@holdfast/sdk";
 import { PublicKey, type Connection } from "@solana/web3.js";
 import type { Store } from "./db";
 import type { HolderRow } from "./types";

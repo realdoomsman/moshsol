@@ -1,4 +1,4 @@
-import { fmtPrice, lamportsToSol } from "@moshsol/sdk";
+import { fmtPrice, lamportsToSol } from "@holdfast/sdk";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ImageResponse } from "next/og";
@@ -6,7 +6,7 @@ import { fmtSolValue, fmtTokens } from "@/lib/format";
 import { loadLaunch, parseMint } from "@/lib/server";
 import type { LaunchSummary } from "@/lib/types";
 
-export const alt = "moshsol launch — bundle locked forever";
+export const alt = "holdfast launch — bundle locked forever";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -168,7 +168,7 @@ export default async function Image({ params }: { params: Promise<{ mint: string
           )}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 10, maxWidth: 820 }}>
             <div style={{ fontSize: 76, fontWeight: 600, letterSpacing: -2.5, lineHeight: 1.02 }}>
-              {l ? l.name : "moshsol"}
+              {l ? l.name : "holdfast"}
             </div>
             <div style={{ fontSize: 38, color: MUTED }}>{l ? `$${l.symbol}` : "Solana launchpad"}</div>
             <div

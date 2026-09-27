@@ -9,7 +9,7 @@ import {
   previewBundle,
   TOTAL_SUPPLY,
   type BundlePreview,
-} from "@moshsol/sdk";
+} from "@holdfast/sdk";
 import { ACCOUNT_SIZE, ExtensionType, getMintLen } from "@solana/spl-token";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";

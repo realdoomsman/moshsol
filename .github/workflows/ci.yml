@@ -24,4 +24,4 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
-      - run: pnpm --filter @moshsol/web build
+      - run: pnpm --filter @holdfast/web build

@@ -1,6 +1,6 @@
 "use client";
 
-import { agentZones, fmtPrice, lamportsToSol } from "@moshsol/sdk";
+import { agentZones, fmtPrice, lamportsToSol } from "@holdfast/sdk";
 import { Bot, Loader2, SearchX } from "lucide-react";
 import { useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";

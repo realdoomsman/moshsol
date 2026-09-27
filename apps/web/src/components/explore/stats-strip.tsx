@@ -1,6 +1,6 @@
 "use client";
 
-import { compact } from "@moshsol/sdk";
+import { compact } from "@holdfast/sdk";
 import { Bot, Coins, Rocket, TrendingUp, Users } from "lucide-react";
 import { fmtSolValue } from "@/lib/format";
 import { useStats } from "@/lib/queries";

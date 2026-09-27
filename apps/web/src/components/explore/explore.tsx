@@ -184,7 +184,7 @@ export function Explore() {
                   </button>
                 }
               >
-                Launch data comes from the moshsol indexer. It will reconnect automatically.
+                Launch data comes from the holdfast indexer. It will reconnect automatically.
               </EmptyState>
             </div>
           ) : list.length === 0 ? (

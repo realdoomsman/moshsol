@@ -1,4 +1,4 @@
-import { LIMITS, solToLamports } from "@moshsol/sdk";
+import { LIMITS, solToLamports } from "@holdfast/sdk";
 import { PublicKey } from "@solana/web3.js";
 import { IMAGE_TYPES, MAX_IMAGE_BYTES } from "./image-drop";
 

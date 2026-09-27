@@ -1,6 +1,6 @@
 "use client";
 
-import { describeError } from "@moshsol/sdk";
+import { describeError } from "@holdfast/sdk";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { VersionedTransaction, type Keypair, type PublicKey, type TransactionInstruction } from "@solana/web3.js";
