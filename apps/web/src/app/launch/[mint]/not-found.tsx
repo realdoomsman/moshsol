@@ -1,7 +1,7 @@
 "use client";
 
 import { shortAddr } from "@moshsol/sdk";
-import { Rocket, SearchX } from "lucide-react";
+import { Rocket } from "lucide-react";
 import { useParams } from "next/navigation";
 import { ButtonLink } from "@/components/ui/button";
 import { NotFoundPanel } from "@/components/ui/not-found-panel";
@@ -11,7 +11,7 @@ export default function LaunchNotFound() {
   const label = mint ? decodeURIComponent(mint) : "";
   return (
     <NotFoundPanel
-      icon={<SearchX className="size-6" aria-hidden />}
+      art="vault"
       title="No launch at this address"
       actions={
         <>

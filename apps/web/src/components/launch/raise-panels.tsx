@@ -4,7 +4,7 @@ import { buildWhitelist, fmtPrice, lamportsToSol, previewBundle, solToLamports }
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey } from "@solana/web3.js";
-import { AlertTriangle, CheckCircle2, Clock, Lock, Rocket, ShieldCheck, Undo2, Users, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Coins, Lock, Rocket, ShieldCheck, Undo2, Users, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useBackerAccount, useChainWhitelistRoot, useMoshClient, useSolBalance } from "@/lib/chain";
 import { fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
@@ -15,62 +15,112 @@ import { useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
 import { Button } from "../ui/button";
 import { cn } from "../ui/cn";
-import { AnimatedNumber, Countdown } from "../ui/interactive";
+import { AnimatedNumber } from "../ui/interactive";
 import { Card, CardHeader, Row } from "../ui/primitives";
 import { RaiseBar } from "./raise-bar";
 
 /** Rent for a new backer account is paid on first deposit; keep headroom for it and the fee. */
 const DEPOSIT_HEADROOM = 5_000_000n;
 
+/** Days/hours/minutes/seconds as tiles; the seconds tile ticks. */
+function CountdownTiles({ to }: { to: number }) {
+  const now = useNow();
+  const left = Math.max(0, to - now);
+  const parts = [
+    { k: "d", v: Math.floor(left / 86_400) },
+    { k: "h", v: Math.floor((left % 86_400) / 3_600) },
+    { k: "m", v: Math.floor((left % 3_600) / 60) },
+    { k: "s", v: left % 60 },
+  ];
+  // Drop leading zero units (but always keep minutes and seconds).
+  const shown = parts.slice(Math.min(parts.findIndex((p) => p.v > 0 || p.k === "m"), 2));
+  return (
+    <div className="flex items-end gap-1.5" suppressHydrationWarning>
+      {shown.map((p) => (
+        <span
+          key={p.k}
+          className="grid min-w-11 place-items-center rounded-xl border border-line bg-black/35 px-2 py-1.5 shadow-[inset_0_1px_0_rgb(255_255_255/0.05)] sm:min-w-12"
+        >
+          <span className="text-xl leading-none font-semibold tabular-nums sm:text-2xl" suppressHydrationWarning>
+            {String(p.v).padStart(2, "0")}
+          </span>
+          <span className="mt-1 text-[10px] font-semibold tracking-wider text-dim uppercase">{p.k}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function RaiseHero({ launch: l, phase }: { launch: LaunchSummary; phase: Phase }) {
   const raised = lamportsToSol(l.raised);
   const minPct = pctOf(l.raiseMin, l.raiseMax);
+  const funded = pctOf(l.raised, l.raiseMax);
   const failed = phase === "failed" || phase === "refunding";
+  const minMet = BigInt(l.raised) >= BigInt(l.raiseMin);
   return (
     <Card className="overflow-hidden p-5 sm:p-7">
-      <div className="pointer-events-none absolute -top-24 left-1/3 size-72 rounded-full bg-violet/15 blur-3xl" />
-      <div className="relative flex flex-wrap items-end justify-between gap-4">
+      <div
+        className={cn(
+          "pointer-events-none absolute -top-28 left-1/4 size-80 rounded-full blur-3xl",
+          failed ? "bg-down/10" : minMet ? "bg-lime/15" : "bg-violet/20",
+        )}
+      />
+      <div className="pointer-events-none absolute -right-24 -bottom-32 size-72 rounded-full bg-cyan/[0.07] blur-3xl" />
+      <div className="relative flex flex-wrap items-end justify-between gap-5">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-dim">Raised</div>
-          <div className="mt-1 text-4xl font-semibold tracking-tight sm:text-5xl">
+          <div className="type-eyebrow text-dim">{failed ? "Raised before it closed" : "Raised so far"}</div>
+          <div className="type-display mt-2 text-5xl sm:text-6xl">
             <AnimatedNumber value={raised} format={fmtSolValue} />
-            <span className="ml-2 text-lg font-medium text-dim sm:text-xl">/ {fmtLamports(l.raiseMax)} SOL</span>
+            <span className="ml-2 text-lg font-medium tracking-normal text-dim sm:text-xl">/ {fmtLamports(l.raiseMax)} SOL</span>
+          </div>
+          <div className="mt-3 inline-flex h-7 items-center gap-2 rounded-full border border-line bg-black/30 px-3 text-xs text-muted tabular-nums">
+            <span className="font-semibold text-ink">{funded > 0 && funded < 1 ? "<1" : Math.floor(funded)}% funded</span>
+            {!failed && !minMet ? (
+              <>
+                <span className="text-dim">·</span>
+                {fmtLamports(BigInt(l.raiseMin) - BigInt(l.raised))} SOL to the minimum
+              </>
+            ) : null}
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-dim">
-            {phase === "raising" ? "Closes in" : "Status"}
-          </div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums sm:text-3xl">
-            {phase === "raising" ? (
-              <Countdown to={l.raiseDeadline} />
-            ) : phase === "ready" ? (
-              <span className="text-lime">Ready</span>
-            ) : phase === "refunding" ? (
-              <span className="text-warn">Refunding</span>
-            ) : (
-              <span className="text-down">Failed</span>
-            )}
-          </div>
+        <div className="sm:text-right">
+          <div className="type-eyebrow mb-2 text-dim">{phase === "raising" ? "Closes in" : "Status"}</div>
+          {phase === "raising" ? (
+            <CountdownTiles to={l.raiseDeadline} />
+          ) : (
+            <div className="text-2xl font-semibold sm:text-3xl">
+              {phase === "ready" ? (
+                <span className="text-lime">Ready to launch</span>
+              ) : phase === "refunding" ? (
+                <span className="text-warn">Refunding</span>
+              ) : (
+                <span className="text-down">Failed</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
-      <div className="relative mt-6">
+      <div className="relative mt-8">
         <RaiseBar raised={l.raised} raiseMin={l.raiseMin} raiseMax={l.raiseMax} size="lg" failed={failed} />
-        <div className="relative mt-2 h-8 text-xs tabular-nums">
-          <span className="absolute left-0 text-dim">0</span>
-          {minPct > 8 && minPct < 88 ? (
+        <div className="relative mt-3 h-9 text-xs tabular-nums">
+          <span className="absolute left-0">
+            <span className="block font-semibold text-muted">0</span>
+          </span>
+          {minPct > 12 && minPct < 84 ? (
             <span className="absolute -translate-x-1/2 text-center" style={{ left: `${minPct}%` }}>
-              <span className="block font-semibold text-muted">min {fmtLamports(l.raiseMin)}</span>
+              <span className={cn("block font-semibold", minMet ? "text-lime" : "text-ink")}>
+                {minMet ? "✓ " : ""}min {fmtLamports(l.raiseMin)}
+              </span>
               <span className="block text-dim">launchable</span>
             </span>
           ) : null}
           <span className="absolute right-0 text-right">
-            <span className="block font-semibold text-muted">max {fmtLamports(l.raiseMax)}</span>
+            <span className="block font-semibold text-ink">max {fmtLamports(l.raiseMax)}</span>
             <span className="block text-dim">auto-closes</span>
           </span>
         </div>
       </div>
-      <div className="relative mt-5 grid grid-cols-2 gap-4 border-t border-line pt-5 sm:grid-cols-4">
+      <div className="relative mt-6 grid grid-cols-2 gap-4 border-t border-line pt-5 sm:grid-cols-4">
         <div>
           <div className="text-xs text-dim">Backers</div>
           <div className="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular-nums">
@@ -80,7 +130,7 @@ export function RaiseHero({ launch: l, phase }: { launch: LaunchSummary; phase: 
         <div>
           <div className="text-xs text-dim">Minimum</div>
           <div className="mt-1 text-lg font-semibold tabular-nums">
-            {BigInt(l.raised) >= BigInt(l.raiseMin) ? (
+            {minMet ? (
               <span className="inline-flex items-center gap-1.5 text-lime">
                 <CheckCircle2 className="size-4" aria-hidden /> met
               </span>
@@ -89,7 +139,7 @@ export function RaiseHero({ launch: l, phase }: { launch: LaunchSummary; phase: 
                 <XCircle className="size-4" aria-hidden /> {fmtLamports(l.raiseMin)} SOL · not met
               </span>
             ) : (
-              `${fmtLamports(BigInt(l.raiseMin) - BigInt(l.raised))} to go`
+              `${fmtLamports(BigInt(l.raiseMin) - BigInt(l.raised))} SOL to go`
             )}
           </div>
         </div>
@@ -173,6 +223,97 @@ export function BundleNowCard({ launch: l }: { launch: LaunchSummary }) {
         </p>
       </div>
     </Card>
+  );
+}
+
+/** Example deposit used for the explainer before an amount is typed. */
+const EXAMPLE_DEPOSIT = 100_000_000n;
+
+/**
+ * What a deposit buys: its share of the backer fee pool (and so of every trade), and the slice of
+ * the vault it funds at launch — recomputed live from the typed amount (or a 0.1 SOL example).
+ */
+function WhatYouGet({
+  launch: l,
+  deposited,
+  add,
+  room,
+  walletRoom,
+}: {
+  launch: LaunchSummary;
+  deposited: bigint;
+  add: bigint | null;
+  room: bigint;
+  walletRoom: bigint | null;
+}) {
+  const example = [EXAMPLE_DEPOSIT, room > 0n ? room : 0n, walletRoom ?? EXAMPLE_DEPOSIT].reduce((a, b) => (b < a ? b : a));
+  const extra = add ?? (deposited > 0n ? 0n : example);
+  const mine = deposited + extra;
+  const total = BigInt(l.raised) + extra;
+  const bundle = useMemo(
+    () =>
+      total > 0n
+        ? previewBundle({
+            raised: total,
+            virtualSol: BigInt(l.virtualSol),
+            launchFeeBps: l.terms.launchFeeBps,
+            reserveBps: l.reserveBps,
+            bundleSupplyBps: l.bundleSupplyBps,
+          })
+        : null,
+    [total, l.virtualSol, l.terms.launchFeeBps, l.reserveBps, l.bundleSupplyBps],
+  );
+  if (mine === 0n || total === 0n) return null;
+  const share = pctOf(mine, total);
+  const poolPct = (l.terms.tradeFeeBps * l.terms.backerFeeShareBps) / 1_000_000;
+  const perTrade = (poolPct * share) / 100;
+  const basis = add ? `for ${fmtLamports(mine)} SOL` : deposited > 0n ? "your position" : `e.g. ${fmtLamports(extra)} SOL`;
+  return (
+    <div className="relative mt-4 overflow-hidden rounded-xl border border-lime/20 bg-lime/[0.04] p-3.5">
+      <div className="pointer-events-none absolute -top-10 -right-10 size-28 rounded-full bg-lime/15 blur-2xl" />
+      <div className="relative flex items-center justify-between gap-2">
+        <span className="type-eyebrow text-lime">What you get</span>
+        <span className="text-[11px] text-dim tabular-nums">{basis}</span>
+      </div>
+      <ul className="relative mt-3 grid gap-3 text-[13px]">
+        <li className="flex gap-2.5">
+          <Coins className="mt-0.5 size-4 shrink-0 text-lime" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-muted">Fee share</span>
+              <span className="font-semibold text-ink tabular-nums">{share.toFixed(share >= 10 ? 1 : 2)}% of backer fees</span>
+            </div>
+            <p className="mt-0.5 text-xs leading-relaxed text-dim">
+              ≈ {+perTrade.toPrecision(2)}% of every trade — {+perTrade.toPrecision(2)} SOL per 100 SOL traded, forever. Shrinks
+              as others back it.
+            </p>
+          </div>
+        </li>
+        {bundle ? (
+          <li className="flex gap-2.5">
+            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-lime" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-muted">Vault slice at launch</span>
+                <span className="text-right font-semibold text-ink tabular-nums">
+                  {fmtTokens((bundle.bundleTokens * mine) / total)} ${l.symbol}
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs leading-relaxed text-dim">
+                + {fmtLamports((bundle.vaultSol * mine) / total)} SOL reserve — locked forever, traded only by agents.
+              </p>
+            </div>
+          </li>
+        ) : null}
+        <li className="flex gap-2.5">
+          <Undo2 className="mt-0.5 size-4 shrink-0 text-lime" aria-hidden />
+          <p className="text-xs leading-relaxed text-dim">
+            <span className="text-muted">100% refundable</span> if the {fmtLamports(l.raiseMin)} SOL minimum isn&apos;t met or the
+            creator cancels.
+          </p>
+        </li>
+      </ul>
+    </div>
   );
 }
 
@@ -307,7 +448,7 @@ export function DepositPanel({ launch: l, phase }: { launch: LaunchSummary; phas
                 if (walletRoom !== null && v > walletRoom) v = walletRoom;
                 setAmount((Number(v) / 1e9).toFixed(4).replace(/\.?0+$/, ""));
               }}
-              className="h-7 rounded-lg border border-line bg-white/[0.03] text-xs font-semibold text-muted transition hover:border-line-strong hover:text-ink disabled:opacity-40"
+              className="h-10 rounded-lg border border-line bg-white/[0.03] text-xs font-semibold text-muted transition hover:border-line-strong hover:text-ink disabled:opacity-40 sm:h-8"
             >
               {pct === 100 ? "Max" : `${pct}%`}
             </button>
@@ -323,15 +464,12 @@ export function DepositPanel({ launch: l, phase }: { launch: LaunchSummary; phas
         </div>
       ) : null}
 
-      <div className="mt-3 grid gap-1.5">
+      {phase === "raising" ? (
+        <WhatYouGet launch={l} deposited={deposited} add={effective && effective > 0n ? effective : null} room={room} walletRoom={walletRoom} />
+      ) : null}
+
+      <div className="mt-4 grid gap-1.5">
         <Row label="Your deposit">{fmtLamports(deposited)} SOL</Row>
-        <Row label="Share after deposit">
-          {(() => {
-            const add = effective ?? 0n;
-            const total = BigInt(l.raised) + add;
-            return total > 0n ? `${pctOf(deposited + add, total).toFixed(2)}%` : "—";
-          })()}
-        </Row>
         {walletRoom !== null ? <Row label="Wallet cap left">{fmtLamports(walletRoom)} SOL</Row> : null}
         <Row label="Room in raise">{fmtLamports(room > 0n ? room : 0n)} SOL</Row>
       </div>
@@ -346,9 +484,11 @@ export function DepositPanel({ launch: l, phase }: { launch: LaunchSummary; phas
       >
         {!publicKey ? "Connect wallet to back" : (reason ?? `Deposit ${fmtLamports(effective ?? 0n)} SOL`)}
       </Button>
-      <p className="mt-2.5 text-center text-[11.5px] leading-relaxed text-dim">
-        Full refund if the minimum isn&apos;t met by the deadline or the creator cancels.
-      </p>
+      {phase !== "raising" ? (
+        <p className="mt-2.5 text-center text-[11.5px] leading-relaxed text-dim">
+          Full refund if the minimum isn&apos;t met by the deadline or the creator cancels.
+        </p>
+      ) : null}
     </Card>
   );
 }

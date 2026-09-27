@@ -128,7 +128,7 @@ export function CopyButton({ value, label, className }: { value: string; label?:
       }}
       className={cn(
         // The hit area extends past the 14px glyph without shifting the surrounding text.
-        "relative inline-flex items-center gap-1.5 rounded-md text-dim transition before:absolute before:-inset-2 before:content-[''] hover:text-ink",
+        "relative inline-flex items-center gap-1.5 rounded-md text-dim transition before:absolute before:-inset-[13px] before:content-[''] hover:text-ink",
         className,
       )}
       aria-label={label ?? "Copy to clipboard"}
@@ -198,7 +198,11 @@ export function AddressLink({
       target="_blank"
       rel="noreferrer"
       title={address}
-      className={cn("font-mono text-[12.5px] text-muted transition hover:text-lime", className)}
+      // The tap area grows to ~40px tall without moving the text around it.
+      className={cn(
+        "relative font-mono text-[12.5px] text-muted transition before:absolute before:-inset-x-1 before:-inset-y-3 before:content-[''] hover:text-lime",
+        className,
+      )}
     >
       {label ?? shortAddr(address, chars)}
     </a>
@@ -228,13 +232,22 @@ export function Countdown({ to, className, endedLabel = "ended" }: { to: number;
   );
 }
 
+/**
+ * Area sparkline. `className` sets the height (default h-8); `dot` marks the latest value with a
+ * glowing point (drawn in HTML so the stretched SVG doesn't squash it).
+ */
 export function Sparkline({
   values,
   up,
-  className,
+  color,
+  dot,
+  className = "h-8",
 }: {
   values: number[];
   up: boolean;
+  /** Line colour; defaults to up/down green/red. */
+  color?: string;
+  dot?: boolean;
   className?: string;
 }) {
   const gid = useId().replace(/:/g, "");
@@ -244,19 +257,33 @@ export function Sparkline({
   const span = max - min || max * 0.02 || 1;
   const w = 100;
   const h = 32;
-  const pts = values.map((v, i) => [(i / (values.length - 1)) * w, h - 2 - ((v - min) / span) * (h - 4)] as const);
+  const pts = values.map((v, i) => [(i / (values.length - 1)) * w, h - 3 - ((v - min) / span) * (h - 6)] as const);
   const line = pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
-  const color = up ? "var(--color-up)" : "var(--color-down)";
+  const stroke = color ?? (up ? "var(--color-up)" : "var(--color-down)");
+  const [lastX, lastY] = pts[pts.length - 1];
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className={cn("h-8 w-full", className)} aria-hidden>
-      <defs>
-        <linearGradient id={gid} x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.28" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={`${line} L${w},${h} L0,${h} Z`} fill={`url(#${gid})`} />
-      <path d={line} fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-    </svg>
+    <div className={cn("relative w-full", className)} aria-hidden>
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="absolute inset-0 size-full overflow-visible">
+        <defs>
+          <linearGradient id={gid} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={stroke} stopOpacity="0.3" />
+            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={`${line} L${w},${h} L0,${h} Z`} fill={`url(#${gid})`} />
+        <path d={line} fill="none" stroke={stroke} strokeWidth="1.75" vectorEffect="non-scaling-stroke" />
+      </svg>
+      {dot ? (
+        <span
+          className="absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full"
+          style={{
+            left: `${lastX}%`,
+            top: `${(lastY / h) * 100}%`,
+            background: stroke,
+            boxShadow: `0 0 0 3px color-mix(in srgb, ${stroke} 25%, transparent), 0 0 12px ${stroke}`,
+          }}
+        />
+      ) : null}
+    </div>
   );
 }

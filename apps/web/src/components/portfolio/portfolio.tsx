@@ -4,7 +4,7 @@ import { lamportsToSol } from "@moshsol/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey, type TransactionInstruction } from "@solana/web3.js";
-import { Briefcase, Coins, Crown, Layers, Undo2, Wallet } from "lucide-react";
+import { Coins, Crown, Undo2, Wallet } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useMoshClient } from "@/lib/chain";
@@ -22,6 +22,14 @@ import { ChangeText, PhasePill } from "../ui/status";
 
 /** Claim instructions per transaction; each claim is small, this keeps well inside size/CU limits. */
 const CLAIMS_PER_TX = 6;
+
+/** What the connected view holds, shown while no wallet is connected. */
+const PREVIEW = [
+  { icon: Coins, tone: "text-[#c2a6ff]", title: "Backer fees", body: "Your share of every trade on launches you backed — claim any time." },
+  { icon: Undo2, tone: "text-warn", title: "Refunds", body: "Raises that missed their minimum, with one-click full refunds." },
+  { icon: Crown, tone: "text-lime", title: "Created launches", body: "Creator fees from every trade on the launches you opened." },
+  { icon: Wallet, tone: "text-cyan", title: "Holdings", body: "Tokens you hold, valued at the live curve price." },
+];
 
 function LaunchCell({ l, now }: { l: LaunchSummary; now: number }) {
   return (
@@ -58,19 +66,36 @@ export function PortfolioView() {
 
   if (!mounted || !publicKey) {
     return (
-      <Card className="mx-auto mt-6 max-w-xl">
-        <EmptyState
-          icon={<Wallet className="size-5" aria-hidden />}
-          title="Connect a wallet to see your portfolio"
-          action={
-            <Button variant="primary" onClick={() => setVisible(true)} icon={<Wallet className="size-4" aria-hidden />}>
-              Connect wallet
-            </Button>
-          }
-        >
-          Backed launches, claimable fees, refunds, launches you created and your token holdings — all in one place.
-        </EmptyState>
-      </Card>
+      <div className="grid items-stretch gap-5 lg:grid-cols-[1.15fr_1fr]">
+        <Card className="grid place-items-center overflow-hidden">
+          <div className="pointer-events-none absolute -top-24 left-1/2 size-72 -translate-x-1/2 rounded-full bg-violet/15 blur-3xl" />
+          <EmptyState
+            art="wallet"
+            className="relative py-14"
+            title="Connect a wallet to see your portfolio"
+            action={
+              <Button variant="primary" size="lg" onClick={() => setVisible(true)} icon={<Wallet className="size-4" aria-hidden />}>
+                Connect wallet
+              </Button>
+            }
+          >
+            Read-only until you sign: this page only looks up your wallet&apos;s positions from the indexer.
+          </EmptyState>
+        </Card>
+        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+          {PREVIEW.map((p) => (
+            <li key={p.title} className="card flex items-start gap-3.5 p-4 sm:p-5">
+              <span className={cn("grid size-10 shrink-0 place-items-center rounded-xl border border-line bg-white/[0.04]", p.tone)}>
+                <p.icon className="size-4.5" aria-hidden />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[15px] font-semibold">{p.title}</span>
+                <span className="mt-0.5 block text-sm leading-relaxed text-muted">{p.body}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
     );
   }
 
@@ -86,7 +111,7 @@ export function PortfolioView() {
   if (isError || !data) {
     return (
       <Card>
-        <EmptyState icon={<Briefcase className="size-5" aria-hidden />} title="Portfolio unavailable">
+        <EmptyState art="offline" title="Portfolio unavailable">
           The indexer is unreachable right now. It will retry automatically.
         </EmptyState>
       </Card>
@@ -171,7 +196,7 @@ export function PortfolioView() {
       {empty ? (
         <Card>
           <EmptyState
-            icon={<Layers className="size-5" aria-hidden />}
+            art="deposits"
             title="Nothing here yet"
             action={
               <div className="flex gap-2">

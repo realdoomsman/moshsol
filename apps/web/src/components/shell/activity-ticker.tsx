@@ -15,7 +15,7 @@ function TickerItem({ e }: { e: ActivityEvent }) {
     <Link
       href={`/launch/${e.mint}`}
       prefetch={false}
-      className="group inline-flex shrink-0 items-center gap-2 rounded-full px-2.5 py-1 text-[12.5px] transition hover:bg-white/[0.05]"
+      className="group inline-flex h-10 shrink-0 items-center gap-2 rounded-full px-2.5 text-[12.5px] transition hover:bg-white/[0.05]"
     >
       <TokenAvatar src={e.image} symbol={e.symbol} size={18} />
       {e.isAgent ? <Bot className="size-3.5 text-cyan" aria-label="Agent" /> : null}
@@ -35,7 +35,7 @@ export function ActivityTicker() {
 
   return (
     <div className="border-b border-line bg-black/20">
-      <div className="mx-auto flex h-9 max-w-[1400px] items-center gap-3 px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto flex h-10 max-w-[1400px] items-center gap-3 px-4 sm:px-6 lg:px-8">
         <span
           className={cn(
             "inline-flex shrink-0 items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em]",

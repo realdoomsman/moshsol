@@ -21,7 +21,7 @@ export function LogoMark({ className }: { className?: string }) {
 
 export function Logo({ className }: { className?: string }) {
   return (
-    <Link href="/" className={cn("group inline-flex items-center gap-2.5", className)} aria-label="moshsol home">
+    <Link href="/" className={cn("group inline-flex h-10 items-center gap-2.5 rounded-lg", className)} aria-label="moshsol home">
       <LogoMark className="transition-transform duration-300 group-hover:-rotate-6" />
       <span className="text-[19px] font-semibold tracking-[-0.03em]">
         mosh<span className="text-lime">sol</span>

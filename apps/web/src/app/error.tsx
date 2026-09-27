@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { NotFoundPanel } from "@/components/ui/not-found-panel";
 
@@ -8,7 +8,7 @@ export default function RouteError({ error, reset }: { error: Error & { digest?:
   return (
     <NotFoundPanel
       code="error"
-      icon={<AlertTriangle className="size-6 text-warn" aria-hidden />}
+      art="offline"
       title="Something broke on this page"
       actions={
         <>

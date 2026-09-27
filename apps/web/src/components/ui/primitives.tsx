@@ -1,5 +1,6 @@
 import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "./cn";
+import { EmptyArt, type EmptyArtKind } from "./empty-art";
 
 export function Card({ className, ...rest }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("card", className)} {...rest} />;
@@ -99,13 +100,19 @@ export function Stat({
   );
 }
 
+/**
+ * Empty/zero-data panel. `art` draws a small illustration; `icon` is for transient states
+ * (a spinner while something is indexing).
+ */
 export function EmptyState({
+  art,
   icon,
   title,
   children,
   action,
   className,
 }: {
+  art?: EmptyArtKind;
   icon?: ReactNode;
   title: ReactNode;
   children?: ReactNode;
@@ -114,13 +121,15 @@ export function EmptyState({
 }) {
   return (
     <div className={cn("flex flex-col items-center justify-center px-6 py-12 text-center", className)}>
-      {icon ? (
+      {art ? (
+        <EmptyArt kind={art} className="mb-4" />
+      ) : icon ? (
         <div className="mb-4 grid size-12 place-items-center rounded-2xl border border-line bg-white/[0.04] text-muted">
           {icon}
         </div>
       ) : null}
-      <div className="text-[15px] font-semibold text-ink">{title}</div>
-      {children ? <div className="mt-1.5 max-w-sm text-sm text-muted">{children}</div> : null}
+      <div className="text-base font-semibold tracking-tight text-ink">{title}</div>
+      {children ? <div className="mt-1.5 max-w-sm text-sm leading-relaxed text-muted text-pretty">{children}</div> : null}
       {action ? <div className="mt-5">{action}</div> : null}
     </div>
   );

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { usePlatform } from "@/lib/queries";
+import { VaultScene } from "../explore/vault-scene";
 import { ButtonLink } from "../ui/button";
 import { Card } from "../ui/primitives";
 
@@ -181,25 +182,35 @@ export function HowItWorks() {
 
   return (
     <div className="grid grid-cols-1 gap-16 pb-8">
-      <section className="pt-6 text-center">
-        <h1 className="animate-in mx-auto max-w-3xl text-4xl font-semibold tracking-[-0.03em] text-balance sm:text-6xl">
+      <section className="pt-2 text-center">
+        <VaultScene orbiters={[]} className="mx-auto max-w-[460px]" />
+        <div className="type-eyebrow mt-2 flex items-center justify-center gap-2 text-lime">
+          <span className="size-1.5 animate-pulse-dot rounded-full bg-lime text-lime" aria-hidden /> Docs · how it works
+        </div>
+        <h1 className="type-display mx-auto mt-4 max-w-3xl text-[40px] sm:text-6xl">
           A launchpad where the <span className="text-lime">bundle works for the market</span>
         </h1>
-        <p className="mx-auto mt-5 max-w-2xl text-lg text-muted text-pretty">
+        <p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-muted text-pretty">
           Backers fund a bundle that is locked forever in an on-chain vault. Agents trade it inside hard limits to
           soften dumps and rallies. Backers earn a share of every trade.
         </p>
       </section>
 
       <section aria-labelledby="flow">
-        <h2 id="flow" className="mb-6 text-2xl font-semibold tracking-tight">
+        <h2 id="flow" className="type-title mb-6 text-2xl sm:text-3xl">
           The flow
         </h2>
         <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {steps.map((s, i) => (
-            <li key={s.title} className="card animate-in p-5 sm:p-6">
-              <div className="flex items-center justify-between">
-                <span className="grid size-10 place-items-center rounded-xl border border-line bg-white/[0.04] text-lime">
+            <li key={s.title} className="card animate-in overflow-hidden p-5 sm:p-6">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute -top-6 -right-2 font-mono text-[88px] leading-none font-bold text-white/[0.03] select-none"
+              >
+                0{i + 1}
+              </div>
+              <div className="relative flex items-center justify-between">
+                <span className="grid size-10 place-items-center rounded-xl border border-lime/20 bg-lime/10 text-lime shadow-[0_0_24px_-8px_rgb(198_255_61/0.6)]">
                   <s.icon className="size-5" aria-hidden />
                 </span>
                 <span className="font-mono text-sm text-dim">0{i + 1}</span>
@@ -212,28 +223,28 @@ export function HowItWorks() {
       </section>
 
       <section aria-labelledby="split">
-        <h2 id="split" className="mb-6 text-2xl font-semibold tracking-tight">
+        <h2 id="split" className="type-title mb-6 text-2xl sm:text-3xl">
           Who gets what
         </h2>
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="border-b border-line">
-                <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-dim">
-                  <th className="px-5 py-3">Party</th>
-                  <th className="px-5 py-3">Gets</th>
-                  <th className="hidden px-5 py-3 sm:table-cell">How</th>
+            <table className="data-table text-sm [&_td]:py-4">
+              <thead>
+                <tr>
+                  <th>Party</th>
+                  <th>Gets</th>
+                  <th className="hidden sm:table-cell">How</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line">
+              <tbody>
                 {split.map((r) => (
                   <tr key={r.who}>
-                    <td className={`px-5 py-4 align-top font-semibold ${r.tone}`}>{r.who}</td>
-                    <td className="px-5 py-4">
+                    <td className={`align-top font-semibold ${r.tone}`}>{r.who}</td>
+                    <td>
                       <span className="font-medium">{r.gets}</span>
                       <span className="mt-1 block text-xs text-muted sm:hidden">{r.how}</span>
                     </td>
-                    <td className="hidden px-5 py-4 text-muted sm:table-cell">{r.how}</td>
+                    <td className="hidden text-muted sm:table-cell">{r.how}</td>
                   </tr>
                 ))}
               </tbody>
@@ -246,13 +257,15 @@ export function HowItWorks() {
       </section>
 
       <section aria-labelledby="trust">
-        <h2 id="trust" className="mb-6 text-2xl font-semibold tracking-tight">
+        <h2 id="trust" className="type-title mb-6 text-2xl sm:text-3xl">
           Trust model
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {trust.map((t) => (
             <div key={t.title} className="card p-5">
-              <t.icon className="size-5 text-lime" aria-hidden />
+              <span className="grid size-10 place-items-center rounded-xl border border-line bg-white/[0.04]">
+                <t.icon className="size-5 text-lime" aria-hidden />
+              </span>
               <h3 className="mt-4 font-semibold">{t.title}</h3>
               <p className="mt-1.5 text-sm leading-relaxed text-muted">{t.body}</p>
             </div>
@@ -261,13 +274,13 @@ export function HowItWorks() {
       </section>
 
       <section aria-labelledby="faq" className="mx-auto w-full max-w-3xl">
-        <h2 id="faq" className="mb-6 text-2xl font-semibold tracking-tight">
+        <h2 id="faq" className="type-title mb-6 text-2xl sm:text-3xl">
           FAQ
         </h2>
         <div className="grid gap-2.5">
           {faq.map((f) => (
             <details key={f.q} className="card group p-0 [&_summary::-webkit-details-marker]:hidden">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 font-medium">
+              <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 rounded-[inherit] px-5 py-4 font-medium transition-colors hover:text-lime">
                 {f.q}
                 <ChevronDown className="size-4 shrink-0 text-dim transition group-open:rotate-180" aria-hidden />
               </summary>
@@ -280,7 +293,7 @@ export function HowItWorks() {
       <section className="card relative overflow-hidden p-8 text-center sm:p-12">
         <div className="pointer-events-none absolute inset-x-0 -top-24 mx-auto size-72 rounded-full bg-lime/15 blur-3xl" />
         <Lock className="relative mx-auto size-7 text-lime" aria-hidden />
-        <h2 className="relative mt-4 text-2xl font-semibold tracking-tight sm:text-3xl">Launch something that can&apos;t be dumped</h2>
+        <h2 className="type-title relative mt-4 text-3xl sm:text-4xl">Launch something that can&apos;t be dumped</h2>
         <div className="relative mt-6 flex flex-wrap justify-center gap-3">
           <ButtonLink href="/create" variant="primary" size="lg">
             Create a launch

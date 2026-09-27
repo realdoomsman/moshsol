@@ -1,6 +1,7 @@
 "use client";
 
 import { compact } from "@moshsol/sdk";
+import { Bot, Coins, Rocket, TrendingUp, Users } from "lucide-react";
 import { fmtSolValue } from "@/lib/format";
 import { useStats } from "@/lib/queries";
 import { cn } from "../ui/cn";
@@ -13,11 +14,11 @@ export function StatsStrip() {
   const { data, isError } = useStats();
   const items = data
     ? [
-        { label: "Launches", value: data.totalLaunches, fmt: int, sub: `${data.liveLaunches} live · ${data.raisingLaunches} raising` },
-        { label: "Raised by backers", value: data.totalRaisedSol, fmt: fmtSolValue, unit: "SOL", sub: "all-time" },
-        { label: "Volume 24h", value: data.volume24hSol, fmt: fmtSolValue, unit: "SOL", sub: `${fmtSolValue(data.totalVolumeSol)} SOL all-time` },
-        { label: "Backer fees earned", value: data.backerFeesAccruedSol, fmt: fmtSolValue, unit: "SOL", sub: "paid from trading fees" },
-        { label: "Agent trades", value: data.agentTrades, fmt: int, sub: "rate-limited on-chain" },
+        { icon: Rocket, tone: "text-lime", label: "Launches", value: data.totalLaunches, fmt: int, sub: `${data.liveLaunches} live · ${data.raisingLaunches} raising` },
+        { icon: Users, tone: "text-[#c2a6ff]", label: "Raised by backers", value: data.totalRaisedSol, fmt: fmtSolValue, unit: "SOL", sub: "all-time" },
+        { icon: TrendingUp, tone: "text-up", label: "Volume 24h", value: data.volume24hSol, fmt: fmtSolValue, unit: "SOL", sub: `${fmtSolValue(data.totalVolumeSol)} SOL all-time` },
+        { icon: Coins, tone: "text-warn", label: "Backer fees earned", value: data.backerFeesAccruedSol, fmt: fmtSolValue, unit: "SOL", sub: "paid from trading fees" },
+        { icon: Bot, tone: "text-cyan", label: "Agent trades", value: data.agentTrades, fmt: int, sub: "rate-limited on-chain" },
       ]
     : null;
 
@@ -35,10 +36,13 @@ export function StatsStrip() {
                 i % 2 === 0 && i > 0 && "border-l",
               )}
             >
-              <div className="text-xs font-medium text-dim">{s.label}</div>
-              <div className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-dim">
+                <s.icon className={cn("size-3.5", s.tone)} aria-hidden />
+                {s.label}
+              </div>
+              <div className="type-title mt-1.5 text-xl sm:text-[26px]">
                 <AnimatedNumber value={s.value} format={s.fmt} />
-                {s.unit ? <span className="ml-1 text-sm font-medium text-dim">{s.unit}</span> : null}
+                {s.unit ? <span className="ml-1 text-sm font-medium tracking-normal text-dim">{s.unit}</span> : null}
               </div>
               <div className="mt-0.5 truncate text-xs text-dim tabular-nums">{s.sub}</div>
             </div>

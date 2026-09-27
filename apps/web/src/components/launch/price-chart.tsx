@@ -2,6 +2,7 @@
 
 import { fmtPrice, type AgentZones } from "@moshsol/sdk";
 import {
+  AreaSeries,
   CandlestickSeries,
   ColorType,
   CrosshairMode,
@@ -20,13 +21,13 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { CandlestickChart, Sparkles } from "lucide-react";
+import { CandlestickChart, LineChart, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Timeframe } from "@/lib/api";
 import { fmtSolValue } from "@/lib/format";
-import { useLocalStorage, useMounted } from "@/lib/hooks";
+import { useLocalStorage, useMounted, useNow } from "@/lib/hooks";
 import { useCandles, useTrades } from "@/lib/queries";
-import type { LaunchSummary } from "@/lib/types";
+import type { Candle, LaunchSummary } from "@/lib/types";
 import { cn } from "../ui/cn";
 import { Segmented } from "../ui/interactive";
 import { EmptyState, Skeleton } from "../ui/primitives";
@@ -39,7 +40,15 @@ const TIMEFRAMES: { value: string; label: string; tf: Timeframe }[] = [
   { value: "86400", label: "1d", tf: 86400 },
 ];
 
+/** Auto timeframe: the finest one that keeps the chart to at most this many bars. */
+const MAX_AUTO_BARS = 240;
+/** Below this many bars, "auto" draws a line instead of candles. */
+const LINE_BELOW = 12;
+/** Below this many bars the view is spread across the full width instead of `fitContent`. */
+const SPARSE_BARS = 40;
+
 type Unit = "mcap" | "price";
+type ChartType = "auto" | "line" | "candles";
 const SUPPLY = 1_000_000_000;
 const C = {
   up: "#2fe6a7",
@@ -66,10 +75,12 @@ interface Bar {
 interface ChartRefs {
   chart: IChartApi;
   candles: ISeriesApi<"Candlestick">;
+  area: ISeriesApi<"Area">;
   ema: ISeriesApi<"Line">;
   volume: ISeriesApi<"Histogram">;
-  markers: ISeriesMarkersPluginApi<Time>;
-  bandLines: IPriceLine[];
+  candleMarkers: ISeriesMarkersPluginApi<Time>;
+  areaMarkers: ISeriesMarkersPluginApi<Time>;
+  bandLines: { series: ISeriesApi<"Candlestick"> | ISeriesApi<"Area">; line: IPriceLine }[];
 }
 
 const dateTime = new Intl.DateTimeFormat("en-US", {
@@ -90,6 +101,32 @@ function tickLabel(time: Time, type: TickMarkType): string {
   if (type === TickMarkType.Month) return monthOnly.format(d);
   if (type === TickMarkType.DayOfMonth) return dayMonth.format(d);
   return clock.format(d);
+}
+
+/** Keeps at least `pct` of the mid price in view so near-flat markets don't blow up noise. */
+function minSpan(pct: number) {
+  return (original: () => AutoscaleInfo | null) => {
+    const res = original();
+    if (!res?.priceRange) return res;
+    const { minValue, maxValue } = res.priceRange;
+    const mid = (minValue + maxValue) / 2;
+    const span = Math.abs(mid) * pct;
+    if (maxValue - minValue >= span) return res;
+    return { ...res, priceRange: { minValue: mid - span / 2, maxValue: mid + span / 2 } };
+  };
+}
+
+/**
+ * The finest timeframe whose bar count stays readable, counted from 1m candles (buckets only exist
+ * where trades happened, so sparse launches stay on 1m for the most detail).
+ */
+function autoTimeframe(minute: Candle[] | undefined): Timeframe {
+  if (!minute?.length) return 60;
+  for (const { tf } of TIMEFRAMES) {
+    const buckets = new Set(minute.map((c) => Math.floor(c.time / tf))).size;
+    if (buckets <= MAX_AUTO_BARS) return tf;
+  }
+  return 86400;
 }
 
 function LegendValue({ k, v, className }: { k: string; v: string; className?: string }) {
@@ -114,19 +151,27 @@ function LineKey({ color, dashed, label }: { color: string; dashed?: boolean; la
 }
 
 export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones: AgentZones }) {
-  const [tfValue, setTfValue] = useLocalStorage("moshsol:chart-tf", "60");
+  const [tfChoice, setTfChoice] = useLocalStorage<string | null>("moshsol:chart-tf", null);
   const [unit, setUnit] = useLocalStorage<Unit>("moshsol:chart-unit", "mcap");
-  const tf = (TIMEFRAMES.find((t) => t.value === tfValue) ?? TIMEFRAMES[0]).tf;
+  const [typeChoice, setTypeChoice] = useLocalStorage<ChartType>("moshsol:chart-type", "auto");
+  const minute = useCandles(l.mint, 60);
+  const autoTf = useMemo(() => autoTimeframe(minute.data?.candles), [minute.data]);
+  const tf = TIMEFRAMES.find((t) => t.value === tfChoice)?.tf ?? autoTf;
   const candles = useCandles(l.mint, tf);
   const trades = useTrades(l.mint, 500);
+  const now = useNow(30_000);
   const host = useRef<HTMLDivElement>(null);
   const refs = useRef<ChartRefs | null>(null);
   const fitted = useRef("");
+  const refit = useRef<(() => void) | null>(null);
   const [ready, setReady] = useState(false);
   const mounted = useMounted();
   const [hover, setHover] = useState<number | null>(null);
   const mult = unit === "mcap" ? SUPPLY : 1;
   const fmt = unit === "mcap" ? fmtSolValue : fmtPrice;
+  const barCount = candles.data?.candles.length ?? 0;
+  const type: Exclude<ChartType, "auto"> =
+    typeChoice === "auto" ? (barCount < LINE_BELOW ? "line" : "candles") : typeChoice;
 
   // Create the chart once.
   useEffect(() => {
@@ -167,15 +212,16 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
       borderVisible: false,
       priceLineStyle: LineStyle.Dotted,
       // Keep at least ±6% of vertical range so flat markets (one candle, bundle-only) stay legible.
-      autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
-        const res = original();
-        if (!res?.priceRange) return res;
-        const { minValue, maxValue } = res.priceRange;
-        const mid = (minValue + maxValue) / 2;
-        const minSpan = Math.abs(mid) * 0.12;
-        if (maxValue - minValue >= minSpan) return res;
-        return { ...res, priceRange: { minValue: mid - minSpan / 2, maxValue: mid + minSpan / 2 } };
-      },
+      autoscaleInfoProvider: minSpan(0.12),
+    });
+    const area = chart.addSeries(AreaSeries, {
+      lineWidth: 2,
+      priceLineStyle: LineStyle.Dotted,
+      crosshairMarkerRadius: 5,
+      crosshairMarkerBorderWidth: 2,
+      crosshairMarkerBorderColor: "#060708",
+      visible: false,
+      autoscaleInfoProvider: minSpan(0.04),
     });
     const ema = chart.addSeries(LineSeries, {
       color: C.ema,
@@ -195,9 +241,11 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
     refs.current = {
       chart,
       candles: candleSeries,
+      area,
       ema,
       volume,
-      markers: createSeriesMarkers(candleSeries, [], { autoScale: true }),
+      candleMarkers: createSeriesMarkers(candleSeries, [], { autoScale: true }),
+      areaMarkers: createSeriesMarkers(area, [], { autoScale: true }),
       bandLines: [],
     };
     setReady(true);
@@ -213,6 +261,7 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
     if (!r) return;
     const priceFormat = { type: "custom" as const, formatter: fmt, minMove: unit === "mcap" ? 0.0001 : 1e-12 };
     r.candles.applyOptions({ priceFormat });
+    r.area.applyOptions({ priceFormat });
     r.ema.applyOptions({ priceFormat });
   }, [unit, fmt, ready]);
 
@@ -240,7 +289,7 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
       if (t.isAgent && t.isBuy) bar.agentBuys += 1;
       else if (t.isAgent) bar.agentSells += 1;
     }
-    // One small dot per candle and side, however many agent trades it holds (the legend has counts).
+    // One small dot per bar and side, however many agent trades it holds (the legend has counts).
     const markers: SeriesMarker<Time>[] = [];
     for (const b of bars.values()) {
       if (b.agentBuys) {
@@ -250,17 +299,25 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
         markers.push({ time: b.time as UTCTimestamp, position: "aboveBar", shape: "circle", color: C.agentSell, size: 0.5 });
       }
     }
+    const list = [...bars.values()];
+    const first = list[0];
+    const last = list.at(-1);
+    // Line view: the first bucket's open, every close, then the current price carried to now, so a
+    // launch with a single trade still draws a line across the chart.
+    const line: { time: UTCTimestamp; value: number }[] = [];
+    if (first && last) {
+      line.push({ time: (first.time - tf) as UTCTimestamp, value: first.open });
+      for (const b of list) line.push({ time: b.time as UTCTimestamp, value: b.close });
+      const current = Math.floor(now / tf) * tf;
+      if (current > last.time && l.priceSol > 0) line.push({ time: current as UTCTimestamp, value: l.priceSol * mult });
+    }
     return {
       bars,
-      last: cs.length ? bars.get(cs[cs.length - 1].time)! : null,
-      candles: [...bars.values()].map((b) => ({
-        time: b.time as UTCTimestamp,
-        open: b.open,
-        high: b.high,
-        low: b.low,
-        close: b.close,
-      })),
-      volume: [...bars.values()].map((b) => ({
+      last: last ?? null,
+      up: first && last ? last.close >= first.open : true,
+      candles: list.map((b) => ({ time: b.time as UTCTimestamp, open: b.open, high: b.high, low: b.low, close: b.close })),
+      line,
+      volume: list.map((b) => ({
         time: b.time as UTCTimestamp,
         value: b.volumeSol,
         color: b.close >= b.open ? "rgba(47,230,167,0.22)" : "rgba(255,92,124,0.22)",
@@ -268,33 +325,91 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
       ema: [...emaByBucket.entries()].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time: time as UTCTimestamp, value })),
       markers,
     };
-  }, [candles.data, trades.data, tf, mult]);
+  }, [candles.data, trades.data, tf, mult, now, l.priceSol]);
 
   useEffect(() => {
     const r = refs.current;
     if (!r) return;
+    const line = type === "line";
+    const tone = series.up ? C.up : C.down;
+    r.candles.applyOptions({ visible: !line });
+    r.area.applyOptions({
+      visible: line,
+      lineColor: tone,
+      topColor: series.up ? "rgba(47,230,167,0.32)" : "rgba(255,92,124,0.32)",
+      bottomColor: series.up ? "rgba(47,230,167,0.01)" : "rgba(255,92,124,0.01)",
+      crosshairMarkerBackgroundColor: tone,
+    });
+    // Volume bars would be slabs at line-mode spacing; the legend still reports each bucket's volume.
+    r.volume.applyOptions({ visible: !line });
+    r.chart.applyOptions({ crosshair: { mode: line ? CrosshairMode.Magnet : CrosshairMode.Normal } });
     r.candles.setData(series.candles);
+    r.area.setData(series.line);
     r.volume.setData(series.volume);
     r.ema.setData(series.ema);
-    r.markers.setMarkers(series.markers);
-    const key = `${l.mint}:${tf}:${unit}:${series.candles.length > 0}`;
-    if (fitted.current !== key && series.candles.length > 0) {
-      fitted.current = key;
-      // Wait a frame so autoSize has measured the container before fitting.
-      requestAnimationFrame(() => refs.current?.chart.timeScale().fitContent());
-    }
-  }, [series, tf, unit, l.mint, ready]);
+    r.candleMarkers.setMarkers(line ? [] : series.markers);
+    r.areaMarkers.setMarkers(line ? series.markers : []);
 
-  // Agent thresholds as quiet dashed lines; their values live in the legend, not on the axis.
+    const count = line ? series.line.length : series.candles.length;
+    // Sparse views re-fit as points arrive; dense ones fit once so a user's zoom isn't reset.
+    const key = `${l.mint}:${tf}:${unit}:${type}:${count >= SPARSE_BARS ? "dense" : count}`;
+    if (fitted.current === key || count === 0) return;
+    fitted.current = key;
+    const fit = () => {
+      const ts = refs.current?.chart.timeScale();
+      if (!ts) return;
+      if (count >= SPARSE_BARS) {
+        ts.applyOptions({ maxBarSpacing: 22, rightOffset: 6 });
+        ts.fitContent();
+      } else if (line) {
+        // Spread the line edge to edge, keeping ~4% of the width clear at each end. A logical range
+        // [from, to] spans (to - from + 1) bar slots, with each point centred in its slot.
+        const width = Math.max(120, ts.width());
+        const padPx = Math.max(28, width * 0.04);
+        const pad = padPx / ((width - 2 * padPx) / (count - 1));
+        ts.applyOptions({ maxBarSpacing: width, rightOffset: 0 });
+        ts.setVisibleLogicalRange({ from: 0.5 - pad, to: count - 1.5 + pad });
+      } else {
+        // Centre a few fat candles instead of pinning them to the right edge.
+        const spacing = 36;
+        const half = (Math.max(120, ts.width()) / spacing - 1) / 2;
+        const mid = (count - 1) / 2;
+        ts.applyOptions({ maxBarSpacing: spacing, rightOffset: 0 });
+        ts.setVisibleLogicalRange({ from: mid - half, to: mid + half });
+      }
+    };
+    // Sparse fits depend on the width, so they're re-applied when the chart resizes.
+    refit.current = count >= SPARSE_BARS ? null : fit;
+    // Wait a frame so autoSize has measured the container before fitting.
+    requestAnimationFrame(fit);
+  }, [series, tf, unit, type, l.mint, ready]);
+
+  useEffect(() => {
+    const el = host.current;
+    if (!el) return;
+    let frame = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => refit.current?.());
+    });
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  // Agent thresholds as quiet dashed lines on the visible series; their values live in the legend.
   const { buyBelow, sellAbove } = zones;
   useEffect(() => {
     const r = refs.current;
     if (!r) return;
-    for (const line of r.bandLines) r.candles.removePriceLine(line);
+    for (const { series: s, line } of r.bandLines) s.removePriceLine(line);
     r.bandLines = [];
     if (!(buyBelow > 0 && sellAbove > 0)) return;
-    const line = (price: number, color: string) =>
-      r.candles.createPriceLine({
+    const target = type === "line" ? r.area : r.candles;
+    const add = (price: number, color: string) => {
+      const line = target.createPriceLine({
         price: price * mult,
         color,
         lineStyle: LineStyle.Dashed,
@@ -302,8 +417,11 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
         axisLabelVisible: false,
         lineVisible: true,
       });
-    r.bandLines.push(line(buyBelow, "rgba(198,255,61,0.45)"), line(sellAbove, "rgba(255,122,195,0.5)"));
-  }, [buyBelow, sellAbove, mult, ready]);
+      r.bandLines.push({ series: target, line });
+    };
+    add(buyBelow, "rgba(198,255,61,0.45)");
+    add(sellAbove, "rgba(255,122,195,0.5)");
+  }, [buyBelow, sellAbove, mult, type, ready]);
 
   const shown = (hover !== null ? series.bars.get(hover) : undefined) ?? series.last;
   const change = shown && shown.open > 0 ? ((shown.close - shown.open) / shown.open) * 100 : null;
@@ -313,27 +431,54 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
 
   return (
     <div className="card overflow-hidden">
-      <div className="flex items-center justify-between gap-2 px-3 pt-3 sm:px-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 pt-3 sm:px-4">
         <div className="no-scrollbar min-w-0 overflow-x-auto">
           <Segmented
             size="sm"
             ariaLabel="Timeframe"
-            value={tfValue}
-            onChange={setTfValue}
+            value={String(tf)}
+            onChange={setTfChoice}
             options={TIMEFRAMES.map((t) => ({ value: t.value, label: t.label }))}
           />
         </div>
-        <Segmented<Unit>
-          size="sm"
-          className="shrink-0"
-          ariaLabel="Chart unit"
-          value={unit}
-          onChange={setUnit}
-          options={[
-            { value: "mcap", label: "MCap" },
-            { value: "price", label: "Price" },
-          ]}
-        />
+        <div className="flex shrink-0 items-center gap-2">
+          <Segmented<Exclude<ChartType, "auto">>
+            size="sm"
+            ariaLabel="Chart type"
+            value={type}
+            onChange={setTypeChoice}
+            options={[
+              {
+                value: "line",
+                label: (
+                  <>
+                    <LineChart className="size-3.5" aria-hidden />
+                    <span className="sr-only sm:not-sr-only">Line</span>
+                  </>
+                ),
+              },
+              {
+                value: "candles",
+                label: (
+                  <>
+                    <CandlestickChart className="size-3.5" aria-hidden />
+                    <span className="sr-only sm:not-sr-only">Candles</span>
+                  </>
+                ),
+              },
+            ]}
+          />
+          <Segmented<Unit>
+            size="sm"
+            ariaLabel="Chart unit"
+            value={unit}
+            onChange={setUnit}
+            options={[
+              { value: "mcap", label: "MCap" },
+              { value: "price", label: "Price" },
+            ]}
+          />
+        </div>
       </div>
       <div className="relative mt-2 h-[320px] sm:h-[400px] lg:h-[440px]">
         <div ref={host} className="absolute inset-0" />
@@ -342,10 +487,16 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
             <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
               {/* Local time zone exists only in the browser; the server-rendered legend leaves it blank. */}
               <span className="hidden text-muted sm:inline">{mounted ? dateTime.format(new Date(shown.time * 1000)) : null}</span>
-              <LegendValue k="O" v={fmt(shown.open)} className="hidden sm:inline" />
-              <LegendValue k="H" v={fmt(shown.high)} className="hidden sm:inline" />
-              <LegendValue k="L" v={fmt(shown.low)} className="hidden sm:inline" />
-              <LegendValue k="C" v={fmt(shown.close)} />
+              {type === "candles" ? (
+                <>
+                  <LegendValue k="O" v={fmt(shown.open)} className="hidden sm:inline" />
+                  <LegendValue k="H" v={fmt(shown.high)} className="hidden sm:inline" />
+                  <LegendValue k="L" v={fmt(shown.low)} className="hidden sm:inline" />
+                  <LegendValue k="C" v={fmt(shown.close)} />
+                </>
+              ) : (
+                <LegendValue k={unit === "mcap" ? "MCap" : "Price"} v={fmt(shown.close)} />
+              )}
               {change !== null ? (
                 <span className={change > 0 ? "text-up" : change < 0 ? "text-down" : "text-muted"}>
                   {change > 0 ? "+" : ""}
@@ -375,7 +526,7 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
         {candles.isLoading ? <Skeleton className="absolute inset-4" /> : null}
         {empty ? (
           <div className="absolute inset-0 grid place-items-center">
-            <EmptyState icon={<CandlestickChart className="size-5" aria-hidden />} title="No candles yet">
+            <EmptyState art="trades" title="No candles yet">
               The chart starts at the bundle buy.
             </EmptyState>
           </div>

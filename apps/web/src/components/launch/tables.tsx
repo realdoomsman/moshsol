@@ -2,7 +2,7 @@
 
 import { fmtPrice, shortAddr, timeAgo } from "@moshsol/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { Bot, ExternalLink, Inbox, Users } from "lucide-react";
+import { Bot, ExternalLink } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { explorerTx } from "@/lib/explorer";
 import { fmtLamports, fmtTokens } from "@/lib/format";
@@ -140,7 +140,7 @@ function TxLink({ signature }: { signature: string }) {
       target="_blank"
       rel="noreferrer"
       aria-label="View transaction"
-      className="relative inline-flex text-dim transition before:absolute before:-inset-2.5 before:content-[''] hover:text-lime"
+      className="relative inline-flex text-dim transition before:absolute before:-inset-[13px] before:content-[''] hover:text-lime"
     >
       <ExternalLink className="size-3.5" aria-hidden />
     </a>
@@ -179,10 +179,7 @@ export function TradesTable({ launch: l, agentOnly }: { launch: LaunchSummary; a
 
   if (!feed.isLoading && feed.rows.length === 0) {
     return (
-      <EmptyState
-        icon={agentOnly ? <Bot className="size-5" aria-hidden /> : <Inbox className="size-5" aria-hidden />}
-        title={agentOnly ? "No agent trades yet" : "No trades yet"}
-      >
+      <EmptyState art={agentOnly ? "agent" : "trades"} title={agentOnly ? "No agent trades yet" : "No trades yet"}>
         {agentOnly
           ? "Agents only trade when price leaves the EMA band and their cost-basis rules allow it."
           : "The bundle is in. Be the first public trade."}
@@ -248,7 +245,11 @@ export function HoldersTable({ launch: l }: { launch: LaunchSummary }) {
   const me = publicKey?.toBase58();
   const rows = data?.holders ?? [];
   if (!isLoading && rows.length === 0) {
-    return <EmptyState icon={<Users className="size-5" aria-hidden />} title="No holders yet" />;
+    return (
+      <EmptyState art="people" title="No holders yet">
+        Buy on the curve to become the first holder.
+      </EmptyState>
+    );
   }
   return (
     <ScrollTable
@@ -313,7 +314,7 @@ export function BackersTable({ launch: l }: { launch: LaunchSummary }) {
   if (!isLoading && all.length === 0) {
     return (
       <EmptyState
-        icon={<Users className="size-5" aria-hidden />}
+        art="people"
         title={l.status === "refunding" && BigInt(l.refunded) > 0n ? "All deposits refunded" : "No backers yet"}
       >
         {l.status === "refunding"
@@ -374,7 +375,7 @@ export function DepositsFeed({ launch: l }: { launch: LaunchSummary }) {
   const fresh = useFreshKeys(feed.headKeys);
   if (!feed.isLoading && feed.rows.length === 0) {
     return (
-      <EmptyState icon={<Inbox className="size-5" aria-hidden />} title="No deposits yet">
+      <EmptyState art="deposits" title="No deposits yet">
         Be the first backer — deposits fund the locked bundle and earn trading fees forever.
       </EmptyState>
     );

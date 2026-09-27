@@ -31,7 +31,9 @@ const pct = (bps: number) => `${bps / 100}%`;
 function Rule({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
   return (
     <div className="card p-5">
-      <div className="grid size-9 place-items-center rounded-xl border border-line bg-white/[0.04] text-lime">{icon}</div>
+      <div className="grid size-10 place-items-center rounded-xl border border-lime/20 bg-lime/10 text-lime shadow-[0_0_24px_-8px_rgb(198_255_61/0.6)]">
+        {icon}
+      </div>
       <h3 className="mt-4 text-[15px] font-semibold">{title}</h3>
       <p className="mt-1.5 text-sm leading-relaxed text-muted">{children}</p>
     </div>
@@ -143,7 +145,7 @@ function LaunchWindows() {
           ))}
         </div>
       ) : rows.length === 0 ? (
-        <EmptyState icon={<Lock className="size-5" aria-hidden />} title="No live vaults yet">
+        <EmptyState art="vault" title="No live vaults yet">
           Vaults appear here as soon as a launch goes live.
         </EmptyState>
       ) : (
@@ -267,7 +269,7 @@ function RecentTrades() {
           ))}
         </div>
       ) : rows.length === 0 ? (
-        <EmptyState icon={<Bot className="size-5" aria-hidden />} title="No agent trades yet">
+        <EmptyState art="agent" title="No agent trades yet">
           Agents stay idle while prices sit inside their bands.
         </EmptyState>
       ) : (
@@ -361,7 +363,7 @@ function AgentBrain() {
             {data.dryRun ? <Badge tone="warn">dry run — no transactions sent</Badge> : null}
           </div>
           {data.decisions.length === 0 ? (
-            <EmptyState icon={<BrainCircuit className="size-5" aria-hidden />} title="No live launches to watch" />
+            <EmptyState art="agent" title="No live launches to watch" />
           ) : (
             <ul className="divide-y divide-line">
               {data.decisions.map((d) => (
@@ -396,7 +398,7 @@ function AgentBrain() {
           )}
         </>
       ) : (
-        <EmptyState icon={<Bot className="size-5" aria-hidden />} title={isLoading ? "Connecting to the agent…" : "Agent offline"}>
+        <EmptyState art={isLoading ? "agent" : "offline"} title={isLoading ? "Connecting to the agent…" : "Agent offline"}>
           The agent service isn&apos;t reachable right now. That changes nothing on-chain: vaults stay locked and every
           limit above is enforced by the program.
         </EmptyState>
@@ -432,12 +434,20 @@ function Totals() {
 export function AgentsView() {
   return (
     <div className="grid gap-10">
-      <section>
-        <h2 className="mb-4 text-lg font-semibold">The rules, enforced by the program</h2>
+      <section aria-labelledby="rules-heading">
+        <div className="type-eyebrow text-dim">On-chain limits</div>
+        <h2 id="rules-heading" className="type-title mt-2 mb-5 text-2xl sm:text-3xl">
+          The rules, enforced by the program
+        </h2>
         <Rules />
       </section>
-      <section className="grid gap-5">
-        <h2 className="text-lg font-semibold">Activity</h2>
+      <section className="grid gap-5" aria-labelledby="activity-heading">
+        <div>
+          <div className="type-eyebrow text-dim">Live</div>
+          <h2 id="activity-heading" className="type-title mt-2 text-2xl sm:text-3xl">
+            Activity
+          </h2>
+        </div>
         <Totals />
         <AgentBrain />
         <LaunchWindows />

@@ -1,4 +1,4 @@
-import { Compass, Rocket } from "lucide-react";
+import { Rocket } from "lucide-react";
 import type { Metadata } from "next";
 import { ButtonLink } from "@/components/ui/button";
 import { NotFoundPanel } from "@/components/ui/not-found-panel";
@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Page not found" };
 export default function NotFound() {
   return (
     <NotFoundPanel
-      icon={<Compass className="size-6" aria-hidden />}
+      art="search"
       title="This page doesn't exist"
       actions={
         <>

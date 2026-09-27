@@ -1,19 +1,36 @@
 "use client";
 
-import { Flame, Rocket, Search, SearchX, Sparkles } from "lucide-react";
+import { Flame, Search, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { LaunchSort } from "@/lib/api";
 import { useDebounced, useNow } from "@/lib/hooks";
 import { phaseOf } from "@/lib/launch";
 import { useLaunches } from "@/lib/queries";
 import { ButtonLink } from "../ui/button";
+import { cn } from "../ui/cn";
 import { Segmented } from "../ui/interactive";
 import { EmptyState } from "../ui/primitives";
 import { Hero } from "./hero";
-import { LaunchCard, LaunchCardSkeleton } from "./launch-card";
+import { LaunchCard, LaunchCardSkeleton, LaunchYoursCard } from "./launch-card";
+import { RaisingNow } from "./raising-now";
 import { StatsStrip } from "./stats-strip";
 
 type Tab = "live" | "raising" | "ended";
+
+/** Live launches render as large cards until the grid would hold more than this many. */
+const LARGE_CARDS_MAX = 3;
+
+/**
+ * Column spans that let the "Launch yours" tile fill the rest of the last grid row
+ * (2 columns from sm, 3 from lg, 4 from xl in the dense grid).
+ */
+function ghostSpan(count: number, large: boolean): string {
+  const sm = count % 2 === 0 ? "sm:col-span-2" : "sm:col-span-1";
+  const lg = ["lg:col-span-3", "lg:col-span-2", "lg:col-span-1"][count % 3];
+  if (large) return `${sm} ${lg}`;
+  const xl = ["xl:col-span-4", "xl:col-span-3", "xl:col-span-2", "xl:col-span-1"][count % 4];
+  return `${sm} ${lg} ${xl}`;
+}
 
 const SORTS: { value: LaunchSort; label: string }[] = [
   { value: "trending", label: "Trending" },
@@ -49,6 +66,8 @@ export function Explore() {
   }, [data, now]);
 
   const list = grouped[tab];
+  const large = tab === "live" && list.length <= LARGE_CARDS_MAX;
+  const showGhost = !q && tab !== "ended";
 
   // A search whose matches all sit in another tab jumps there once per new result set; a manual
   // tab change afterwards sticks (the effect doesn't depend on `tab`).
@@ -63,14 +82,25 @@ export function Explore() {
     <>
       <Hero />
       <StatsStrip />
+      <RaisingNow
+        raises={q ? [] : grouped.raising}
+        now={now}
+        onSeeAll={() => {
+          setTab("raising");
+          document.getElementById("launches")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }}
+      />
 
-      <section className="mt-12" aria-labelledby="launches-heading">
+      <section id="launches" className="mt-14" aria-labelledby="launches-heading">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h2 id="launches-heading" className="text-2xl font-semibold tracking-tight">
+            <div className="type-eyebrow flex items-center gap-2 text-up">
+              <span className="size-1.5 animate-pulse-dot rounded-full bg-up text-up" /> Explore
+            </div>
+            <h2 id="launches-heading" className="type-title mt-2 text-2xl sm:text-[28px]">
               Launches
             </h2>
-            <p className="mt-1 text-sm text-muted">Every bundle below is locked in its vault — check any of them on-chain.</p>
+            <p className="mt-1.5 text-sm text-muted">Every bundle below is locked in its vault — check any of them on-chain.</p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <label className="relative block sm:w-64">
@@ -146,7 +176,7 @@ export function Explore() {
           ) : isError && !data ? (
             <div className="card">
               <EmptyState
-                icon={<SearchX className="size-5" aria-hidden />}
+                art="offline"
                 title="Can't reach the indexer"
                 action={
                   <button type="button" onClick={() => void refetch()} className="text-sm font-semibold text-lime">
@@ -160,7 +190,7 @@ export function Explore() {
           ) : list.length === 0 ? (
             <div className="card">
               <EmptyState
-                icon={q ? <SearchX className="size-5" aria-hidden /> : <Rocket className="size-5" aria-hidden />}
+                art={q ? "search" : "launches"}
                 title={q ? `No ${tab} launches match “${q}”` : EMPTY[tab].title}
                 action={
                   q ? null : (
@@ -174,10 +204,11 @@ export function Explore() {
               </EmptyState>
             </div>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className={cn("grid gap-4 sm:grid-cols-2 lg:grid-cols-3", !large && "xl:grid-cols-4")}>
               {list.map((l) => (
-                <LaunchCard key={l.mint} launch={l} now={now} />
+                <LaunchCard key={l.mint} launch={l} now={now} size={large ? "lg" : "md"} />
               ))}
+              {showGhost ? <LaunchYoursCard className={ghostSpan(list.length, large)} /> : null}
             </div>
           )}
         </div>

@@ -4,6 +4,7 @@ import type { Metadata, Viewport } from "next";
 import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { ActivityTicker } from "@/components/shell/activity-ticker";
+import { AppBackground } from "@/components/shell/app-background";
 import { Footer } from "@/components/shell/footer";
 import { Header } from "@/components/shell/header";
 import { SITE_URL } from "@/lib/env";
@@ -47,7 +48,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body>
-        <div className="app-bg" aria-hidden />
+        <AppBackground />
         <Providers now={Math.floor(Date.now() / 1000)}>
           <Header />
           <PrefetchedTicker />
