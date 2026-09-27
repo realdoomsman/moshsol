@@ -336,8 +336,8 @@ export function PriceChart({ launch: l, zones }: { launch: LaunchSummary; zones:
     r.area.applyOptions({
       visible: line,
       lineColor: tone,
-      topColor: series.up ? "rgba(47,230,167,0.32)" : "rgba(255,92,124,0.32)",
-      bottomColor: series.up ? "rgba(47,230,167,0.01)" : "rgba(255,92,124,0.01)",
+      topColor: series.up ? "rgba(47,230,167,0.2)" : "rgba(255,92,124,0.2)",
+      bottomColor: series.up ? "rgba(47,230,167,0)" : "rgba(255,92,124,0)",
       crosshairMarkerBackgroundColor: tone,
     });
     // Volume bars would be slabs at line-mode spacing; the legend still reports each bucket's volume.
