@@ -1,14 +1,36 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ReactNode } from "react";
-import { CLUSTER_NAME } from "@/lib/env";
+import { CLUSTER_NAME, type Cluster } from "@/lib/env";
 import { cn } from "../ui/cn";
 import { DemoVideo, type DemoSource } from "./demo-video";
 
-/** The four product-loop recordings (§3.9), recorded later by `scripts/record-demos.ts`. */
+/** The four product-loop recordings (§3.9), set up by `scripts/src/record-demos.ts` (`pnpm record:demos`). */
 export type DemoName = "back-a-raise" | "the-lock" | "agent-defends" | "claim";
 
 const DIR = join(process.cwd(), "public", "videos");
+
+/** Where each recording was made (`public/videos/manifest.json`, written when the loops are recorded). */
+interface RecordingInfo {
+  cluster: Cluster;
+  recordedAt: string;
+  durationSec: number;
+}
+
+function readManifest(): Partial<Record<DemoName, RecordingInfo>> {
+  try {
+    return JSON.parse(readFileSync(join(DIR, "manifest.json"), "utf8")) as Partial<Record<DemoName, RecordingInfo>>;
+  } catch {
+    return {};
+  }
+}
+
+/** "Recorded on …" wording per cluster; a localnet capture is not a devnet one. */
+const RECORDED_ON: Record<Cluster, string> = {
+  localnet: "a local Solana validator",
+  devnet: "devnet",
+  "mainnet-beta": "mainnet",
+};
 
 /** Seconds from an MP4's `mvhd` box (movie header), or null when it can't be read. */
 function mp4Duration(file: string): number | null {
@@ -62,9 +84,10 @@ export function VideoSlot({
   const desktop = findSource(name);
   const mobile = findSource(`${name}-m`);
   const src = desktop ?? mobile;
-  const seconds = src?.seconds;
+  const info = src ? readManifest()[name] : undefined;
+  const seconds = info?.durationSec ?? src?.seconds;
   const caption = src
-    ? `Recorded on ${CLUSTER_NAME}${seconds ? ` · ${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}` : ""}`
+    ? `Recorded on ${info ? RECORDED_ON[info.cluster] : CLUSTER_NAME}${seconds ? ` · ${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}` : ""}`
     : fallbackCaption;
   return (
     <figure className={cn("w-full", className)}>

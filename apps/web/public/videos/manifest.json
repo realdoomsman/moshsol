@@ -1,0 +1,22 @@
+{
+  "back-a-raise": {
+    "cluster": "localnet",
+    "recordedAt": "2026-09-27T10:53:25.000Z",
+    "durationSec": 8.3
+  },
+  "the-lock": {
+    "cluster": "localnet",
+    "recordedAt": "2026-09-27T10:57:31.000Z",
+    "durationSec": 9.3
+  },
+  "agent-defends": {
+    "cluster": "localnet",
+    "recordedAt": "2026-09-27T11:08:05.000Z",
+    "durationSec": 10
+  },
+  "claim": {
+    "cluster": "localnet",
+    "recordedAt": "2026-09-27T11:12:15.000Z",
+    "durationSec": 10.1
+  }
+}
