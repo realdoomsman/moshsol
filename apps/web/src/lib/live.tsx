@@ -3,7 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { INDEXER_WS_URL } from "./env";
-import type { ActivityEvent, LaunchSummary, WsMessage } from "./types";
+import type { ActivityEvent, CommentsPage, LaunchSummary, WsMessage } from "./types";
 
 type Listener = (event: ActivityEvent) => void;
 
@@ -15,7 +15,7 @@ interface LiveContext {
 const Ctx = createContext<LiveContext>({ connected: false, subscribe: () => () => undefined });
 
 /** Per-mint query families refreshed whenever the indexer reports an on-chain event for that mint. */
-const MINT_KEYS = ["trades", "candles", "backers", "deposits", "holders", "token-balance", "backer", "launch-account"];
+const MINT_KEYS = ["trades", "traders", "candles", "backers", "deposits", "holders", "token-balance", "backer", "launch-account"];
 
 /**
  * Single indexer websocket for the whole app. Pushes launch snapshots straight into the
@@ -75,6 +75,27 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           // A fetch started before the indexer saw the change would overwrite this newer push.
           void qc.cancelQueries({ queryKey: key, exact: true }).then(() => qc.setQueryData<LaunchSummary>(key, launch));
           refreshLists();
+        } else if (msg.type === "comment") {
+          const { mint, comment } = msg;
+          // Newest-first head page: prepend the comment and bump its parent's reply count.
+          qc.setQueryData<CommentsPage>(["comments", mint, "head"], (old) =>
+            old && !old.comments.some((c) => c.id === comment.id)
+              ? {
+                  ...old,
+                  total: old.total + 1,
+                  comments: [
+                    comment,
+                    ...old.comments.map((c) => (c.id === comment.replyTo ? { ...c, replyCount: c.replyCount + 1 } : c)),
+                  ],
+                }
+              : old,
+          );
+          if (comment.replyTo !== null) qc.invalidateQueries({ queryKey: ["comments", mint, "replies"] });
+          // The launch summary carries the visible comment count.
+          qc.invalidateQueries({ queryKey: ["launch", mint], exact: true });
+        } else if (msg.type === "comment_deleted") {
+          qc.invalidateQueries({ queryKey: ["comments", msg.mint] });
+          qc.invalidateQueries({ queryKey: ["launch", msg.mint], exact: true });
         } else if (msg.type === "reset") {
           void qc.invalidateQueries();
         }
@@ -91,7 +112,16 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       disposed = true;
       window.clearTimeout(reconnect);
       window.clearTimeout(listRefresh);
-      ws?.close();
+      if (ws) {
+        const sock = ws;
+        sock.onclose = null;
+        sock.onmessage = null;
+        sock.onerror = null;
+        // Closing while CONNECTING logs a browser warning (React StrictMode double-mounts this
+        // effect in dev); let it finish the handshake and close right away instead.
+        if (sock.readyState === WebSocket.CONNECTING) sock.onopen = () => sock.close();
+        else sock.close();
+      }
     };
   }, [qc]);
 

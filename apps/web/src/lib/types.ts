@@ -14,8 +14,20 @@ export interface LaunchSummary extends LaunchJson {
   whitelist: string[] | null;
   change24h: number | null;
   volume24hSol: number;
+  volume1hSol: number;
+  /** Trades in the last hour (agent trades included). */
+  trades1h: number;
+  /** Distinct non-agent wallets that bought / sold in the last 24 h. */
+  buyers24h: number;
+  sellers24h: number;
   lastTradeAt: number | null;
+  /** Wallets with a non-zero balance (curve and vault excluded). */
   holders: number;
+  /** Largest holder's % of supply (curve and vault excluded); null until holders were first loaded. */
+  topHolderPct: number | null;
+  /** Visible comments. */
+  comments: number;
+  creatorName: string | null;
 }
 
 export interface TradeRow {
@@ -66,6 +78,48 @@ export interface HolderRow {
   amount: string;
   pct: number;
   label: "curve" | "vault" | null;
+}
+
+/** A thread comment (`/api/launches/:mint/comments`, WS `comment`); `body` is plain text. */
+export interface Comment {
+  id: number;
+  mint: string;
+  wallet: string;
+  name: string | null;
+  avatar: string | null;
+  body: string;
+  replyTo: number | null;
+  replyCount: number;
+  createdAt: number;
+  isCreator: boolean;
+  isBacker: boolean;
+  holdsTokens: boolean;
+}
+
+export interface CommentsPage {
+  comments: Comment[];
+  total: number;
+  nextBefore: number | null;
+}
+
+export type TraderWindow = "24h" | "7d" | "all";
+
+/** `/api/launches/:mint/traders`: a non-agent trader's volume on one launch. */
+export interface TraderStat {
+  wallet: string;
+  name: string | null;
+  avatar: string | null;
+  trades: number;
+  buys: number;
+  sells: number;
+  buySol: number;
+  sellSol: number;
+  volumeSol: number;
+  /** Sold − bought in SOL (cash flow, not PnL). */
+  netSol: number;
+  /** Bought − sold in token base units (may be negative). */
+  netTokens: string;
+  lastTradeAt: number;
 }
 
 export interface PortfolioBacked {
@@ -258,6 +312,8 @@ export type WsMessage =
   | { type: "event"; event: ActivityEvent }
   | { type: "launch"; launch: LaunchSummary }
   /** The indexer rebuilt its index after a chain reset; everything cached is stale. */
-  | { type: "reset"; genesisHash: string };
+  | { type: "reset"; genesisHash: string }
+  | { type: "comment"; mint: string; comment: Comment }
+  | { type: "comment_deleted"; mint: string; id: number };
 
 export type { LaunchStatus };

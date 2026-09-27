@@ -1,37 +1,27 @@
 "use client";
 
 import { shortAddr } from "@holdfast/sdk";
-import { Rocket } from "lucide-react";
 import { useParams } from "next/navigation";
-import { ButtonLink } from "@/components/legacy/button";
-import { NotFoundPanel } from "@/components/legacy/not-found-panel";
+import { ButtonLink } from "@/components/ui/button";
 
+/** Inside the Night app shell: the mint in the URL isn't a Holdfast launch on this cluster. */
 export default function LaunchNotFound() {
   const { mint } = useParams<{ mint: string }>();
   const label = mint ? decodeURIComponent(mint) : "";
   return (
-    <NotFoundPanel
-      art="vault"
-      title="No launch at this address"
-      actions={
-        <>
-          <ButtonLink href="/" variant="primary" size="lg">
-            Explore launches
-          </ButtonLink>
-          <ButtonLink href="/create" variant="secondary" size="lg">
-            <Rocket className="size-4" aria-hidden /> Create one
-          </ButtonLink>
-        </>
-      }
-    >
-      {label ? (
-        <span className="mb-2 inline-block max-w-full truncate rounded-lg border border-line bg-black/30 px-2.5 py-1 font-mono text-xs text-muted">
-          {label.length > 48 ? shortAddr(label, 10) : label}
-        </span>
-      ) : null}
-      <span className="block">
-        That isn&apos;t a holdfast launch mint on this cluster. Double-check the link, or find it on the explore page.
-      </span>
-    </NotFoundPanel>
+    <div className="max-w-xl py-16 md:py-24">
+      <p className="label text-ink-3">404</p>
+      <h1 className="display-m mt-3 text-ink">No launch at this address.</h1>
+      {label ? <p className="mono mt-4 truncate text-ink-2">{label.length > 48 ? shortAddr(label, 10) : label}</p> : null}
+      <p className="body mt-3 text-ink-2">It isn&apos;t a Holdfast launch mint on this cluster. Check the link, or find the token on Discover.</p>
+      <div className="mt-8 flex flex-wrap gap-3">
+        <ButtonLink href="/app" variant="primary" arrow>
+          Discover launches
+        </ButtonLink>
+        <ButtonLink href="/create" variant="secondary">
+          Create one
+        </ButtonLink>
+      </div>
+    </div>
   );
 }

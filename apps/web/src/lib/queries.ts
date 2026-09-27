@@ -22,8 +22,10 @@ import {
   recentTradesQuery,
   statsQuery,
   tradeFeed,
+  type TradeFilter,
+  tradersQuery,
 } from "./query-options";
-import type { DepositRow, TradeRow } from "./types";
+import type { DepositRow, TradeRow, TraderWindow } from "./types";
 
 export function usePlatform() {
   return useQuery({
@@ -87,6 +89,9 @@ export interface PagedFeed<T> {
   /** Keys of the live head page, for "new row" animations. */
   headKeys: string[] | undefined;
   isLoading: boolean;
+  /** The live head page failed to load (older-page failures are `loadError`). */
+  error: string | null;
+  retry: () => void;
   hasMore: boolean;
   loadingMore: boolean;
   loadError: string | null;
@@ -163,6 +168,8 @@ function usePagedFeed<T extends { timestamp: number }>(p: {
     rows,
     headKeys: head.data?.map(rowKey),
     isLoading: head.isLoading,
+    error: head.error && !head.data ? head.error.message : null,
+    retry: () => void head.refetch(),
     hasMore: !older.exhausted && (head.data?.length ?? 0) >= FEED_PAGE,
     loadingMore,
     loadError,
@@ -174,10 +181,18 @@ function usePagedFeed<T extends { timestamp: number }>(p: {
 export const tradeKey = (t: TradeRow) => `${t.signature}:${t.isBuy ? "b" : "s"}:${t.tokenAmount}`;
 const depositKey = (d: DepositRow) => `${d.signature}:${d.amount}`;
 
-export function useTradeFeed(mint: string, agentOnly = false): PagedFeed<TradeRow> {
+/** Trades feed with server-side filters (see `TradeFilter`); each filter combination pages on its own. */
+export function useTradeFeed(mint: string, filter: TradeFilter = {}): PagedFeed<TradeRow> {
   const interval = useFallbackInterval(5_000);
-  const feed = useMemo(() => tradeFeed(mint, agentOnly), [mint, agentOnly]);
+  const key = JSON.stringify(filter);
+  // `key` captures every filter field, so the feed only changes when the filter's content does.
+  const feed = useMemo(() => tradeFeed(mint, filter), [mint, key]);
   return usePagedFeed({ feed, interval, rowKey: tradeKey });
+}
+
+export function useTraders(mint: string, window: TraderWindow) {
+  const interval = useFallbackInterval(10_000);
+  return useQuery({ ...tradersQuery(mint, window), refetchInterval: interval, placeholderData: (prev) => prev });
 }
 
 export function useDepositFeed(mint: string): PagedFeed<DepositRow> {

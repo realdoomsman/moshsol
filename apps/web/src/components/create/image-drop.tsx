@@ -1,29 +1,56 @@
 "use client";
 
-import { ImagePlus, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { ImagePlus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Button } from "../ui/button";
 import { cn } from "../ui/cn";
+import { IMAGE_TYPES, RECOMMENDED_IMAGE_PX, type TokenImage } from "./image";
 
-export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"];
-export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+/** Object URL for a local file, revoked when it changes or unmounts. */
+export function useObjectUrl(file: File | null | undefined): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file) {
+      setUrl(null);
+      return;
+    }
+    const next = URL.createObjectURL(file);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [file]);
+  return url;
+}
 
+/**
+ * Square token-art drop zone (§4.6 step 1): drag and drop or browse, shows the square crop that
+ * will be minted, and the file facts (size, crop) underneath.
+ */
 export function ImageDrop({
+  id,
+  image,
   preview,
+  busy,
+  invalid,
   onFile,
   onClear,
-  invalid,
 }: {
+  id: string;
+  image: TokenImage | null;
   preview: string | null;
+  busy: boolean;
+  invalid: boolean;
   onFile: (file: File) => void;
   onClear: () => void;
-  invalid?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
+  const small =
+    image?.width && image.height ? Math.min(image.width, image.height) < RECOMMENDED_IMAGE_PX : false;
 
   return (
-    <div className="relative">
+    <div className="flex items-start gap-4">
       <button
+        id={id}
         type="button"
         onClick={() => input.current?.click()}
         onDragOver={(e) => {
@@ -38,48 +65,57 @@ export function ImageDrop({
           if (file) onFile(file);
         }}
         aria-invalid={invalid || undefined}
+        aria-busy={busy || undefined}
         aria-label={preview ? "Replace token image" : "Upload token image"}
         className={cn(
-          "group relative grid size-32 place-items-center overflow-hidden rounded-2xl border border-dashed transition sm:size-36",
+          "group relative grid size-28 shrink-0 place-items-center overflow-hidden rounded-md border transition-colors sm:size-32",
+          preview ? "border-line" : "border-dashed",
           over
-            ? "border-lime bg-lime/10"
+            ? "border-ink bg-sunken"
             : invalid
-              ? "border-down/60 bg-down/5"
-              : "border-line-strong bg-black/30 hover:border-lime/50 hover:bg-white/[0.03]",
+              ? "border-down bg-field"
+              : preview
+                ? "bg-sunken"
+                : "border-line-2 bg-field hover:border-ink-3",
         )}
       >
         {preview ? (
-          <>
-            {/* Local object URL preview of the file about to be uploaded. */}
-            <img src={preview} alt="Token image preview" className="size-full object-cover" />
-            <span className="absolute inset-0 grid place-items-center bg-black/60 text-xs font-semibold opacity-0 transition group-hover:opacity-100">
-              Replace
-            </span>
-          </>
+          // Local object URL of the file about to be uploaded (already cropped to square).
+          <img src={preview} alt="" className="size-full object-cover" />
         ) : (
-          <span className="flex flex-col items-center gap-2 px-3 text-center">
-            <ImagePlus className="size-6 text-muted transition group-hover:text-lime" aria-hidden />
-            <span className="text-xs font-medium text-muted">Drop image or click</span>
-            <span className="text-[10.5px] text-dim">PNG, JPG, GIF, WEBP, SVG · 4 MB</span>
+          <span className="flex flex-col items-center gap-2 px-3 text-center text-ink-2 transition-colors group-hover:text-ink">
+            <ImagePlus className="size-5" strokeWidth={1.5} aria-hidden />
+            <span className="small">{busy ? "Reading…" : "Drop or browse"}</span>
           </span>
         )}
       </button>
-      {preview ? (
-        <button
-          type="button"
-          onClick={onClear}
-          aria-label="Remove image"
-          className="absolute -top-2 -right-2 grid size-7 place-items-center rounded-full border border-line-strong bg-panel text-muted shadow-lg transition hover:text-ink"
-        >
-          <X className="size-3.5" aria-hidden />
-        </button>
-      ) : null}
+      <div className="grid min-w-0 gap-1 pt-1">
+        <p className="small text-ink-2">Square, at least {RECOMMENDED_IMAGE_PX} px. PNG, JPG, GIF, WebP or SVG up to 4 MB.</p>
+        {image ? (
+          <p className={cn("small num", small ? "text-warn" : "text-ink-3")}>
+            {image.width && image.height ? `${image.width} × ${image.height} px` : "Vector image"}
+            {image.cropped ? " · cropped to square" : ""}
+            {small ? ` · looks soft below ${RECOMMENDED_IMAGE_PX} px` : ""}
+          </p>
+        ) : null}
+        <div className="mt-1 flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" busy={busy} onClick={() => input.current?.click()}>
+            {preview ? "Replace" : "Choose image"}
+          </Button>
+          {preview ? (
+            <Button size="sm" variant="ghost" onClick={onClear}>
+              Remove
+            </Button>
+          ) : null}
+        </div>
+      </div>
       <input
         ref={input}
         type="file"
         accept={IMAGE_TYPES.join(",")}
         className="sr-only"
         tabIndex={-1}
+        aria-hidden
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) onFile(file);

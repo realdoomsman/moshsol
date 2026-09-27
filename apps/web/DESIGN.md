@@ -112,8 +112,12 @@ Example panel:
   ("● Live on Solana devnet") are reusable.
 - Command palette: ⌘K / Ctrl+K / `/`. Open it programmatically with `useCommandPalette().setOpen(true)`
   (`components/search/command-palette`). `SearchTrigger` / `SearchIconButton` are the header entry points.
-- Profile links go to `/u/<wallet>`, token links to `/launch/<mint>`. Footer links expect these docs slugs:
-  `how-it-works, vault-and-agent, fees, api, program, brand, risks`.
+- Profile links go to `/u/<wallet>`, token links to `/launch/<mint>`. Docs slugs (`/docs/<slug>`, registry in
+  `components/docs/registry.ts`): `how-it-works, for-backers, for-creators, for-traders, the-vault, agents, fees, verify,
+  program, api, faq, risks, glossary, brand`.
+- Landing/docs building blocks others can reuse: `components/band/model.ts` (pure band + agent-rule helpers),
+  `components/landing/video-slot.tsx` (`<VideoSlot name fallback fallbackCaption label />`: plays
+  `/public/videos/<name>.{mp4,webm}` + `.jpg` poster when present, else the live fallback).
 
 ## Lib additions
 
@@ -127,6 +131,11 @@ Example panel:
 - `lib/api.ts` — `api.health()`, `api.search(q)`; `lib/query-options.ts` — `healthQuery()`, `searchQuery(q)`.
 - `lib/theme.ts` — `THEME_COLOR` (meta theme-color), identicon/tile tones, `hashString`.
 - `lib/burner.ts` — the test wallet; its key lives in `holdfast:burner-secret` (migrated from `moshsol:burner-secret`).
+- `lib/env.ts` — `CLUSTER_NAME` ("localnet" / "devnet" / "mainnet") for running copy ("Live from …"); never type a
+  cluster name into UI text.
+- `lib/format.ts` — `fmtSolColumn(v)`: `fmtSolValue` that keeps four decimals under 1 SOL so table columns align.
+- `components/band/model.ts` — `decisionLabel(d)` / `decisionHeadline(d)`: the only way to show an agent action
+  ("Holding", "Waiting", "Buying the dip" / "Bought", "Selling the rally" / "Sold"); never render the raw action.
 
 ## Do / don't
 

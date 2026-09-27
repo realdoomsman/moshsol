@@ -11,6 +11,12 @@ export function fmtSolValue(v: number): string {
   return v.toPrecision(2);
 }
 
+/** `fmtSolValue` for table columns: sub-1 amounts keep all four decimals so figures line up ("0.1140"). */
+export function fmtSolColumn(v: number): string {
+  const abs = Math.abs(v);
+  return abs >= 0.001 && abs < 1 ? v.toFixed(4) : fmtSolValue(v);
+}
+
 /** Lamports (decimal string or bigint) → formatted SOL. */
 export function fmtLamports(v: string | bigint): string {
   return fmtSolValue(lamportsToSol(v));

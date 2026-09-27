@@ -19,4 +19,7 @@ export const CLUSTER_LABEL: Record<Cluster, string> = {
   "mainnet-beta": "Mainnet",
 };
 
+/** The cluster in running copy: "Live from localnet", "Recorded on devnet". */
+export const CLUSTER_NAME = CLUSTER_LABEL[CLUSTER].toLowerCase();
+
 export const INDEXER_WS_URL = `${INDEXER_URL.replace(/^http/, "ws")}/ws`;

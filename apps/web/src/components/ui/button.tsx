@@ -3,7 +3,8 @@ import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ComponentProps, ReactN
 import { cn } from "./cn";
 import { Spinner } from "./spinner";
 
-export type ButtonVariant = "primary" | "accent" | "secondary" | "ghost" | "buy" | "sell" | "danger";
+/** `inverse` = the secondary button on an `ink` band (landing final CTA): 1px ink-2 border, paper text. */
+export type ButtonVariant = "primary" | "accent" | "secondary" | "ghost" | "buy" | "sell" | "danger" | "inverse";
 export type ButtonSize = "sm" | "md" | "lg";
 
 /** Hover steps the fill darker (§3.6: `color-mix(in oklab, <fill>, black 8%)`) over 100 ms. */
@@ -15,6 +16,7 @@ const VARIANTS: Record<ButtonVariant, string> = {
   buy: "bg-up text-on-up hover:bg-[color-mix(in_oklab,var(--color-up),black_8%)]",
   sell: "bg-down text-on-down hover:bg-[color-mix(in_oklab,var(--color-down),black_8%)]",
   danger: "border border-down text-down hover:bg-down-wash",
+  inverse: "border border-ink-2 text-paper hover:bg-[color-mix(in_oklab,var(--color-ink),white_10%)]",
 };
 
 /** A disabled (not busy) button drops its fill so it never reads as actionable. */

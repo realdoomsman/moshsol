@@ -1,32 +1,35 @@
-import { fmtPrice, lamportsToSol } from "@holdfast/sdk";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { countdown, fmtPrice, lamportsToSol } from "@holdfast/sdk";
 import { ImageResponse } from "next/og";
+import { JAW_LEFT, JAW_RIGHT } from "@/components/brand/mark";
 import { fmtSolValue, fmtTokens } from "@/lib/format";
+import { phaseOf } from "@/lib/launch";
+import { ogFonts } from "@/lib/og-fonts";
 import { loadLaunch, parseMint } from "@/lib/server";
 import type { LaunchSummary } from "@/lib/types";
 
-export const alt = "holdfast launch — bundle locked forever";
+export const alt = "Holdfast launch: the first buy is locked in the vault forever";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const INK = "#f3f5f7";
-const MUTED = "#a3a9b5";
-const DIM = "#7f8795";
-const LIME = "#c6ff3d";
-const UP = "#2fe6a7";
-const DOWN = "#ff5c7c";
-/** Formats the OG renderer can decode; anything else falls back to the symbol monogram. */
+/** Night tokens (§3.4 / globals.css) as literals: Satori can't read CSS variables. */
+const C = {
+  paper: "#0f100e",
+  surface: "#161714",
+  sunken: "#0b0c0a",
+  ink: "#f2f1ec",
+  ink2: "#a9a89f",
+  ink3: "#85857c",
+  line: "#2a2b27",
+  accent: "#ff5b1a",
+  accentInk: "#ff7a45",
+  accentWash: "#2a1a10",
+  up: "#3ccb7f",
+  down: "#f0575c",
+  warn: "#f2b33d",
+  warnWash: "#2b2211",
+};
+/** Formats the OG renderer can decode; anything else falls back to the ticker tile. */
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/svg+xml"];
-
-async function font(file: string): Promise<ArrayBuffer | null> {
-  try {
-    const buf = await readFile(join(process.cwd(), "node_modules/geist/dist/fonts/geist-sans", file));
-    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
-  } catch {
-    return null;
-  }
-}
 
 async function imageDataUri(url: string | null): Promise<string | null> {
   if (!url) return null;
@@ -42,52 +45,108 @@ async function imageDataUri(url: string | null): Promise<string | null> {
   }
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+function Label({ children }: { children: string }) {
+  return <div style={{ fontSize: 20, fontWeight: 600, color: C.ink3, letterSpacing: 1.6, textTransform: "uppercase" }}>{children}</div>;
+}
+
+function Figure({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ fontSize: 22, color: DIM, textTransform: "uppercase", letterSpacing: 2 }}>{label}</div>
-      <div style={{ fontSize: 44, fontWeight: 600, color: tone ?? INK }}>{value}</div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <Label>{label}</Label>
+      <div style={{ fontSize: 44, fontWeight: 600, color: color ?? C.ink, letterSpacing: -0.5 }}>{value}</div>
     </div>
   );
 }
 
-function stats(l: LaunchSummary): { label: string; value: string; tone?: string }[] {
-  if (l.status === "live") {
-    const change = l.change24h;
-    return [
-      { label: "Price", value: `${fmtPrice(l.priceSol)} SOL` },
-      { label: "Market cap", value: `${fmtSolValue(l.marketCapSol)} SOL` },
-      ...(change !== null && isFinite(change)
-        ? [{ label: "24h", value: `${change > 0 ? "+" : ""}${change.toFixed(1)}%`, tone: change >= 0 ? UP : DOWN }]
-        : []),
-    ];
-  }
-  if (l.status === "raising") {
-    return [
-      { label: "Raised", value: `${fmtSolValue(lamportsToSol(l.raised))} / ${fmtSolValue(lamportsToSol(l.raiseMax))} SOL` },
-      { label: "Backers", value: String(l.backerCount) },
-    ];
-  }
-  return [{ label: "Status", value: "Refunds open", tone: "#ffc857" }];
+function Chip({ text, bg, fg }: { text: string; bg: string; fg: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        height: 40,
+        padding: "0 16px",
+        borderRadius: 6,
+        background: bg,
+        color: fg,
+        fontSize: 20,
+        fontWeight: 600,
+        letterSpacing: 1.6,
+        textTransform: "uppercase",
+      }}
+    >
+      {text}
+    </div>
+  );
 }
 
+function LiveFooter({ l }: { l: LaunchSummary }) {
+  const change = l.change24h;
+  return (
+    <div style={{ display: "flex", gap: 72 }}>
+      <Figure label="Market cap" value={`${fmtSolValue(l.marketCapSol)} SOL`} />
+      {change !== null && Number.isFinite(change) ? (
+        <Figure
+          label="24h"
+          value={`${change > 0 ? "+" : ""}${change.toFixed(1)}%`}
+          color={change > 0 ? C.up : change < 0 ? C.down : C.ink2}
+        />
+      ) : null}
+      <Figure label="Price" value={fmtPrice(l.priceSol)} />
+      <Figure label="Vault" value={`${fmtSolValue(lamportsToSol(l.vaultSol))} SOL + ${fmtTokens(l.vaultTokens)}`} color={C.accentInk} />
+    </div>
+  );
+}
+
+function RaiseFooter({ l, nowSec }: { l: LaunchSummary; nowSec: number }) {
+  const raised = lamportsToSol(l.raised);
+  const max = lamportsToSol(l.raiseMax);
+  const min = lamportsToSol(l.raiseMin);
+  const pct = max > 0 ? Math.min(100, (raised / max) * 100) : 0;
+  const minPct = max > 0 ? Math.min(100, (min / max) * 100) : 0;
+  const minMet = raised >= min;
+  const open = l.raiseDeadline > nowSec;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+          <div style={{ fontSize: 64, fontWeight: 600, letterSpacing: -1, color: C.ink }}>{fmtSolValue(raised)}</div>
+          <div style={{ fontSize: 36, color: C.ink3 }}>{`/ ${fmtSolValue(max)} SOL raised`}</div>
+        </div>
+        <div style={{ display: "flex", fontSize: 30, color: C.ink2 }}>
+          {`${open ? `Closes in ${countdown(l.raiseDeadline, nowSec)}` : "Raise closed"} · ${l.backerCount} backer${l.backerCount === 1 ? "" : "s"}`}
+        </div>
+      </div>
+      <div style={{ display: "flex", position: "relative", height: 16, borderRadius: 4, background: C.sunken, border: `1px solid ${C.line}` }}>
+        <div style={{ display: "flex", width: `${pct}%`, height: "100%", borderRadius: 4, background: minMet ? C.accent : C.ink }} />
+        <div style={{ display: "flex", position: "absolute", left: `${minPct}%`, top: -6, width: 3, height: 28, background: minMet ? C.accentInk : C.ink3 }} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 22, color: C.ink3 }}>
+        <div style={{ display: "flex" }}>{`min ${fmtSolValue(min)} SOL · 100% refundable if it isn't met`}</div>
+        <div style={{ display: "flex" }}>{`${l.terms.backerFeeShareBps / 100}% of trading fees to backers`}</div>
+      </div>
+    </div>
+  );
+}
+
+/** Share card for a launch (§5.1 #27): live (market cap, vault) or raising (progress, countdown). */
 export default async function Image({ params }: { params: Promise<{ mint: string }> }) {
   const { mint } = await params;
   const r = parseMint(mint) ? await loadLaunch(mint) : ({ state: "missing" } as const);
-  const [semibold, regular] = await Promise.all([font("Geist-SemiBold.ttf"), font("Geist-Regular.ttf")]);
-  const fonts = [
-    ...(regular ? [{ name: "Geist", data: regular, weight: 400 as const, style: "normal" as const }] : []),
-    ...(semibold ? [{ name: "Geist", data: semibold, weight: 600 as const, style: "normal" as const }] : []),
-  ];
   const l = r.state === "found" ? r.launch : null;
-  const logo = l ? await imageDataUri(l.image) : null;
-  const badge = !l
-    ? "Launches that can't be dumped"
-    : l.status === "live"
-      ? `Bundle locked forever · ${fmtSolValue(lamportsToSol(l.vaultSol))} SOL + ${fmtTokens(l.vaultTokens)} $${l.symbol}`
-      : l.status === "raising"
-        ? `Bundle ≤ ${l.bundleSupplyBps / 100}% of supply · locked forever at launch`
-        : "Raise ended · 100% refunds";
+  const [fonts, art] = await Promise.all([ogFonts(), imageDataUri(l?.image ?? null)]);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const phase = l ? phaseOf(l, nowSec) : null;
+  const chip =
+    phase === "live"
+      ? { text: "Live · Locked", bg: C.accentWash, fg: C.accentInk }
+      : phase === "raising" || phase === "ready"
+        ? BigInt(l!.raised) >= BigInt(l!.raiseMin)
+          ? { text: "Min reached", bg: C.accentWash, fg: C.accentInk }
+          : { text: "Raising", bg: C.warnWash, fg: C.warn }
+        : phase
+          ? { text: "Refunding", bg: C.sunken, fg: C.ink2 }
+          : null;
 
   return new ImageResponse(
     (
@@ -98,112 +157,68 @@ export default async function Image({ params }: { params: Promise<{ mint: string
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
-          padding: 64,
-          background: "#060708",
-          backgroundImage:
-            "radial-gradient(circle at 12% -10%, rgba(157,107,255,0.35), transparent 45%), radial-gradient(circle at 95% 0%, rgba(61,227,255,0.18), transparent 40%), radial-gradient(circle at 60% 120%, rgba(198,255,61,0.12), transparent 45%)",
-          fontFamily: fonts.length ? "Geist" : undefined,
-          color: INK,
+          padding: "56px 64px",
+          background: C.paper,
+          color: C.ink,
+          fontFamily: "Mona Sans",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <svg width="48" height="48" viewBox="0 0 32 32">
-              <rect width="32" height="32" rx="9" fill={LIME} />
-              <path d="M10.5 14.5v-3a5.5 5.5 0 0 1 11 0v3" stroke="#060708" strokeWidth="2.6" fill="none" strokeLinecap="round" />
-              <rect x="8" y="15" width="16" height="11" rx="3" fill="#060708" />
-              <path
-                d="M11 22.4l2.1-2.6 2.1 1.8 2.3-3.2 3.5 3.2"
-                stroke={LIME}
-                strokeWidth="1.7"
-                fill="none"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <svg width="44" height="44" viewBox="0 0 32 32">
+              <path d={JAW_LEFT} fill={C.ink} />
+              <path d={JAW_RIGHT} fill={C.ink} />
+              <circle cx="16" cy="16" r="5.5" fill={C.accent} />
             </svg>
-            <div style={{ display: "flex", fontSize: 34, fontWeight: 600, letterSpacing: -1 }}>
-              <span>mosh</span>
-              <span style={{ color: LIME }}>sol</span>
-            </div>
+            <div style={{ fontFamily: "Mona Sans Display", fontSize: 36, fontWeight: 600, letterSpacing: -1 }}>holdfast</div>
           </div>
-          {l ? (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "10px 20px",
-                borderRadius: 999,
-                border: `1px solid ${l.status === "live" ? "rgba(47,230,167,0.4)" : "rgba(157,107,255,0.45)"}`,
-                color: l.status === "live" ? UP : "#c2a6ff",
-                fontSize: 24,
-                fontWeight: 600,
-              }}
-            >
-              <div style={{ width: 10, height: 10, borderRadius: 999, background: l.status === "live" ? UP : "#c2a6ff" }} />
-              {l.status === "live" ? "Live" : l.status === "raising" ? "Raising" : "Refunding"}
-            </div>
-          ) : null}
+          {chip ? <Chip {...chip} /> : null}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 40 }}>
-          {logo ? (
-            <img src={logo} width={168} height={168} style={{ borderRadius: 36, objectFit: "cover" }} alt="" />
+        <div style={{ display: "flex", alignItems: "center", gap: 36 }}>
+          {art ? (
+            <img src={art} width={152} height={152} style={{ borderRadius: 16, objectFit: "cover", border: `1px solid ${C.line}` }} alt="" />
           ) : (
             <div
               style={{
-                width: 168,
-                height: 168,
-                borderRadius: 36,
+                width: 152,
+                height: 152,
+                borderRadius: 16,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                background: "linear-gradient(135deg, rgba(157,107,255,0.8), rgba(61,227,255,0.7))",
-                fontSize: 64,
+                background: C.surface,
+                border: `1px solid ${C.line}`,
+                fontSize: 56,
                 fontWeight: 600,
+                color: C.ink2,
               }}
             >
-              {(l?.symbol ?? "M").slice(0, 2).toUpperCase()}
+              {(l?.symbol ?? "H").slice(0, 2).toUpperCase()}
             </div>
           )}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 10, maxWidth: 820 }}>
-            <div style={{ fontSize: 76, fontWeight: 600, letterSpacing: -2.5, lineHeight: 1.02 }}>
-              {l ? l.name : "holdfast"}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 900 }}>
+            <div style={{ fontFamily: "Mona Sans Display", fontSize: 76, fontWeight: 600, letterSpacing: -2, lineHeight: 1.02 }}>
+              {l ? l.name : "Holdfast"}
             </div>
-            <div style={{ fontSize: 38, color: MUTED }}>{l ? `$${l.symbol}` : "Solana launchpad"}</div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                marginTop: 10,
-                padding: "10px 18px",
-                borderRadius: 14,
-                background: "rgba(198,255,61,0.1)",
-                border: "1px solid rgba(198,255,61,0.35)",
-                color: LIME,
-                fontSize: 24,
-                fontWeight: 600,
-              }}
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={LIME} strokeWidth="2.2" strokeLinecap="round">
-                <rect x="4" y="11" width="16" height="10" rx="2.5" />
-                <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-              </svg>
-              {badge}
+            <div style={{ fontSize: 36, color: C.ink2 }}>
+              {l ? `$${l.symbol}` : "The Solana launchpad where the first buy can never be dumped."}
             </div>
           </div>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: 64,
-            paddingTop: 28,
-            borderTop: "1px solid rgba(255,255,255,0.1)",
-          }}
-        >
-          {l ? stats(l).map((s) => <Stat key={s.label} {...s} />) : null}
+        <div style={{ display: "flex", flexDirection: "column", paddingTop: 28, borderTop: `1px solid ${C.line}` }}>
+          {!l || !phase ? (
+            <div style={{ fontSize: 30, color: C.ink2 }}>Launches that can&apos;t be dumped.</div>
+          ) : phase === "live" ? (
+            <LiveFooter l={l} />
+          ) : phase === "raising" || phase === "ready" ? (
+            <RaiseFooter l={l} nowSec={nowSec} />
+          ) : (
+            <div style={{ display: "flex", fontSize: 34, color: C.ink2 }}>
+              The raise closed without launching. Every backer can refund 100%.
+            </div>
+          )}
         </div>
       </div>
     ),

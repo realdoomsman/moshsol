@@ -1,32 +1,38 @@
-import { Explore } from "@/components/explore/explore";
+import type { Metadata } from "next";
+import { Discover } from "@/components/discover/discover";
+import { isToolbarSort, isView } from "@/components/discover/model";
 import { phaseOf } from "@/lib/launch";
 import { Hydrate, prefetch, serverQueryClient } from "@/lib/prefetch";
-import { agentStatusQuery, agentsQuery, candlesQuery, launchesQuery, platformQuery, statsQuery } from "@/lib/query-options";
+import { candlesQuery, launchesQuery } from "@/lib/query-options";
+import { trendingQuery } from "@/lib/users";
 
-/** Launch cards whose sparklines are server-rendered; the rest load in the browser. */
+export const metadata: Metadata = {
+  title: "Discover",
+  description: "Launches raising, launching and trading on Holdfast — the vault holds the first buy.",
+};
+
+/** Live cards whose 24h sparklines are server-rendered; the rest load in the browser. */
 const SPARKLINE_PREFETCH = 24;
-/** The featured launch's agent line is decoration; don't let a slow agent service hold up the page. */
-const AGENT_STATUS_DEADLINE_MS = 800;
 
-export default async function ExplorePage() {
+export default async function DiscoverPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const params = await searchParams;
+  const view = typeof params.view === "string" && isView(params.view) ? params.view : "board";
+  const sort = typeof params.sort === "string" && isToolbarSort(params.sort) ? params.sort : "trending";
+
   const client = serverQueryClient();
   const launches = launchesQuery({ status: "all", sort: "trending" });
   await Promise.all([
-    prefetch(client, platformQuery()),
-    prefetch(client, statsQuery()),
-    prefetch(client, agentsQuery()),
-    prefetch(client, agentStatusQuery(), AGENT_STATUS_DEADLINE_MS),
+    prefetch(client, trendingQuery()),
     (async () => {
       await prefetch(client, launches);
-      // The default tab lists live launches; their cards draw a 1m-candle sparkline.
       const now = Math.floor(Date.now() / 1000);
       const live = (client.getQueryData(launches.queryKey)?.launches ?? []).filter((l) => phaseOf(l, now) === "live");
-      await Promise.all(live.slice(0, SPARKLINE_PREFETCH).map((l) => prefetch(client, candlesQuery(l.mint, 60))));
+      await Promise.all(live.slice(0, SPARKLINE_PREFETCH).map((l) => prefetch(client, candlesQuery(l.mint, 900))));
     })(),
   ]);
   return (
     <Hydrate client={client}>
-      <Explore />
+      <Discover initialView={view} initialSort={sort} />
     </Hydrate>
   );
 }

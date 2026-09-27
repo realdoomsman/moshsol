@@ -1,7 +1,8 @@
 import { fmtPrice, lamportsToSol } from "@holdfast/sdk";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { LaunchView } from "@/components/launch/launch-view";
+import { CHART_TRADES, HOLDERS_LIMIT } from "@/components/token/limits";
+import { TokenView } from "@/components/token/token-view";
 import { fmtSolValue } from "@/lib/format";
 import { phaseOf } from "@/lib/launch";
 import { Hydrate, prefetch, serverQueryClient } from "@/lib/prefetch";
@@ -9,8 +10,10 @@ import {
   agentStatusQuery,
   backersQuery,
   candlesQuery,
+  commentsQuery,
   depositFeed,
   feedHeadQuery,
+  holdersQuery,
   launchQuery,
   platformQuery,
   recentTradesQuery,
@@ -18,10 +21,10 @@ import {
 } from "@/lib/query-options";
 import { launchOnChain, loadLaunch, parseMint } from "@/lib/server";
 
-/** Recent trades behind the chart's EMA line and agent markers (same limit as `PriceChart`). */
-const CHART_TRADES = 500;
 /** Agent status is optional decoration; don't let a slow agent service hold up the page. */
 const AGENT_STATUS_DEADLINE_MS = 800;
+/** Backers are read live from chain (one RPC call); the rail's role chips can fill in client-side. */
+const BACKERS_DEADLINE_MS = 900;
 
 type Params = { params: Promise<{ mint: string }> };
 
@@ -35,15 +38,15 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const title = `${l.name} ($${l.symbol})`;
   const description =
     l.status === "live"
-      ? `$${l.symbol} at ${fmtPrice(l.priceSol)} SOL · mcap ${fmtSolValue(l.marketCapSol)} SOL · ${fmtSolValue(lamportsToSol(l.vaultSol))} SOL + ${l.bundleSupplyBps / 100}% bundle locked forever in the vault.`
+      ? `$${l.symbol}: ${fmtSolValue(l.marketCapSol)} SOL market cap at ${fmtPrice(l.priceSol)} SOL. ${fmtSolValue(lamportsToSol(l.vaultSol))} SOL and ${l.bundleSupplyBps / 100}% of supply locked in the vault forever.`
       : l.status === "raising"
-        ? `Raising ${fmtSolValue(lamportsToSol(l.raised))} / ${fmtSolValue(lamportsToSol(l.raiseMax))} SOL. Back the bundle — it's locked forever and backers earn a share of every trade.`
-        : `The $${l.symbol} raise ended without launching — every backer can refund 100%.`;
+        ? `Raising ${fmtSolValue(lamportsToSol(l.raised))} of ${fmtSolValue(lamportsToSol(l.raiseMax))} SOL. The first buy is locked in the vault forever, and backers earn ${l.terms.backerFeeShareBps / 100}% of every trading fee.`
+        : `The $${l.symbol} raise closed without launching. Every backer can refund 100%.`;
   return {
     title,
     description,
-    openGraph: { title: `${title} · holdfast`, description, type: "website", siteName: "holdfast" },
-    twitter: { card: "summary_large_image", title: `${title} · holdfast`, description },
+    openGraph: { title: `${title} · Holdfast`, description, type: "website", siteName: "Holdfast" },
+    twitter: { card: "summary_large_image", title: `${title} · Holdfast`, description },
   };
 }
 
@@ -55,10 +58,12 @@ export default async function LaunchPage({ params }: Params) {
   // (which is shared with generateMetadata) instead of waiting on it.
   const pending = [
     prefetch(client, platformQuery()),
-    // `PriceChart` opens on the 1m timeframe; the trades tab is the first one below it.
+    // The chart counts 1m candles to pick its timeframe; the trades tab is the first one below it.
     prefetch(client, candlesQuery(mint, 60)),
     prefetch(client, recentTradesQuery(mint, CHART_TRADES)),
-    prefetch(client, feedHeadQuery(tradeFeed(mint, false))),
+    prefetch(client, feedHeadQuery(tradeFeed(mint))),
+    prefetch(client, holdersQuery(mint, HOLDERS_LIMIT)),
+    prefetch(client, backersQuery(mint), BACKERS_DEADLINE_MS),
     prefetch(client, agentStatusQuery(), AGENT_STATUS_DEADLINE_MS),
   ];
   const r = await loadLaunch(mint);
@@ -66,14 +71,14 @@ export default async function LaunchPage({ params }: Params) {
   if (r.state === "missing" && (await launchOnChain(mint)) === false) notFound();
   if (r.state === "found") {
     client.setQueryData(launchQuery(mint).queryKey, r.launch);
-    const phase = phaseOf(r.launch, Math.floor(Date.now() / 1000));
-    if (phase === "failed" || phase === "refunding") pending.push(prefetch(client, backersQuery(mint)));
-    else if (phase !== "live") pending.push(prefetch(client, feedHeadQuery(depositFeed(mint))));
+    if (phaseOf(r.launch, Math.floor(Date.now() / 1000)) !== "live") {
+      pending.push(prefetch(client, feedHeadQuery(depositFeed(mint))), prefetch(client, commentsQuery(mint)));
+    }
   }
   await Promise.all(pending);
   return (
     <Hydrate client={client}>
-      <LaunchView mint={mint} />
+      <TokenView mint={mint} />
     </Hydrate>
   );
 }

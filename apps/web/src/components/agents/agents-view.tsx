@@ -1,458 +1,253 @@
 "use client";
 
-import { fmtPrice, lamportsToSol, shortAddr, timeAgo } from "@holdfast/sdk";
-import {
-  Activity,
-  ArrowDownRight,
-  ArrowUpRight,
-  Ban,
-  Bot,
-  BrainCircuit,
-  Gauge,
-  Lock,
-  Timer,
-  TrendingDown,
-  TrendingUp,
-  Waves,
-} from "lucide-react";
+import { fmtPrice, lamportsToSol, timeAgo } from "@holdfast/sdk";
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { explorerTx } from "@/lib/explorer";
-import { fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
+import { useMemo, type ReactNode } from "react";
+import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
-import { useAgents, useAgentStatus, usePlatform } from "@/lib/queries";
-import type { AgentDecision, AgentLaunchRow } from "@/lib/types";
+import { useAgents, useAgentStatus, useLaunches, usePlatform } from "@/lib/queries";
+import { useAgentHeartbeat } from "@/lib/status";
+import type { AgentDecision, LaunchSummary } from "@/lib/types";
+import { Address } from "../ui/address";
+import { Chip, StatusDot } from "../ui/chip";
 import { cn } from "../ui/cn";
-import { AddressLink, AnimatedNumber, TokenAvatar } from "../legacy/interactive";
-import { Badge, Card, CardHeader, EmptyState, Meter, Skeleton } from "../legacy/primitives";
+import { formatCountdown } from "../ui/countdown";
+import { EmptyState, ErrorState } from "../ui/empty-state";
+import { Table, TD, TH, THead, TR } from "../ui/table";
+import { DecisionLog, useDecisionLog } from "./decision-log";
+import { vaultHealth } from "./health";
+import { RulesSheet } from "./rules";
+import { VaultHealthList } from "./vault-health";
 
-const pct = (bps: number) => `${bps / 100}%`;
+const HEARTBEAT_LABEL = { up: "Online", warn: "Stale", down: "Offline", unknown: "Checking" } as const;
 
-function Rule({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
+function Section({
+  id,
+  title,
+  aside,
+  className,
+  children,
+}: {
+  id: string;
+  title: string;
+  aside?: ReactNode;
+  className?: string;
+  children: ReactNode;
+}) {
   return (
-    <div className="card p-5">
-      <div className="grid size-10 place-items-center rounded-xl border border-lime/20 bg-lime/10 text-lime shadow-[0_0_24px_-8px_rgb(198_255_61/0.6)]">
-        {icon}
+    <section aria-labelledby={id} className={cn("grid min-w-0 gap-4", className)}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 id={id} className="h2 text-ink">
+          {title}
+        </h2>
+        {aside}
       </div>
-      <h3 className="mt-4 text-[15px] font-semibold">{title}</h3>
-      <p className="mt-1.5 text-sm leading-relaxed text-muted">{children}</p>
-    </div>
+      {children}
+    </section>
   );
 }
 
-function Rules() {
-  const { data, isLoading } = usePlatform();
-  if (isLoading || !data) {
+/** ● Online · Signer ↗ · Tick # · Last tick · Up for · Dry run (§4.10 header). */
+function StatusRow({ now }: { now: number }) {
+  const hb = useAgentHeartbeat();
+  const status = useAgentStatus();
+  const s = status.data;
+  return (
+    <dl className="small flex flex-wrap items-center gap-x-5 gap-y-2 text-ink-2">
+      <div className="flex items-center gap-2">
+        <dt className="sr-only">Status</dt>
+        <StatusDot tone={hb.tone} />
+        <dd className={cn("ui", hb.tone === "up" ? "text-ink" : hb.tone === "unknown" ? "text-ink-3" : "text-warn")}>
+          {HEARTBEAT_LABEL[hb.tone]}
+        </dd>
+      </div>
+      {s ? (
+        <>
+          <div className="flex items-center gap-1.5">
+            <dt className="text-ink-3">Signer</dt>
+            <dd>
+              <Address address={s.agent} />
+            </dd>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <dt className="text-ink-3">Tick</dt>
+            <dd className="num text-ink">#{s.tick.toLocaleString("en-US")}</dd>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <dt className="text-ink-3">Last tick</dt>
+            <dd className="num text-ink">{s.lastTickAt ? timeAgo(s.lastTickAt, now) : "not yet"}</dd>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <dt className="text-ink-3">Up for</dt>
+            <dd className="num text-ink">{formatCountdown(now - s.startedAt)}</dd>
+          </div>
+          {s.dryRun ? (
+            <div>
+              <dt className="sr-only">Mode</dt>
+              <dd>
+                <Chip tone="warn">Dry run · no transactions sent</Chip>
+              </dd>
+            </div>
+          ) : null}
+        </>
+      ) : hb.tone === "down" ? (
+        <p className="text-ink-2">The agent service isn&apos;t reachable. Nothing changes on-chain: every limit is enforced by the program.</p>
+      ) : null}
+    </dl>
+  );
+}
+
+function AgentTrades({ now }: { now: number }) {
+  const agents = useAgents();
+  const rows = agents.data?.recent ?? [];
+  if (agents.isError && !agents.data) {
     return (
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 6 }, (_, i) => (
-          <Skeleton key={i} className="h-40 rounded-2xl" />
-        ))}
+      <ErrorState onRetry={() => void agents.refetch()} retrying={agents.isFetching}>
+        Couldn&apos;t load agent trades. Indexer unreachable.
+      </ErrorState>
+    );
+  }
+  if (!rows.length) {
+    return (
+      <div className="rounded-md border border-line bg-surface">
+        <EmptyState>
+          {agents.isLoading ? "Loading agent trades…" : "No agent trades yet. The agent only trades when price leaves the band."}
+        </EmptyState>
       </div>
     );
   }
-  const p = data.params;
-  const mins = (s: number) => (s % 60 === 0 ? `${s / 60} min` : `${s}s`);
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <Rule icon={<TrendingDown className="size-4" aria-hidden />} title="Buys only on dips">
-        Agents may buy only when spot is at least {pct(p.agentBandBps)} below the EMA <em>and</em> the fill is at or
-        below the vault&apos;s average cost — or a buy-back paid from earlier sell proceeds at {pct(p.agentBandBps)} under
-        the average sell price.
-      </Rule>
-      <Rule icon={<TrendingUp className="size-4" aria-hidden />} title="Sells only into rallies">
-        Agents may sell only when spot is at least {pct(p.agentBandBps)} above the EMA <em>and</em> the fill is at least
-        {" "}{pct(p.agentBandBps)} above the vault&apos;s average cost. The vault never realizes a loss.
-      </Rule>
-      <Rule icon={<Timer className="size-4" aria-hidden />} title="Rate-limited every window">
-        Per {mins(p.agentWindowSecs)} window, agents can spend at most {pct(p.agentBuyBpsPerWindow)} of the vault&apos;s
-        SOL and sell at most {pct(p.agentSellBpsPerWindow)} of its tokens. Budgets reset only when a window rolls.
-      </Rule>
-      <Rule icon={<Gauge className="size-4" aria-hidden />} title="Tiny footprint per trade">
-        A single agent trade can move the price by at most {pct(p.agentMaxImpactBps)}. Agents pay no trading fee and
-        always set slippage limits.
-      </Rule>
-      <Rule icon={<Lock className="size-4" aria-hidden />} title="Nothing can leave the vault">
-        The program has no withdraw instruction. The agent key can only call agent_buy and agent_sell — proceeds stay
-        inside the vault, forever.
-      </Rule>
-      <Rule icon={<Waves className="size-4" aria-hidden />} title="Slow, manipulation-resistant EMA">
-        The reference price moves as ema += (spot − ema) · dt / (dt + {mins(p.emaPeriodSecs)}) on every trade, so one
-        wick can&apos;t drag the band.
-      </Rule>
-      <div className="card flex flex-wrap items-center justify-between gap-3 p-4 text-sm sm:col-span-2 lg:col-span-3">
-        <span className="flex flex-wrap items-center gap-2 text-muted">
-          <Bot className="size-4 text-cyan" aria-hidden /> Agent authority
-          <AddressLink address={data.agentAuthority} chars={6} />
-        </span>
-        <span className="flex flex-wrap items-center gap-2">
-          {p.agentsPaused ? (
-            <Badge tone="warn">
-              <Ban className="size-3" aria-hidden /> Agents paused by admin
-            </Badge>
-          ) : (
-            <Badge tone="up">Agents enabled</Badge>
-          )}
-          <span className="text-xs text-dim">Every launch freezes these limits into its own on-chain terms at creation.</span>
-        </span>
-      </div>
+    <div className="rounded-md border border-line bg-surface">
+      <Table label="Agent trades" density="dense" maxHeight={480}>
+        <THead>
+          <TH>When</TH>
+          <TH>Launch</TH>
+          <TH>Side</TH>
+          <TH align="right">SOL</TH>
+          <TH align="right">Tokens</TH>
+          <TH align="right">Price</TH>
+          <TH align="right">Tx</TH>
+        </THead>
+        <tbody>
+          {rows.map((t) => (
+            <TR key={`${t.signature}:${t.mint}:${t.isBuy ? "b" : "s"}`} agent>
+              <TD className="text-ink-3">{timeAgo(t.timestamp, now)}</TD>
+              <TD>
+                <Link href={`/launch/${t.mint}`} className="ui text-ink hover:underline hover:decoration-line-2 hover:underline-offset-2">
+                  ${t.symbol}
+                </Link>
+              </TD>
+              <TD className={t.isBuy ? "text-up" : "text-down"}>{t.isBuy ? "Bought dip" : "Sold rally"}</TD>
+              <TD align="right">{fmtLamports(t.solAmount)}</TD>
+              <TD align="right" className="text-ink-2">
+                {fmtTokens(t.tokenAmount)}
+              </TD>
+              <TD align="right" className="text-ink-2">
+                {fmtPrice(t.priceSol)}
+              </TD>
+              <TD align="right">
+                <Address address={t.signature} kind="tx" copy={false} className="justify-end" />
+              </TD>
+            </TR>
+          ))}
+        </tbody>
+      </Table>
     </div>
   );
 }
 
-function BandMini({ r, wide }: { r: AgentLaunchRow; wide?: boolean }) {
-  const lo = Math.min(r.bandLowSol, r.priceSol) * 0.97;
-  const hi = Math.max(r.bandHighSol, r.priceSol) * 1.03;
-  const at = (v: number) => `${Math.min(100, Math.max(0, ((v - lo) / (hi - lo || 1)) * 100))}%`;
-  const zone = r.priceSol <= r.bandLowSol ? "buy zone" : r.priceSol >= r.bandHighSol ? "sell zone" : "in band";
-  return (
-    <div className={wide ? "w-full" : "w-40"}>
-      <div className="relative h-1.5 rounded-full bg-white/[0.07]">
-        <div className="absolute inset-y-0 left-0 rounded-l-full bg-lime/35" style={{ width: at(r.bandLowSol) }} />
-        <div className="absolute inset-y-0 right-0 rounded-r-full bg-pink/40" style={{ left: at(r.bandHighSol) }} />
-        <div
-          className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-bg bg-white"
-          style={{ left: at(r.priceSol) }}
-        />
-      </div>
-      <div className="mt-1.5 text-[11px] text-dim">
-        {zone} · spot {fmtPrice(r.priceSol)}
-      </div>
-    </div>
-  );
-}
-
-function LaunchWindows() {
-  const { data, isLoading } = useAgents();
+/**
+ * /agents (§4.10): the vault agent's status, its rules as a spec sheet, one health row per live
+ * vault, the live decision log and its trades. `aside` is the header's right column (the
+ * "agent defends" loop, or a live stand-in).
+ */
+export function AgentsView({ aside }: { aside: ReactNode }) {
+  const now = useNow(5_000);
   const platform = usePlatform();
-  const now = useNow(5_000);
-  const windowSecs = platform.data?.params.agentWindowSecs ?? 0;
-  const rows = data?.launches ?? [];
+  const agents = useAgents();
+  const status = useAgentStatus();
+  const hb = useAgentHeartbeat();
+  const live = useLaunches({ status: "live", sort: "mcap" });
+  const log = useDecisionLog(status.data);
+
+  const liveLaunches = useMemo(() => (live.data?.launches ?? []).filter((l) => l.status === "live"), [live.data]);
+  const health = useMemo(() => {
+    const byMint: Record<string, LaunchSummary> = Object.fromEntries(liveLaunches.map((l) => [l.mint, l]));
+    const decisions: Record<string, AgentDecision> = Object.fromEntries((status.data?.decisions ?? []).map((d) => [d.mint, d]));
+    return (agents.data?.launches ?? []).map((row) =>
+      vaultHealth({
+        row,
+        launch: byMint[row.mint],
+        decision: decisions[row.mint],
+        agent: hb.tone,
+        agentsPaused: !!platform.data?.params.agentsPaused,
+        platformWindowSecs: platform.data?.params.agentWindowSecs ?? 0,
+        now,
+      }),
+    );
+  }, [agents.data, liveLaunches, status.data, hb.tone, platform.data, now]);
+
+  const totals = agents.data?.totals;
+  const traded = totals ? totals.buys + totals.sells > 0 : false;
+
   return (
-    <Card className="overflow-hidden">
-      <CardHeader
-        title={
-          <>
-            Live vaults<span className="hidden sm:inline">{" · window usage & bands"}</span>
-          </>
-        }
-        icon={<Activity className="size-3.5 text-lime" aria-hidden />}
-      />
-      {isLoading ? (
-        <div className="grid gap-2 px-5 pb-5">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-12 w-full" />
-          ))}
-        </div>
-      ) : rows.length === 0 ? (
-        <EmptyState art="vault" title="No live vaults yet">
-          Vaults appear here as soon as a launch goes live.
-        </EmptyState>
-      ) : (
-        <>
-          <ul className="divide-y divide-line border-t border-line md:hidden">
-            {rows.map((r) => {
-              const rolled = windowSecs > 0 && now >= r.windowStart + windowSecs;
-              return (
-                <li key={r.mint} className="grid gap-3 px-5 py-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <Link href={`/launch/${r.mint}`} className="group flex min-w-0 items-center gap-3">
-                      <TokenAvatar src={r.image} symbol={r.symbol} size={36} />
-                      <span className="min-w-0">
-                        <span className="block truncate font-semibold group-hover:text-lime">{r.name}</span>
-                        <span className="block text-xs text-dim">${r.symbol}</span>
-                      </span>
-                    </Link>
-                    <div className="text-right text-[13px]">
-                      <div className="font-medium">{fmtLamports(r.vaultSol)} SOL</div>
-                      <div className="text-xs text-dim">{fmtTokens(r.vaultTokens)} tokens</div>
-                    </div>
-                  </div>
-                  <BandMini r={r} wide />
-                  <div className="grid grid-cols-2 gap-4 text-[11px] text-dim">
-                    <div>
-                      <Meter value={rolled ? 0 : pctOf(r.windowSolSpent, r.windowBuyCap)} tone="lime" label="Buy budget used" />
-                      <div className="mt-1.5">
-                        buy {rolled ? "0" : fmtLamports(r.windowSolSpent)} / {fmtLamports(r.windowBuyCap)} SOL
-                      </div>
-                    </div>
-                    <div>
-                      <Meter value={rolled ? 0 : pctOf(r.windowTokensSold, r.windowSellCap)} tone="pink" label="Sell budget used" />
-                      <div className="mt-1.5">
-                        sell {rolled ? "0" : fmtTokens(r.windowTokensSold)} / {fmtTokens(r.windowSellCap)}
-                      </div>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-          <div className="hidden overflow-x-auto md:block">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Launch</th>
-                  <th className="text-right">Vault</th>
-                  <th>Price vs band</th>
-                  <th>Buy budget</th>
-                  <th>Sell budget</th>
-                  <th className="text-right">Buys / sells</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => {
-                  const rolled = windowSecs > 0 && now >= r.windowStart + windowSecs;
-                  return (
-                    <tr key={r.mint}>
-                      <td>
-                        <Link href={`/launch/${r.mint}`} className="group flex items-center gap-3">
-                          <TokenAvatar src={r.image} symbol={r.symbol} size={32} />
-                          <span>
-                            <span className="block font-semibold group-hover:text-lime">{r.name}</span>
-                            <span className="block text-xs text-dim">${r.symbol}</span>
-                          </span>
-                        </Link>
-                      </td>
-                      <td className="text-right">
-                        <div className="font-medium">{fmtLamports(r.vaultSol)} SOL</div>
-                        <div className="text-xs text-dim">{fmtTokens(r.vaultTokens)} tokens</div>
-                      </td>
-                      <td>
-                        <BandMini r={r} />
-                      </td>
-                      <td>
-                        <div className="w-36">
-                          <Meter value={rolled ? 0 : pctOf(r.windowSolSpent, r.windowBuyCap)} tone="lime" label="Buy budget used" />
-                          <div className="mt-1.5 text-[11px] text-dim">
-                            {rolled ? "0" : fmtLamports(r.windowSolSpent)} / {fmtLamports(r.windowBuyCap)} SOL
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="w-36">
-                          <Meter
-                            value={rolled ? 0 : pctOf(r.windowTokensSold, r.windowSellCap)}
-                            tone="pink"
-                            label="Sell budget used"
-                          />
-                          <div className="mt-1.5 text-[11px] text-dim">
-                            {rolled ? "0" : fmtTokens(r.windowTokensSold)} / {fmtTokens(r.windowSellCap)}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="text-right">
-                        <span className="text-up">{r.agentBuys}</span> / <span className="text-down">{r.agentSells}</span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+    <div className="grid gap-12 pb-4">
+      <header className="order-1 grid gap-8 lg:order-none lg:grid-cols-[minmax(0,1fr)_400px] lg:items-center xl:grid-cols-[minmax(0,1fr)_460px]">
+        <div className="grid gap-5">
+          <div className="grid gap-3">
+            <h1 className="display-m text-ink">The vault agent, in the open.</h1>
+            <p className="body-l max-w-[60ch] text-ink-2">
+              A rate-limited agent trades each vault against the swing, inside limits the program enforces.{" "}
+              <Link href="/docs/agents" className="whitespace-nowrap text-ink underline decoration-line-2 underline-offset-2 hover:decoration-ink">
+                How it works ›
+              </Link>
+            </p>
           </div>
-        </>
-      )}
-    </Card>
-  );
-}
-
-function RecentTrades() {
-  const { data, isLoading } = useAgents();
-  const now = useNow(5_000);
-  const rows = data?.recent ?? [];
-  return (
-    <Card className="overflow-hidden">
-      <CardHeader title="Recent agent trades" icon={<Bot className="size-3.5 text-cyan" aria-hidden />} />
-      {isLoading ? (
-        <div className="grid gap-2 px-5 pb-5">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-10 w-full" />
-          ))}
+          <StatusRow now={now} />
+          {traded && totals ? (
+            <p className="small num text-ink-3">
+              {totals.buys} dip {totals.buys === 1 ? "buy" : "buys"} · {totals.sells} rally {totals.sells === 1 ? "sell" : "sells"} ·{" "}
+              {fmtSolValue(lamportsToSol(totals.solSpent))} SOL spent · {fmtSolValue(lamportsToSol(totals.solReceived))} SOL received
+            </p>
+          ) : null}
         </div>
-      ) : rows.length === 0 ? (
-        <EmptyState art="agent" title="No agent trades yet">
-          Agents stay idle while prices sit inside their bands.
-        </EmptyState>
-      ) : (
-        <div className="max-h-[480px] overflow-auto overscroll-contain border-t border-line">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Launch</th>
-                <th>Side</th>
-                <th className="text-right">SOL</th>
-                <th className="hidden text-right sm:table-cell">Price</th>
-                <th className="hidden text-right sm:table-cell">Tx</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((t) => (
-                <tr key={`${t.signature}:${t.mint}`}>
-                  <td className="whitespace-nowrap text-dim">{timeAgo(t.timestamp, now)}</td>
-                  <td>
-                    <Link href={`/launch/${t.mint}`} className="font-semibold hover:text-lime">
-                      ${t.symbol}
-                    </Link>
-                  </td>
-                  <td>
-                    <span className={cn("inline-flex items-center gap-1 font-semibold whitespace-nowrap", t.isBuy ? "text-up" : "text-down")}>
-                      {t.isBuy ? <ArrowDownRight className="size-3.5" aria-hidden /> : <ArrowUpRight className="size-3.5" aria-hidden />}
-                      {t.isBuy ? "Bought dip" : "Sold rally"}
-                    </span>
-                  </td>
-                  <td className="text-right">{fmtLamports(t.solAmount)}</td>
-                  <td className="hidden text-right text-muted sm:table-cell">{fmtPrice(t.priceSol)}</td>
-                  <td className="hidden text-right sm:table-cell">
-                    <a href={explorerTx(t.signature)} target="_blank" rel="noreferrer" className="font-mono text-xs text-muted hover:text-lime">
-                      {shortAddr(t.signature, 4)}
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
-  );
-}
+        <div className="hidden lg:block">{aside}</div>
+      </header>
 
-const ACTION_TONE: Record<AgentDecision["action"], "up" | "down" | "neutral" | "warn"> = {
-  buy: "up",
-  sell: "down",
-  hold: "neutral",
-  skip: "warn",
-};
+      <Section id="rules" title="Rules" className="order-4 lg:order-none">
+        <RulesSheet platform={platform.data} launches={liveLaunches} />
+      </Section>
 
-function AgentBrain() {
-  const { data, isError, isLoading } = useAgentStatus();
-  const now = useNow(1_000);
-  const online = !!data && !isError;
-  return (
-    <Card className="overflow-hidden">
-      <CardHeader
-        title={
-          <>
-            Agent brain<span className="hidden sm:inline"> · live decisions</span>
-          </>
-        }
-        icon={<BrainCircuit className="size-3.5 text-cyan" aria-hidden />}
-        right={
-          <span className={cn("inline-flex items-center gap-1.5 text-xs font-semibold", online ? "text-up" : "text-dim")}>
-            <span className={cn("size-1.5 rounded-full", online ? "animate-pulse-dot bg-up text-up" : "bg-dim")} />
-            {online ? "online" : isLoading ? "connecting" : "offline"}
-          </span>
-        }
-      />
-      {online ? (
-        <>
-          <div className="flex flex-wrap gap-x-6 gap-y-1 border-y border-line px-5 py-3 text-xs text-dim">
-            <span>
-              Signer <span className="font-mono text-muted">{shortAddr(data.agent, 5)}</span>
-            </span>
-            <span>
-              Tick <span className="text-muted tabular-nums">#{data.tick}</span>
-            </span>
-            <span>
-              Last tick{" "}
-              <span className="text-muted tabular-nums">{data.lastTickAt ? timeAgo(data.lastTickAt, now) : "pending"}</span>
-            </span>
-            <span>
-              Up since <span className="text-muted">{timeAgo(data.startedAt, now)}</span>
-            </span>
-            {data.dryRun ? <Badge tone="warn">dry run — no transactions sent</Badge> : null}
-          </div>
-          {data.decisions.length === 0 ? (
-            <EmptyState art="agent" title="No live launches to watch" />
+      <Section id="health" title="Vault health" className="order-2 lg:order-none">
+        {agents.isError && !agents.data ? (
+          <ErrorState onRetry={() => void agents.refetch()} retrying={agents.isFetching}>
+            Couldn&apos;t load vaults. Indexer unreachable.
+          </ErrorState>
+        ) : (
+          <VaultHealthList rows={health} now={now} loading={agents.isLoading} />
+        )}
+      </Section>
+
+      <Section
+        id="log"
+        title="Decision log"
+        className="order-3 lg:order-none"
+        aside={<span className="small text-ink-3">Live from the agent · newest first</span>}
+      >
+        <div className="rounded-md border border-line bg-surface">
+          {status.isError && !log.length ? (
+            <ErrorState onRetry={() => void status.refetch()} retrying={status.isFetching} className="m-4">
+              Couldn&apos;t reach the agent service. Vault limits are still enforced on-chain.
+            </ErrorState>
           ) : (
-            <ul className="divide-y divide-line">
-              {data.decisions.map((d) => (
-                <li key={d.mint} className="grid gap-2 px-5 py-3.5 sm:grid-cols-[140px_1fr_auto] sm:items-center">
-                  <Link href={`/launch/${d.mint}`} className="flex items-center gap-2 font-semibold hover:text-lime">
-                    <Badge tone={ACTION_TONE[d.action]} className="w-12 justify-center uppercase">
-                      {d.action}
-                    </Badge>
-                    ${d.symbol ?? shortAddr(d.mint)}
-                  </Link>
-                  <div className="min-w-0 text-[13px]">
-                    <div className="text-muted">{d.reason}</div>
-                    <div className="mt-0.5 text-xs text-dim tabular-nums">
-                      spot {fmtPrice(d.priceSol)} · EMA {fmtPrice(d.emaSol)} · band {fmtPrice(d.bandLowSol)}–{fmtPrice(d.bandHighSol)}
-                      {d.amount
-                        ? ` · ${d.action === "buy" ? `${fmtLamports(d.amount)} SOL` : `${fmtTokens(d.amount)} tokens`}`
-                        : ""}
-                    </div>
-                    {d.error ? <div className="mt-0.5 text-xs text-down">{d.error}</div> : null}
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-dim tabular-nums sm:justify-end">
-                    {d.signature ? (
-                      <a href={explorerTx(d.signature)} target="_blank" rel="noreferrer" className="font-mono text-lime hover:underline">
-                        tx {shortAddr(d.signature, 4)}
-                      </a>
-                    ) : null}
-                    {timeAgo(d.at, now)}
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <DecisionLog log={log} now={now} loading={status.isLoading} />
           )}
-        </>
-      ) : (
-        <EmptyState art={isLoading ? "agent" : "offline"} title={isLoading ? "Connecting to the agent…" : "Agent offline"}>
-          The agent service isn&apos;t reachable right now. That changes nothing on-chain: vaults stay locked and every
-          limit above is enforced by the program.
-        </EmptyState>
-      )}
-    </Card>
-  );
-}
-
-function Totals() {
-  const { data } = useAgents();
-  const stats = [
-    { label: "Dip buys", value: data?.totals.buys ?? null, fmt: (n: number) => Math.round(n).toString(), icon: TrendingDown },
-    { label: "Rally sells", value: data?.totals.sells ?? null, fmt: (n: number) => Math.round(n).toString(), icon: TrendingUp },
-    { label: "SOL spent buying", value: data ? lamportsToSol(data.totals.solSpent) : null, fmt: fmtSolValue, icon: ArrowDownRight },
-    { label: "SOL from selling", value: data ? lamportsToSol(data.totals.solReceived) : null, fmt: fmtSolValue, icon: ArrowUpRight },
-  ];
-  return (
-    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-      {stats.map(({ label, value, fmt, icon: Icon }) => (
-        <div key={label} className="card p-4 sm:p-5">
-          <div className="flex items-center gap-2 text-xs font-medium text-dim">
-            <Icon className="size-3.5" aria-hidden /> {label}
-          </div>
-          <div className="mt-1.5 text-2xl font-semibold tracking-tight">
-            {value === null ? <Skeleton className="h-7 w-16" /> : <AnimatedNumber value={value} format={fmt} />}
-          </div>
         </div>
-      ))}
-    </div>
-  );
-}
+      </Section>
 
-export function AgentsView() {
-  return (
-    <div className="grid gap-10">
-      <section aria-labelledby="rules-heading">
-        <div className="type-eyebrow text-dim">On-chain limits</div>
-        <h2 id="rules-heading" className="type-title mt-2 mb-5 text-2xl sm:text-3xl">
-          The rules, enforced by the program
-        </h2>
-        <Rules />
-      </section>
-      <section className="grid gap-5" aria-labelledby="activity-heading">
-        <div>
-          <div className="type-eyebrow text-dim">Live</div>
-          <h2 id="activity-heading" className="type-title mt-2 text-2xl sm:text-3xl">
-            Activity
-          </h2>
-        </div>
-        <Totals />
-        <AgentBrain />
-        <LaunchWindows />
-        <RecentTrades />
-      </section>
+      <Section id="trades" title="Agent trades" className="order-5 lg:order-none">
+        <AgentTrades now={now} />
+      </Section>
     </div>
   );
 }

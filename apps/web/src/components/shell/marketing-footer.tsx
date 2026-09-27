@@ -17,7 +17,7 @@ const COLUMNS = [
     title: "Protocol",
     links: [
       { href: "/docs/how-it-works", label: "How it works" },
-      { href: "/docs/vault-and-agent", label: "Agent rules" },
+      { href: "/docs/agents", label: "Agent rules" },
       { href: "/agents", label: "Transparency" },
       { href: "/docs/fees", label: "Fees" },
     ],

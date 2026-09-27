@@ -5,6 +5,8 @@ import type {
   AgentsOverview,
   BackerRow,
   Candle,
+  Comment,
+  CommentsPage,
   DepositRow,
   HolderRow,
   IndexerHealth,
@@ -14,6 +16,8 @@ import type {
   Portfolio,
   SearchResult,
   TradeRow,
+  TraderStat,
+  TraderWindow,
 } from "./types";
 
 export class ApiError extends Error {
@@ -31,7 +35,7 @@ export class ApiError extends Error {
  */
 const SERVER_TIMEOUT_MS = 1_500;
 
-async function request<T>(base: string, path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(base: string, path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${base}${path}`, {
@@ -95,13 +99,45 @@ export const api = {
     return request<{ launches: LaunchSummary[]; total: number }>(INDEXER_URL, `/api/launches?${qs}`);
   },
   launch: (mint: string) => request<LaunchSummary>(INDEXER_URL, `/api/launches/${mint}`),
-  /** Newest first; `before` = unix seconds (exclusive), `agent` = vault agent trades only. */
-  trades: (mint: string, p: { limit: number; before?: number; agent?: boolean }) => {
+  /**
+   * Newest first; `before` = unix seconds (exclusive). Server-side filters: `agent` = vault agent
+   * trades only, `side`, `minSol` (SOL, float) and `trader` (one wallet).
+   */
+  trades: (
+    mint: string,
+    p: { limit: number; before?: number; agent?: boolean; side?: "buy" | "sell"; minSol?: number; trader?: string },
+  ) => {
     const qs = new URLSearchParams({ limit: String(p.limit) });
     if (p.before !== undefined) qs.set("before", String(p.before));
     if (p.agent) qs.set("agent", "1");
+    if (p.side) qs.set("side", p.side);
+    if (p.minSol !== undefined && p.minSol > 0) qs.set("minSol", String(p.minSol));
+    if (p.trader) qs.set("trader", p.trader);
     return request<{ trades: TradeRow[] }>(INDEXER_URL, `/api/launches/${mint}/trades?${qs}`);
   },
+  /** Top non-agent traders of a launch by SOL volume in the window. */
+  traders: (mint: string, window: TraderWindow, limit = 50) =>
+    request<{ window: TraderWindow; traders: TraderStat[] }>(
+      INDEXER_URL,
+      `/api/launches/${mint}/traders?window=${window}&limit=${limit}`,
+    ),
+  /** Flat thread, newest first (replies included); `before` = comment id (exclusive). */
+  comments: (mint: string, p: { limit: number; before?: number; replyTo?: number }) => {
+    const qs = new URLSearchParams({ limit: String(p.limit) });
+    if (p.before !== undefined) qs.set("before", String(p.before));
+    if (p.replyTo !== undefined) qs.set("replyTo", String(p.replyTo));
+    return request<CommentsPage>(INDEXER_URL, `/api/launches/${mint}/comments?${qs}`);
+  },
+  /** Signed comment (see `lib/signed.ts`): `message` must hash `body` exactly as sent. */
+  postComment: (
+    mint: string,
+    p: { wallet: string; message: string; signature: string; body: string; replyTo?: number },
+  ) =>
+    request<{ comment: Comment }>(INDEXER_URL, `/api/launches/${mint}/comments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(p),
+    }),
   candles: (mint: string, tf: Timeframe) =>
     request<{ candles: Candle[] }>(INDEXER_URL, `/api/launches/${mint}/candles?tf=${tf}`),
   backers: (mint: string) => request<{ backers: BackerRow[] }>(INDEXER_URL, `/api/launches/${mint}/backers`),
