@@ -113,4 +113,22 @@ export function registerUpload(app: FastifyInstance, opts: { filesDir: string; p
     req.log.info({ id, kind: kind.ext, bytes: image.length, whitelist: fields.whitelist?.length ?? 0 }, "upload stored");
     return reply.send({ uri, image: imageUrl });
   });
+
+  // Image only (profile avatars): same sniffing and limits, no metadata JSON.
+  app.post("/api/upload/image", async (req, reply) => {
+    if (!req.isMultipart()) throw new ValidationError("expected multipart/form-data");
+    let image: Buffer | null = null;
+    for await (const part of req.parts()) {
+      if (part.type !== "file") continue;
+      const buf = await part.toBuffer();
+      if (part.fieldname === "image") image = buf;
+    }
+    if (!image || image.length === 0) throw new ValidationError("image file is required");
+    const kind = sniffImage(image);
+    if (!kind) throw new ValidationError("image must be a PNG, JPEG, GIF, WebP or SVG file");
+    const id = randomBytes(9).toString("base64url");
+    await fs.writeFile(path.join(opts.filesDir, "img", `${id}.${kind.ext}`), image, { flag: "wx" });
+    req.log.info({ id, kind: kind.ext, bytes: image.length }, "image stored");
+    return reply.send({ image: `${opts.publicUrl}/files/img/${id}.${kind.ext}` });
+  });
 }

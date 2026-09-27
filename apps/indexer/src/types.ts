@@ -14,8 +14,21 @@ export interface LaunchSummary extends LaunchJson {
   whitelist: string[] | null;
   change24h: number | null;
   volume24hSol: number;
+  /** SOL traded in the last hour (agent trades included). */
+  volume1hSol: number;
+  /** Trades in the last hour (agent trades included). */
+  trades1h: number;
+  /** Distinct non-agent wallets that bought / sold in the last 24h. */
+  buyers24h: number;
+  sellers24h: number;
   lastTradeAt: number | null;
   holders: number;
+  /** Largest holder's % of total supply, curve and vault excluded; null until holders were first loaded. */
+  topHolderPct: number | null;
+  /** Visible comments. */
+  comments: number;
+  /** The creator's profile name, if set. */
+  creatorName: string | null;
 }
 
 export interface TradeRow {
@@ -78,8 +91,30 @@ export interface HolderRow {
   label: "curve" | "vault" | null;
 }
 
+export interface CommentRow {
+  id: number;
+  mint: string;
+  /** Author wallet. */
+  wallet: string;
+  /** Author profile name / avatar URL, if set. */
+  name: string | null;
+  avatar: string | null;
+  body: string;
+  /** Id of the comment this replies to (same launch); it may have been removed by a moderator since. */
+  replyTo: number | null;
+  replyCount: number;
+  createdAt: number;
+  isCreator: boolean;
+  /** Deposited into the launch's raise. */
+  isBacker: boolean;
+  /** Holds the token now (holder snapshot, else net curve buys > sells). Best effort. */
+  holdsTokens: boolean;
+}
+
 export type WsMessage =
   | { type: "event"; event: ActivityEvent }
   | { type: "launch"; launch: LaunchSummary }
+  | { type: "comment"; mint: string; comment: CommentRow }
+  | { type: "comment_deleted"; mint: string; id: number }
   /** The chain was reset (new genesis) and the index was rebuilt: clients should drop cached data and refetch. */
   | { type: "reset"; genesisHash: string };

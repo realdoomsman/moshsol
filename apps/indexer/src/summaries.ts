@@ -2,14 +2,7 @@ import type { LaunchJson } from "@holdfast/sdk";
 import type { LaunchDbRow, Store, TradeAggDbRow } from "./db";
 import type { LaunchSummary } from "./types";
 
-export interface SummaryExtras {
-  /** SOL traded in the last hour; used for the trending score. */
-  volume1hSol: number;
-}
-
-export type RankedSummary = LaunchSummary & SummaryExtras;
-
-function toSummary(store: Store, row: LaunchDbRow, agg: TradeAggDbRow | undefined, now: number): RankedSummary {
+function toSummary(store: Store, row: LaunchDbRow, agg: TradeAggDbRow | undefined, now: number): LaunchSummary {
   const snap = JSON.parse(row.snapshot!) as LaunchJson;
   let change24h: number | null = null;
   if (snap.status === "live") {
@@ -30,27 +23,33 @@ function toSummary(store: Store, row: LaunchDbRow, agg: TradeAggDbRow | undefine
     whitelist: row.whitelist ? (JSON.parse(row.whitelist) as string[]) : null,
     change24h,
     volume24hSol: agg?.v24 ?? 0,
+    volume1hSol: agg?.v1 ?? 0,
+    trades1h: agg?.t1 ?? 0,
+    buyers24h: agg?.buyers24 ?? 0,
+    sellers24h: agg?.sellers24 ?? 0,
     lastTradeAt: agg?.last_ts ?? null,
     holders: row.holders,
-    volume1hSol: agg?.v1 ?? 0,
+    topHolderPct: row.top_holder_pct,
+    comments: row.comment_count,
+    creatorName: row.creator_name,
   };
-}
-
-/** Strips ranking-only fields before sending a summary over the wire. */
-export function publicSummary(s: RankedSummary): LaunchSummary {
-  const { volume1hSol: _drop, ...rest } = s;
-  return rest;
 }
 
 export function summaryOf(store: Store, row: LaunchDbRow | undefined): LaunchSummary | null {
   if (!row?.snapshot) return null;
   const now = Math.floor(Date.now() / 1000);
-  return publicSummary(toSummary(store, row, store.tradeAggregate(row.address, now), now));
+  return toSummary(store, row, store.tradeAggregate(row.address, now), now);
 }
 
-/** Every launch with a snapshot, newest first, with ranking extras. */
-export function allSummaries(store: Store): RankedSummary[] {
+/** Every launch with a snapshot, newest first. */
+export function allSummaries(store: Store): LaunchSummary[] {
   const now = Math.floor(Date.now() / 1000);
   const aggs = store.tradeAggregates(now);
   return store.launches().map((row) => toSummary(store, row, aggs.get(row.address), now));
+}
+
+/** Summaries for a subset of launch rows (rows without a snapshot are skipped). */
+export function summariesOf(store: Store, rows: LaunchDbRow[]): LaunchSummary[] {
+  const now = Math.floor(Date.now() / 1000);
+  return rows.flatMap((row) => (row.snapshot ? [toSummary(store, row, store.tradeAggregate(row.address, now), now)] : []));
 }

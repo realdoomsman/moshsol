@@ -21,6 +21,7 @@ function wsFromRpc(rpc: string): string {
 
 const rpcUrl = process.env.RPC_URL || "http://127.0.0.1:8899";
 const port = envInt("PORT", 8787);
+const trustProxy = (process.env.TRUST_PROXY ?? "").trim().toLowerCase();
 
 export const config = {
   port,
@@ -33,10 +34,20 @@ export const config = {
   publicUrl: (process.env.PUBLIC_URL || `http://127.0.0.1:${port}`).replace(/\/+$/, ""),
   /** Requests per minute per client IP across all routes (0 disables). */
   rateLimitPerMin: envInt("RATE_LIMIT_PER_MIN", 1_200, 0),
-  /** `POST /api/upload` requests per minute per client IP (0 disables). */
+  /** `POST /api/upload` + `POST /api/upload/image` requests per minute per client IP (0 disables). */
   uploadLimitPerMin: envInt("UPLOAD_LIMIT_PER_MIN", 20, 0),
-  /** Honour X-Forwarded-For for the client IP (set when behind a reverse proxy). */
-  trustProxy: ["1", "true", "yes"].includes((process.env.TRUST_PROXY ?? "").trim().toLowerCase()),
+  /** Comments per minute per wallet (0 disables). */
+  commentLimitPerMin: envInt("COMMENT_LIMIT_PER_MIN", 5, 0),
+  /** Signed social writes (comments + profile updates) per minute per client IP (0 disables). */
+  socialIpLimitPerMin: envInt("SOCIAL_IP_LIMIT_PER_MIN", 20, 0),
+  /** Enables `DELETE /api/comments/:id` (header `x-admin-token`); moderation is off when unset. */
+  adminToken: process.env.ADMIN_TOKEN?.trim() || null,
+  /**
+   * Client IP from X-Forwarded-For behind reverse proxies. `1`/`true`/`yes` trusts every hop (the leftmost,
+   * client-supplied entry wins); a comma-separated list of proxy IPs/CIDRs or `loopback`/`linklocal`/`uniquelocal`
+   * trusts only those proxies, so clients can't spoof their IP.
+   */
+  trustProxy: ["1", "true", "yes"].includes(trustProxy) ? true : ["", "0", "false", "no"].includes(trustProxy) ? false : trustProxy,
   // Cadences are tunable so public RPCs (devnet/mainnet rate limits) aren't hammered.
   pollMs: envInt("POLL_MS", 4_000),
   fullRefreshMs: envInt("FULL_REFRESH_MS", 15_000),

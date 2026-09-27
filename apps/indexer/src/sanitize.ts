@@ -4,6 +4,16 @@ import { PublicKey } from "@solana/web3.js";
 
 export class ValidationError extends Error {}
 
+/** Error with an explicit HTTP status (the server's error handler sends `{ error: message }`). */
+export class HttpError extends Error {
+  constructor(
+    readonly statusCode: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 // C0/C1 control characters except tab/newline (kept for descriptions), plus bidi overrides.
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 const HANDLE = /^@?[A-Za-z0-9_.]{1,64}$/;

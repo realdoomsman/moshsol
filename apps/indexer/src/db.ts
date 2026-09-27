@@ -35,6 +35,12 @@ export type LaunchDbRow = {
   whitelist: string | null;
   holders: number;
   holders_at: number;
+  /** Largest holder's share of supply in % (curve/vault excluded); null until holders were loaded. */
+  top_holder_pct: number | null;
+  /** Joined: the creator's profile name. */
+  creator_name: string | null;
+  /** Joined: visible (not deleted) comments on the launch. */
+  comment_count: number;
 };
 
 export type TradeDbRow = {
@@ -107,7 +113,68 @@ export type TradeAggDbRow = {
   launch: string;
   v24: number;
   v1: number;
+  t1: number;
+  buyers24: number;
+  sellers24: number;
   last_ts: number | null;
+};
+
+export type CommentDbRow = {
+  id: number;
+  mint: string;
+  wallet: string;
+  body: string;
+  reply_to: number | null;
+  created_at: number;
+  deleted_at: number | null;
+  reply_count: number;
+  author_name: string | null;
+  author_avatar: string | null;
+};
+
+export type NewCommentRow = {
+  mint: string;
+  wallet: string;
+  body: string;
+  reply_to: number | null;
+  created_at: number;
+  signature: string;
+  message: string;
+};
+
+export type ProfileDbRow = {
+  wallet: string;
+  name: string | null;
+  bio: string | null;
+  avatar: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+export type ProfileRef = { wallet: string; name: string | null; avatar: string | null };
+
+export type WalletTradeAggDbRow = {
+  wallet: string;
+  trades: number;
+  buys: number;
+  buy_sol: number;
+  sell_sol: number;
+  volume: number;
+  launches: number;
+  net_tokens: number;
+  first_ts: number | null;
+  last_ts: number | null;
+};
+
+export type LaunchWindowAggDbRow = { launch: string; fees: number; volume: number; trades: number; traders: number };
+
+export type TradeFilter = {
+  beforeTs: number;
+  limit: number;
+  agentOnly: boolean;
+  side: "buy" | "sell" | null;
+  minSol: number | null;
+  trader: string | null;
 };
 
 export type CandlePointDbRow = { timestamp: number; price_sol: number; sol: number };
@@ -231,12 +298,55 @@ CREATE TABLE IF NOT EXISTS deposits (
   PRIMARY KEY (signature, event_index)
 );
 CREATE INDEX IF NOT EXISTS deposits_launch ON deposits(launch, slot);
+CREATE INDEX IF NOT EXISTS deposits_backer ON deposits(backer, launch);
+CREATE INDEX IF NOT EXISTS trades_trader ON trades(trader, timestamp);
+CREATE INDEX IF NOT EXISTS events_actor ON events(actor, timestamp);
+CREATE INDEX IF NOT EXISTS events_launch ON events(launch);
+CREATE TABLE IF NOT EXISTS comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mint TEXT NOT NULL,
+  wallet TEXT NOT NULL,
+  body TEXT NOT NULL,
+  reply_to INTEGER,
+  created_at INTEGER NOT NULL,
+  signature TEXT NOT NULL,
+  message TEXT NOT NULL,
+  deleted_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS comments_mint ON comments(mint, id);
+CREATE INDEX IF NOT EXISTS comments_reply ON comments(reply_to);
+CREATE INDEX IF NOT EXISTS comments_wallet ON comments(wallet, created_at);
+CREATE TABLE IF NOT EXISTS signed_messages (
+  hash TEXT PRIMARY KEY,
+  ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS signed_messages_ts ON signed_messages(ts);
+CREATE TABLE IF NOT EXISTS profiles (
+  wallet TEXT PRIMARY KEY,
+  name TEXT,
+  name_lower TEXT UNIQUE,
+  bio TEXT,
+  avatar TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 `;
 
-const DATA_TABLES = ["txs", "launches", "events", "trades", "deposits", "sync_state"] as const;
+/** Columns added after the first deployment; applied with a guarded ALTER TABLE (existing rows keep their data). */
+const COLUMN_MIGRATIONS = [{ table: "launches", column: "top_holder_pct", type: "REAL" }] as const;
+
+/**
+ * Wiped on a chain reset: everything keyed by chain state, including comments (their mints are gone).
+ * `profiles` (wallet-keyed) and `signed_messages` (replay guard, pruned by age) survive.
+ */
+const DATA_TABLES = ["txs", "launches", "events", "trades", "deposits", "sync_state", "comments"] as const;
 
 const LAUNCH_NAME = "COALESCE(l.meta_name, l.onchain_name)";
 const LAUNCH_SYMBOL = "COALESCE(l.meta_symbol, l.onchain_symbol)";
+const LAUNCH_SELECT = `
+  SELECT l.*, p.name AS creator_name,
+    (SELECT COUNT(*) FROM comments c WHERE c.mint = l.mint AND c.deleted_at IS NULL) AS comment_count
+  FROM launches l LEFT JOIN profiles p ON p.wallet = l.creator`;
 const ACTIVITY_SELECT = `
   SELECT e.signature, e.event_index, e.timestamp, e.type, COALESCE(e.actor, l.creator) AS actor, e.is_agent, e.is_buy,
     e.sol_amount, e.token_amount, l.mint AS mint, ${LAUNCH_NAME} AS name, ${LAUNCH_SYMBOL} AS symbol, l.image AS image
@@ -245,8 +355,24 @@ const TRADE_AGG = `
   SELECT launch,
     COALESCE(SUM(CASE WHEN timestamp >= :day THEN sol END), 0) AS v24,
     COALESCE(SUM(CASE WHEN timestamp >= :hour THEN sol END), 0) AS v1,
+    COUNT(CASE WHEN timestamp >= :hour THEN 1 END) AS t1,
+    COUNT(DISTINCT CASE WHEN timestamp >= :day AND is_agent = 0 AND is_buy = 1 THEN trader END) AS buyers24,
+    COUNT(DISTINCT CASE WHEN timestamp >= :day AND is_agent = 0 AND is_buy = 0 THEN trader END) AS sellers24,
     MAX(timestamp) AS last_ts
   FROM trades`;
+const WALLET_TRADE_AGG = `
+  COUNT(*) AS trades, COALESCE(SUM(t.is_buy), 0) AS buys,
+  COALESCE(SUM(CASE WHEN t.is_buy = 1 THEN t.sol END), 0) AS buy_sol,
+  COALESCE(SUM(CASE WHEN t.is_buy = 0 THEN t.sol END), 0) AS sell_sol,
+  COALESCE(SUM(t.sol), 0) AS volume, COUNT(DISTINCT t.launch) AS launches,
+  COALESCE(SUM(CASE WHEN t.is_buy = 1 THEN CAST(t.token_amount AS INTEGER) ELSE -CAST(t.token_amount AS INTEGER) END), 0)
+    AS net_tokens,
+  MIN(t.timestamp) AS first_ts, MAX(t.timestamp) AS last_ts`;
+const COMMENT_SELECT = `
+  SELECT c.id, c.mint, c.wallet, c.body, c.reply_to, c.created_at, c.deleted_at,
+    (SELECT COUNT(*) FROM comments r WHERE r.reply_to = c.id AND r.deleted_at IS NULL) AS reply_count,
+    p.name AS author_name, p.avatar AS author_avatar
+  FROM comments c LEFT JOIN profiles p ON p.wallet = c.wallet`;
 
 const SQL = {
   getState: "SELECT value FROM sync_state WHERE key = ?",
@@ -277,12 +403,12 @@ const SQL = {
   insertDeposit: `
     INSERT OR IGNORE INTO deposits (signature, event_index, slot, timestamp, launch, backer, amount, raised)
     VALUES (:signature, :event_index, :slot, :timestamp, :launch, :backer, :amount, :raised)`,
-  launchByAddress: "SELECT * FROM launches WHERE address = ?",
-  launchByMint: "SELECT * FROM launches WHERE mint = ?",
-  allLaunches: "SELECT * FROM launches WHERE snapshot IS NOT NULL ORDER BY idx DESC",
+  launchByAddress: `${LAUNCH_SELECT} WHERE l.address = ?`,
+  launchByMint: `${LAUNCH_SELECT} WHERE l.mint = ?`,
+  allLaunches: `${LAUNCH_SELECT} WHERE l.snapshot IS NOT NULL ORDER BY l.idx DESC`,
   launchTraders: "SELECT DISTINCT trader FROM trades WHERE launch = ? AND is_agent = 0",
-  metaDue:
-    "SELECT * FROM launches WHERE meta_status = 'pending' OR (meta_status = 'error' AND meta_attempts < ? AND meta_next_at <= ?)",
+  metaDue: `${LAUNCH_SELECT}
+    WHERE l.meta_status = 'pending' OR (l.meta_status = 'error' AND l.meta_attempts < ? AND l.meta_next_at <= ?)`,
   setSnapshot: "UPDATE launches SET snapshot = ?, snapshot_slot = ?, status = ? WHERE address = ?",
   setSnapshotSlot: "UPDATE launches SET snapshot_slot = ? WHERE address = ?",
   setMeta: `
@@ -291,14 +417,17 @@ const SQL = {
     WHERE address = :address`,
   setMetaError:
     "UPDATE launches SET meta_status = 'error', meta_attempts = meta_attempts + 1, meta_next_at = ? WHERE address = ?",
-  setHolders: "UPDATE launches SET holders = ?, holders_at = ? WHERE address = ?",
+  setHolders: "UPDATE launches SET holders = ?, top_holder_pct = ?, holders_at = ? WHERE address = ?",
   tradeAggAll: `${TRADE_AGG} GROUP BY launch`,
   tradeAggOne: `${TRADE_AGG} WHERE launch = :launch`,
   priceAt: "SELECT price_sol FROM trades WHERE launch = ? AND timestamp <= ? ORDER BY slot DESC, rowid DESC LIMIT 1",
   firstPrice: "SELECT price_sol FROM trades WHERE launch = ? ORDER BY slot ASC, rowid ASC LIMIT 1",
-  trades: "SELECT * FROM trades WHERE launch = ? AND timestamp < ? ORDER BY slot DESC, rowid DESC LIMIT ?",
-  launchAgentTrades:
-    "SELECT * FROM trades WHERE launch = ? AND is_agent = 1 AND timestamp < ? ORDER BY slot DESC, rowid DESC LIMIT ?",
+  trades: `
+    SELECT * FROM trades
+    WHERE launch = :launch AND timestamp < :before AND (:agent = 0 OR is_agent = 1)
+      AND (:is_buy IS NULL OR is_buy = :is_buy) AND (:min_sol IS NULL OR sol >= :min_sol)
+      AND (:trader IS NULL OR trader = :trader)
+    ORDER BY slot DESC, rowid DESC LIMIT :limit`,
   candlePoints: "SELECT timestamp, price_sol, sol FROM trades WHERE launch = ? ORDER BY slot ASC, rowid ASC",
   deposits: "SELECT * FROM deposits WHERE launch = ? AND timestamp < ? ORDER BY slot DESC, rowid DESC LIMIT ?",
   agentTrades: `
@@ -312,6 +441,92 @@ const SQL = {
     SELECT (SELECT COUNT(*) FROM txs) AS txs, (SELECT COUNT(*) FROM events) AS events,
       (SELECT COUNT(*) FROM trades) AS trades, (SELECT COUNT(*) FROM deposits) AS deposits,
       (SELECT COUNT(*) FROM launches) AS launches`,
+
+  // ---------------- social ----------------
+  insertComment: `
+    INSERT INTO comments (mint, wallet, body, reply_to, created_at, signature, message)
+    VALUES (:mint, :wallet, :body, :reply_to, :created_at, :signature, :message)`,
+  commentById: `${COMMENT_SELECT} WHERE c.id = ?`,
+  comments: `${COMMENT_SELECT}
+    WHERE c.mint = :mint AND c.deleted_at IS NULL AND c.id < :before AND (:reply_to IS NULL OR c.reply_to = :reply_to)
+    ORDER BY c.id DESC LIMIT :limit`,
+  commentTotal: "SELECT COUNT(*) AS n FROM comments WHERE mint = ? AND deleted_at IS NULL",
+  softDeleteComment: "UPDATE comments SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+  recentDuplicate:
+    "SELECT 1 AS one FROM comments WHERE wallet = ? AND mint = ? AND body = ? AND created_at >= ? AND deleted_at IS NULL LIMIT 1",
+  claimMessage: "INSERT OR IGNORE INTO signed_messages (hash, ts) VALUES (?, ?)",
+  pruneMessages: "DELETE FROM signed_messages WHERE ts < ?",
+  isBacker: "SELECT 1 AS one FROM deposits WHERE backer = ? AND launch = ? LIMIT 1",
+  netTokens: `
+    SELECT COALESCE(SUM(CASE WHEN is_buy = 1 THEN CAST(token_amount AS INTEGER) ELSE -CAST(token_amount AS INTEGER) END), 0)
+      AS net
+    FROM trades WHERE trader = ? AND launch = ?`,
+  profile: "SELECT wallet, name, bio, avatar, created_at, updated_at FROM profiles WHERE wallet = ?",
+  profileOwnerByName: "SELECT wallet FROM profiles WHERE name_lower = ?",
+  upsertProfile: `
+    INSERT INTO profiles (wallet, name, name_lower, bio, avatar, created_at, updated_at)
+    VALUES (:wallet, :name, :name_lower, :bio, :avatar, :now, :now)
+    ON CONFLICT(wallet) DO UPDATE SET
+      name = excluded.name, name_lower = excluded.name_lower, bio = excluded.bio, avatar = excluded.avatar,
+      updated_at = excluded.updated_at`,
+  profilesIn: "SELECT wallet, name, avatar FROM profiles WHERE wallet IN (SELECT value FROM json_each(?))",
+  launchImageExists: "SELECT 1 AS one FROM launches WHERE image = ? LIMIT 1",
+
+  // ---------------- wallets / discovery ----------------
+  walletTrades: `SELECT :wallet AS wallet, ${WALLET_TRADE_AGG} FROM trades t WHERE t.trader = :wallet AND t.is_agent = 0`,
+  walletDeposits:
+    "SELECT launch, SUM(CAST(amount AS INTEGER)) AS amount, MIN(timestamp) AS first_ts FROM deposits WHERE backer = ? GROUP BY launch",
+  walletEventTotals: `
+    SELECT launch, type, SUM(CAST(sol_amount AS INTEGER)) AS amount FROM events
+    WHERE actor = ? AND type IN ('refund', 'backer_claim', 'creator_claim') GROUP BY launch, type`,
+  walletLaunches: `${LAUNCH_SELECT} WHERE l.creator = ? AND l.snapshot IS NOT NULL ORDER BY l.idx DESC`,
+  walletFirstSeen: `
+    SELECT MIN(ts) AS ts FROM (
+      SELECT MIN(timestamp) AS ts FROM events WHERE actor = :wallet
+      UNION ALL SELECT MIN(created_at) FROM comments WHERE wallet = :wallet
+      UNION ALL SELECT MIN(created_at) FROM launches WHERE creator = :wallet)`,
+  walletCommentCount: "SELECT COUNT(*) AS n FROM comments WHERE wallet = ? AND deleted_at IS NULL",
+  walletActivity: `${ACTIVITY_SELECT}
+    WHERE e.rowid IN (
+      SELECT rowid FROM events WHERE actor = :wallet AND timestamp < :before
+      UNION ALL
+      SELECT ev.rowid FROM events ev JOIN launches lc ON lc.address = ev.launch
+      WHERE ev.actor IS NULL AND lc.creator = :wallet AND ev.timestamp < :before)
+    ORDER BY e.slot DESC, e.rowid DESC LIMIT :limit`,
+  launchTraderAgg: `
+    SELECT t.trader AS wallet, ${WALLET_TRADE_AGG} FROM trades t
+    WHERE t.launch = :launch AND t.is_agent = 0 AND t.timestamp >= :since
+    GROUP BY t.trader ORDER BY volume DESC, trades DESC LIMIT :limit`,
+  traderBoard: `
+    SELECT t.trader AS wallet, ${WALLET_TRADE_AGG} FROM trades t
+    WHERE t.is_agent = 0 AND t.timestamp >= :since
+    GROUP BY t.trader ORDER BY volume DESC, trades DESC LIMIT :limit`,
+  launchWindowAgg: `
+    SELECT launch, COALESCE(SUM(CAST(fee AS INTEGER)), 0) AS fees, COALESCE(SUM(sol), 0) AS volume, COUNT(*) AS trades,
+      COUNT(DISTINCT CASE WHEN is_agent = 0 THEN trader END) AS traders
+    FROM trades WHERE timestamp >= ? GROUP BY launch`,
+  depositsByBacker: "SELECT backer, launch, SUM(CAST(amount AS INTEGER)) AS amount FROM deposits GROUP BY backer, launch",
+  searchLaunches: `${LAUNCH_SELECT}
+    WHERE l.snapshot IS NOT NULL AND (
+      lower(${LAUNCH_NAME}) LIKE :contains ESCAPE '\\' OR lower(${LAUNCH_SYMBOL}) LIKE :contains ESCAPE '\\'
+      OR substr(l.mint, 1, :raw_len) = :raw)
+    ORDER BY
+      CASE
+        WHEN lower(${LAUNCH_SYMBOL}) = :q OR lower(${LAUNCH_NAME}) = :q OR l.mint = :raw THEN 0
+        WHEN lower(${LAUNCH_SYMBOL}) LIKE :prefix ESCAPE '\\' OR lower(${LAUNCH_NAME}) LIKE :prefix ESCAPE '\\'
+          OR substr(l.mint, 1, :raw_len) = :raw THEN 1
+        ELSE 2
+      END,
+      l.idx DESC
+    LIMIT :limit`,
+  searchProfiles: `
+    SELECT wallet, name, avatar FROM profiles
+    WHERE name_lower LIKE :prefix ESCAPE '\\' OR substr(wallet, 1, :raw_len) = :raw
+    ORDER BY name_lower = :q DESC, length(name) ASC LIMIT :limit`,
+  searchWallets: `
+    SELECT DISTINCT e.actor AS wallet, p.name AS name, p.avatar AS avatar
+    FROM events e LEFT JOIN profiles p ON p.wallet = e.actor
+    WHERE e.actor >= :raw AND e.actor < :raw_end LIMIT :limit`,
 } as const;
 
 type Params = SQLInputValue[] | Record<string, SQLInputValue>;
@@ -328,12 +543,18 @@ function row<T>(stmt: StatementSync, params: Params = []): T | undefined {
 export class Store {
   private readonly db: DatabaseSync;
   private readonly stmts: Record<keyof typeof SQL, StatementSync>;
+  /** Bumped by every `wipe`, so derived caches can key on it. */
+  generation = 0;
 
   constructor(file: string) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     this.db = new DatabaseSync(file);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;");
     this.db.exec(SCHEMA);
+    for (const m of COLUMN_MIGRATIONS) {
+      const cols = this.db.prepare(`PRAGMA table_info(${m.table})`).all() as { name: string }[];
+      if (!cols.some((c) => c.name === m.column)) this.db.exec(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.type}`);
+    }
     const stmts: Partial<Record<keyof typeof SQL, StatementSync>> = {};
     for (const key of Object.keys(SQL) as (keyof typeof SQL)[]) stmts[key] = this.db.prepare(SQL[key]);
     this.stmts = stmts as Record<keyof typeof SQL, StatementSync>;
@@ -351,11 +572,12 @@ export class Store {
     }
   }
 
-  /** Drops every indexed row (used when the cluster genesis changes, e.g. a reset localnet). */
+  /** Drops every chain-derived row, comments included (used when the cluster genesis changes, e.g. a reset localnet). */
   wipe(): void {
     this.tx(() => {
       for (const t of DATA_TABLES) this.db.exec(`DELETE FROM ${t}`);
     });
+    this.generation += 1;
   }
 
   close(): void {
@@ -473,8 +695,8 @@ export class Store {
     this.stmts.setMetaError.run(retryAtMs, address);
   }
 
-  setHolders(address: string, count: number, atMs: number): void {
-    this.stmts.setHolders.run(count, atMs, address);
+  setHolders(address: string, count: number, topHolderPct: number | null, atMs: number): void {
+    this.stmts.setHolders.run(count, topHolderPct, atMs, address);
   }
 
   // ---------------- derived reads ----------------
@@ -502,8 +724,16 @@ export class Store {
     return row<{ price_sol: number }>(this.stmts.firstPrice, [launch])?.price_sol ?? null;
   }
 
-  trades(launch: string, beforeTs: number, limit: number, agentOnly = false): TradeDbRow[] {
-    return rows<TradeDbRow>(agentOnly ? this.stmts.launchAgentTrades : this.stmts.trades, [launch, beforeTs, limit]);
+  trades(launch: string, f: TradeFilter): TradeDbRow[] {
+    return rows<TradeDbRow>(this.stmts.trades, {
+      launch,
+      before: f.beforeTs,
+      limit: f.limit,
+      agent: f.agentOnly ? 1 : 0,
+      is_buy: f.side === null ? null : f.side === "buy" ? 1 : 0,
+      min_sol: f.minSol,
+      trader: f.trader,
+    });
   }
 
   candlePoints(launch: string): CandlePointDbRow[] {
@@ -529,4 +759,164 @@ export class Store {
   activityEvent(signature: string, eventIndex: number): ActivityDbRow | undefined {
     return row<ActivityDbRow>(this.stmts.activityOne, [signature, eventIndex]);
   }
+
+  // ---------------- comments ----------------
+
+  /**
+   * Records a signed message hash; false when it was already used (replay). Hashes older than
+   * `pruneBeforeSecs` are dropped first — their timestamps are outside the accepted window anyway.
+   */
+  claimSignedMessage(hash: string, ts: number, pruneBeforeSecs: number): boolean {
+    this.stmts.pruneMessages.run(pruneBeforeSecs);
+    return this.stmts.claimMessage.run(hash, ts).changes > 0;
+  }
+
+  insertComment(c: NewCommentRow): number {
+    return Number(this.stmts.insertComment.run(c).lastInsertRowid);
+  }
+
+  comment(id: number): CommentDbRow | undefined {
+    return row<CommentDbRow>(this.stmts.commentById, [id]);
+  }
+
+  /** Visible comments of a launch, newest first; `replyTo` narrows to the replies of one comment. */
+  comments(mint: string, beforeId: number, limit: number, replyTo: number | null): CommentDbRow[] {
+    return rows<CommentDbRow>(this.stmts.comments, { mint, before: beforeId, limit, reply_to: replyTo });
+  }
+
+  commentTotal(mint: string): number {
+    return row<{ n: number }>(this.stmts.commentTotal, [mint])?.n ?? 0;
+  }
+
+  /** Soft delete; false when the comment was already deleted (or never existed). */
+  softDeleteComment(id: number, nowSecs: number): boolean {
+    return this.stmts.softDeleteComment.run(nowSecs, id).changes > 0;
+  }
+
+  hasRecentDuplicate(wallet: string, mint: string, body: string, sinceSecs: number): boolean {
+    return row(this.stmts.recentDuplicate, [wallet, mint, body, sinceSecs]) !== undefined;
+  }
+
+  isBacker(wallet: string, launch: string): boolean {
+    return row(this.stmts.isBacker, [wallet, launch]) !== undefined;
+  }
+
+  /** Tokens bought minus tokens sold on the curve (base units). */
+  netTokens(wallet: string, launch: string): number {
+    return row<{ net: number }>(this.stmts.netTokens, [wallet, launch])?.net ?? 0;
+  }
+
+  // ---------------- profiles ----------------
+
+  profile(wallet: string): ProfileDbRow | undefined {
+    return row<ProfileDbRow>(this.stmts.profile, [wallet]);
+  }
+
+  /** Wallet owning a (case-insensitive) display name. */
+  profileOwnerByName(nameLower: string): string | null {
+    return row<{ wallet: string }>(this.stmts.profileOwnerByName, [nameLower])?.wallet ?? null;
+  }
+
+  upsertProfile(p: { wallet: string; name: string | null; bio: string | null; avatar: string | null; now: number }): void {
+    this.stmts.upsertProfile.run({ ...p, name_lower: p.name?.toLowerCase() ?? null });
+  }
+
+  profilesOf(wallets: string[]): Map<string, ProfileRef> {
+    const out = new Map<string, ProfileRef>();
+    if (wallets.length === 0) return out;
+    for (const p of rows<ProfileRef>(this.stmts.profilesIn, [JSON.stringify([...new Set(wallets)])])) out.set(p.wallet, p);
+    return out;
+  }
+
+  isLaunchImage(url: string): boolean {
+    return row(this.stmts.launchImageExists, [url]) !== undefined;
+  }
+
+  // ---------------- wallets ----------------
+
+  walletTrades(wallet: string): WalletTradeAggDbRow {
+    return row<WalletTradeAggDbRow>(this.stmts.walletTrades, { wallet })!;
+  }
+
+  /** Lamports deposited per launch. */
+  walletDeposits(wallet: string): { launch: string; amount: number; first_ts: number }[] {
+    return rows(this.stmts.walletDeposits, [wallet]);
+  }
+
+  /** Lamports refunded / claimed per launch and event type. */
+  walletEventTotals(wallet: string): { launch: string; type: "refund" | "backer_claim" | "creator_claim"; amount: number }[] {
+    return rows(this.stmts.walletEventTotals, [wallet]);
+  }
+
+  walletLaunches(wallet: string): LaunchDbRow[] {
+    return rows<LaunchDbRow>(this.stmts.walletLaunches, [wallet]);
+  }
+
+  walletFirstSeen(wallet: string): number | null {
+    return row<{ ts: number | null }>(this.stmts.walletFirstSeen, { wallet })?.ts ?? null;
+  }
+
+  walletCommentCount(wallet: string): number {
+    return row<{ n: number }>(this.stmts.walletCommentCount, [wallet])?.n ?? 0;
+  }
+
+  /** Events the wallet acted in, plus actor-less events (launch, cancel) of launches it created. */
+  walletActivity(wallet: string, beforeTs: number, limit: number): ActivityDbRow[] {
+    return rows<ActivityDbRow>(this.stmts.walletActivity, { wallet, before: beforeTs, limit });
+  }
+
+  // ---------------- discovery ----------------
+
+  /** Non-agent traders of one launch since `sinceSecs`, by volume. */
+  launchTraderStats(launch: string, sinceSecs: number, limit: number): WalletTradeAggDbRow[] {
+    return rows<WalletTradeAggDbRow>(this.stmts.launchTraderAgg, { launch, since: sinceSecs, limit });
+  }
+
+  /** Non-agent traders across all launches since `sinceSecs`, by volume. */
+  traderBoard(sinceSecs: number, limit: number): WalletTradeAggDbRow[] {
+    return rows<WalletTradeAggDbRow>(this.stmts.traderBoard, { since: sinceSecs, limit });
+  }
+
+  /** Per-launch fees (lamports), volume (SOL), trades and distinct traders since `sinceSecs`. */
+  launchWindowAggregates(sinceSecs: number): Map<string, LaunchWindowAggDbRow> {
+    return new Map(rows<LaunchWindowAggDbRow>(this.stmts.launchWindowAgg, [sinceSecs]).map((r) => [r.launch, r]));
+  }
+
+  /** Lamports deposited per (backer, launch). */
+  depositsByBacker(): { backer: string; launch: string; amount: number }[] {
+    return rows(this.stmts.depositsByBacker);
+  }
+
+  /** Launches by name/symbol substring or mint prefix (`mintPrefix` null skips the mint match). */
+  searchLaunches(text: string, mintPrefix: string | null, limit: number): LaunchDbRow[] {
+    const like = escapeLike(text);
+    return rows<LaunchDbRow>(this.stmts.searchLaunches, {
+      q: text,
+      contains: `%${like}%`,
+      prefix: `${like}%`,
+      raw: mintPrefix,
+      raw_len: mintPrefix?.length ?? null,
+      limit,
+    });
+  }
+
+  /** Profiles by name prefix or wallet prefix (`walletPrefix` null skips the wallet match). */
+  searchProfiles(text: string, walletPrefix: string | null, limit: number): ProfileRef[] {
+    return rows<ProfileRef>(this.stmts.searchProfiles, {
+      q: text,
+      prefix: `${escapeLike(text)}%`,
+      raw: walletPrefix,
+      raw_len: walletPrefix?.length ?? null,
+      limit,
+    });
+  }
+
+  /** Wallets seen on chain (any indexed event) whose address starts with `prefix` (case-sensitive). */
+  searchWallets(prefix: string, limit: number): ProfileRef[] {
+    return rows<ProfileRef>(this.stmts.searchWallets, { raw: prefix, raw_end: `${prefix}\u007f`, limit });
+  }
+}
+
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
 }

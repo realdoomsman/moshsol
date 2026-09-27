@@ -8,6 +8,8 @@ export interface HolderSet {
   holders: HolderRow[];
   /** Distinct non-program owners with a non-zero balance. */
   count: number;
+  /** Largest non-program owner's % of total supply (0 when nobody else holds). */
+  topPct: number;
   at: number;
 }
 
@@ -120,7 +122,8 @@ export class Holders {
       });
     }
     holders.sort((a, b) => (BigInt(b.amount) > BigInt(a.amount) ? 1 : BigInt(b.amount) < BigInt(a.amount) ? -1 : 0));
-    const set: HolderSet = { holders, count, at: Date.now() };
+    const topPct = holders.find((h) => h.label === null)?.pct ?? 0;
+    const set: HolderSet = { holders, count, topPct, at: Date.now() };
     this.cache.set(mint, set);
     return set;
   }

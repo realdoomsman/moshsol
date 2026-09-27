@@ -32,7 +32,12 @@ const sync = new ChainSync(store, client, hub, holders, app.log.child({ module: 
   wsUrl: config.wsUrl,
   ...files,
 });
-registerApi(app, { store, client, sync, hub }, files);
+registerApi(app, { store, client, sync, hub, holders }, {
+  ...files,
+  adminToken: config.adminToken,
+  commentLimitPerMin: config.commentLimitPerMin,
+  socialIpLimitPerMin: config.socialIpLimitPerMin,
+});
 
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
@@ -64,6 +69,9 @@ app.log.info(
     publicUrl: config.publicUrl,
     rateLimitPerMin: config.rateLimitPerMin,
     uploadLimitPerMin: config.uploadLimitPerMin,
+    commentLimitPerMin: config.commentLimitPerMin,
+    socialIpLimitPerMin: config.socialIpLimitPerMin,
+    moderation: config.adminToken !== null,
   },
   "indexer listening",
 );

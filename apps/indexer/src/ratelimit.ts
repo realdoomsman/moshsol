@@ -2,8 +2,8 @@ import type { FastifyInstance } from "fastify";
 
 const WINDOW_MS = 60_000;
 
-/** Fixed one-minute request windows per client IP. */
-class Limiter {
+/** Fixed one-minute request windows per key (client IP, wallet, …). */
+export class Limiter {
   private readonly windows = new Map<string, { count: number; resetAt: number }>();
 
   constructor(readonly perMin: number) {}
@@ -26,8 +26,8 @@ class Limiter {
 }
 
 /**
- * Per-IP limits: a generous budget across every route (0 disables) and a tight one for
- * `POST /api/upload` (writes files to disk). Over-budget requests get 429 + `Retry-After`.
+ * Per-IP limits: a generous budget across every route (0 disables) and a tight one for the uploads
+ * (`POST /api/upload`, `POST /api/upload/image`: write files to disk). Over-budget requests get 429 + `Retry-After`.
  */
 export function registerRateLimits(app: FastifyInstance, opts: { perMin: number; uploadPerMin: number }): void {
   const all = opts.perMin > 0 ? new Limiter(opts.perMin) : null;
@@ -44,7 +44,7 @@ export function registerRateLimits(app: FastifyInstance, opts: { perMin: number;
 
   app.addHook("onRequest", async (req, reply) => {
     const now = Date.now();
-    const isUpload = req.method === "POST" && req.routeOptions.url === "/api/upload";
+    const isUpload = req.method === "POST" && req.routeOptions.url?.startsWith("/api/upload") === true;
     for (const limiter of isUpload ? [all, upload] : [all]) {
       if (!limiter) continue;
       const over = limiter.hit(req.ip, now);

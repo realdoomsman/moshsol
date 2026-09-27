@@ -12,7 +12,7 @@ import { PublicKey } from "@solana/web3.js";
 import type { FastifyInstance } from "fastify";
 import type { LaunchDbRow, Store, TradeDbRow } from "./db";
 import { parsePubkey, ValidationError } from "./sanitize";
-import { allSummaries, publicSummary, summaryOf, type RankedSummary } from "./summaries";
+import { allSummaries, summaryOf } from "./summaries";
 import { activityFromRow, type ChainSync } from "./sync";
 import type { Candle, LaunchSummary, TradeRow } from "./types";
 
@@ -24,13 +24,16 @@ export interface RouteDeps {
   sync: ChainSync;
 }
 
-type Query = Record<string, string | undefined>;
+export type Query = Record<string, string | undefined>;
 
 const STATUSES = ["raising", "live", "refunding", "all"] as const;
 const SORTS = ["new", "trending", "volume", "mcap", "raised"] as const;
 const TIMEFRAMES = [60, 300, 900, 3600, 86400] as const;
+/** Look-back windows (seconds; 0 = all time) shared by trader stats and leaderboards. */
+export const WINDOW_SECS = { "24h": 86_400, "7d": 604_800, all: 0 } as const;
+export const WINDOWS = Object.keys(WINDOW_SECS) as (keyof typeof WINDOW_SECS)[];
 
-function intQuery(q: Query, key: string, fallback: number, max: number): number {
+export function intQuery(q: Query, key: string, fallback: number, max: number): number {
   const raw = q[key];
   if (raw === undefined || raw === "") return fallback;
   const n = Number(raw);
@@ -38,14 +41,19 @@ function intQuery(q: Query, key: string, fallback: number, max: number): number 
   return Math.min(n, max);
 }
 
-function oneOf<T extends string | number>(allowed: readonly T[], raw: string | undefined, fallback: T, key: string): T {
+export function oneOf<T extends string | number>(
+  allowed: readonly T[],
+  raw: string | undefined,
+  fallback: T,
+  key: string,
+): T {
   if (raw === undefined || raw === "") return fallback;
   const hit = allowed.find((a) => String(a) === raw);
   if (hit === undefined) throw new ValidationError(`${key} must be one of ${allowed.join(", ")}`);
   return hit;
 }
 
-function pubkeyParam(raw: string, label: string): PublicKey {
+export function pubkeyParam(raw: string, label: string): PublicKey {
   const pk = parsePubkey(raw);
   if (!pk) throw new ValidationError(`invalid ${label}`);
   return pk;
@@ -77,8 +85,8 @@ const cmpBig = (a: string, b: string) => {
   return x > y ? 1 : x < y ? -1 : 0;
 };
 
-function sortSummaries(list: RankedSummary[], sort: (typeof SORTS)[number]): void {
-  const recency = (s: RankedSummary) => s.lastTradeAt ?? s.createdAt;
+function sortSummaries(list: LaunchSummary[], sort: (typeof SORTS)[number]): void {
+  const recency = (s: LaunchSummary) => s.lastTradeAt ?? s.createdAt;
   switch (sort) {
     case "new":
       list.sort((a, b) => b.createdAt - a.createdAt || b.index - a.index);
@@ -131,15 +139,17 @@ function buildCandles(row: LaunchDbRow, points: { timestamp: number; price_sol: 
   return out;
 }
 
+/** Launch row by mint (404 unless it has an on-chain snapshot). */
+export function requireLaunch(store: Store, mintRaw: string): LaunchDbRow & { snapshot: string } {
+  const mint = pubkeyParam(mintRaw, "mint");
+  const row = store.launchByMint(mint.toBase58());
+  if (!row?.snapshot) throw new NotFoundError("launch not found");
+  return row as LaunchDbRow & { snapshot: string };
+}
+
 export function registerRoutes(app: FastifyInstance, { store, client, sync }: RouteDeps): void {
   const connection = client.connection;
-
-  const launchRow = (mintRaw: string): LaunchDbRow & { snapshot: string } => {
-    const mint = pubkeyParam(mintRaw, "mint");
-    const row = store.launchByMint(mint.toBase58());
-    if (!row?.snapshot) throw new NotFoundError("launch not found");
-    return row as LaunchDbRow & { snapshot: string };
-  };
+  const launchRow = (mintRaw: string) => requireLaunch(store, mintRaw);
 
   app.get("/api/health", async (_req, reply) => {
     const h = await sync.health();
@@ -204,7 +214,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
       );
     }
     sortSummaries(list, sort);
-    return { launches: list.slice(offset, offset + limit).map(publicSummary), total: list.length };
+    return { launches: list.slice(offset, offset + limit), total: list.length };
   });
 
   app.get<{ Params: { mint: string } }>("/api/launches/:mint", async (req) => summaryOf(store, launchRow(req.params.mint)));
@@ -214,7 +224,48 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     const limit = intQuery(req.query, "limit", 100, 500);
     const before = intQuery(req.query, "before", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
     const agentOnly = oneOf(["0", "1"] as const, req.query.agent, "0", "agent") === "1";
-    return { trades: store.trades(row.address, before, limit, agentOnly).map(tradeRow) };
+    const side = oneOf(["buy", "sell", "all"] as const, req.query.side, "all", "side");
+    let minSol: number | null = null;
+    if (req.query.minSol !== undefined && req.query.minSol !== "") {
+      minSol = Number(req.query.minSol);
+      if (!Number.isFinite(minSol) || minSol < 0) throw new ValidationError("minSol must be a non-negative number");
+    }
+    const trader = req.query.trader ? pubkeyParam(req.query.trader, "trader").toBase58() : null;
+    const trades = store.trades(row.address, {
+      beforeTs: before,
+      limit,
+      agentOnly,
+      side: side === "all" ? null : side,
+      minSol,
+      trader,
+    });
+    return { trades: trades.map(tradeRow) };
+  });
+
+  app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/traders", async (req) => {
+    const row = launchRow(req.params.mint);
+    const window = oneOf(WINDOWS, req.query.window, "24h", "window");
+    const limit = intQuery(req.query, "limit", 20, 100);
+    const since = window === "all" ? 0 : Math.floor(Date.now() / 1000) - WINDOW_SECS[window];
+    const stats = store.launchTraderStats(row.address, since, limit);
+    const profiles = store.profilesOf(stats.map((s) => s.wallet));
+    return {
+      window,
+      traders: stats.map((s) => ({
+        wallet: s.wallet,
+        name: profiles.get(s.wallet)?.name ?? null,
+        avatar: profiles.get(s.wallet)?.avatar ?? null,
+        trades: s.trades,
+        buys: s.buys,
+        sells: s.trades - s.buys,
+        buySol: s.buy_sol,
+        sellSol: s.sell_sol,
+        volumeSol: s.volume,
+        netSol: s.sell_sol - s.buy_sol,
+        netTokens: String(s.net_tokens),
+        lastTradeAt: s.last_ts,
+      })),
+    };
   });
 
   app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/candles", async (req) => {
@@ -286,7 +337,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
       const share = (v: string) => (raised > 0n ? (BigInt(v) * deposited) / raised : 0n);
       const failedRaise = launch.status === "raising" && now >= launch.raiseDeadline && raised < BigInt(launch.raiseMin);
       backed.push({
-        launch: publicSummary(launch),
+        launch,
         deposited: deposited.toString(),
         feesClaimed: feesClaimed.toString(),
         claimable: backerClaimable(deposited, BigInt(launch.accFeePerShare), feesClaimed).toString(),
@@ -300,7 +351,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     const created = [...byAddress.values()]
       .filter((l) => l.creator === wallet)
       .map((l) => ({
-        launch: publicSummary(l),
+        launch: l,
         creatorFeesUnclaimed: l.creatorFeesUnclaimed,
         creatorFeesClaimed: l.creatorFeesClaimed,
       }));
@@ -318,7 +369,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     for (const [mint, amount] of balances) {
       const launch = byAddress.get(launchPda(new PublicKey(mint), client.programId).toBase58());
       if (!launch) continue;
-      holdings.push({ launch: publicSummary(launch), amount: amount.toString(), valueSol: tokensToUi(amount) * launch.priceSol });
+      holdings.push({ launch, amount: amount.toString(), valueSol: tokensToUi(amount) * launch.priceSol });
     }
     holdings.sort((a, b) => b.valueSol - a.valueSol);
     return { backed, created, holdings };

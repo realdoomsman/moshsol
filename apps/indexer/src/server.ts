@@ -5,10 +5,13 @@ import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, { LogController, type FastifyInstance } from "fastify";
+import { registerDiscoveryRoutes } from "./discovery";
+import type { Holders } from "./holders";
 import type { Hub } from "./hub";
 import { registerRateLimits } from "./ratelimit";
 import { NotFoundError, registerRoutes, type RouteDeps } from "./routes";
-import { ValidationError } from "./sanitize";
+import { HttpError, ValidationError } from "./sanitize";
+import { registerSocialRoutes } from "./social";
 import { MAX_IMAGE_BYTES, registerUpload } from "./upload";
 
 export interface ServerOptions {
@@ -16,7 +19,8 @@ export interface ServerOptions {
   publicUrl: string;
   rateLimitPerMin: number;
   uploadLimitPerMin: number;
-  trustProxy: boolean;
+  /** X-Forwarded-For trust: `true` = every hop, a string = comma-separated trusted proxy addresses/CIDRs/keywords. */
+  trustProxy: boolean | string;
 }
 
 const statusOf = (err: unknown): number => {
@@ -43,15 +47,17 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
 
   app.setErrorHandler((err, req, reply) => {
     const status = statusOf(err);
-    if (status >= 500) req.log.error({ err, url: req.url }, "request failed");
-    const message = status >= 500 || !(err instanceof Error) ? "internal server error" : err.message;
+    // HttpError is thrown on purpose (e.g. 503 "moderation disabled"): its message is safe to show at any status.
+    const intended = err instanceof HttpError;
+    if (status >= 500 && !intended) req.log.error({ err, url: req.url }, "request failed");
+    const message = intended || (status < 500 && err instanceof Error) ? err.message : "internal server error";
     void reply.status(status).send({ error: message });
   });
   app.setNotFoundHandler((_req, reply) => {
     void reply.status(404).send({ error: "not found" });
   });
 
-  await app.register(cors, { origin: "*", methods: ["GET", "POST", "OPTIONS"] });
+  await app.register(cors, { origin: "*", methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] });
   // After CORS so 429s still carry Access-Control-Allow-Origin and browsers can read them.
   registerRateLimits(app, { perMin: opts.rateLimitPerMin, uploadPerMin: opts.uploadLimitPerMin });
   await app.register(multipart, {
@@ -78,13 +84,19 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
   return app;
 }
 
-/** Registers `/ws`, the JSON API and the upload endpoint. */
+/** Registers `/ws`, the JSON API (chain data, social, discovery) and the upload endpoints. */
 export function registerApi(
   app: FastifyInstance,
-  deps: RouteDeps & { hub: Hub },
-  opts: Pick<ServerOptions, "filesDir" | "publicUrl">,
+  deps: RouteDeps & { hub: Hub; holders: Holders },
+  opts: Pick<ServerOptions, "filesDir" | "publicUrl"> & {
+    adminToken: string | null;
+    commentLimitPerMin: number;
+    socialIpLimitPerMin: number;
+  },
 ): void {
   app.get("/ws", { websocket: true }, (socket) => deps.hub.add(socket));
   registerRoutes(app, deps);
+  registerSocialRoutes(app, { ...opts, store: deps.store, hub: deps.hub, holders: deps.holders });
+  registerDiscoveryRoutes(app, { store: deps.store });
   registerUpload(app, opts);
 }

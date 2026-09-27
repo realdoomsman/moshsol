@@ -653,7 +653,8 @@ export class ChainSync {
       if (row.status !== "live") continue;
       const lastTradeMs = (aggs.get(row.address)?.last_ts ?? row.launch_ts ?? 0) * 1000;
       const fresh = now - row.holders_at < this.opts.holdersTtlMs || lastTradeMs < row.holders_at;
-      if (row.holders_at !== 0 && fresh) continue;
+      // top_holder_pct is null on rows loaded before that column existed: refresh them once.
+      if (row.holders_at !== 0 && row.top_holder_pct !== null && fresh) continue;
       // Holder counts are best-effort decoration; an RPC hiccup here must never fail the sync loop.
       await this.updateHolders(row.mint, row.address).catch((err: unknown) => {
         this.log.warn({ mint: row.mint, error: String((err as Error)?.message ?? err) }, "holders refresh failed");
@@ -661,13 +662,13 @@ export class ChainSync {
     }
   }
 
-  /** Loads holders for a launch (30s cache) and persists the count; broadcasts when it changed. */
+  /** Loads holders for a launch (30s cache) and persists count + top holder share; broadcasts when either changed. */
   async updateHolders(mint: string, address: string): Promise<HolderSet> {
     const set = await this.holders.get(mint, address);
     const row = this.store.launch(address);
     if (!row || row.holders_at >= set.at) return set;
-    this.store.setHolders(address, set.count, set.at);
-    if (row.holders !== set.count) this.broadcastLaunch(address);
+    this.store.setHolders(address, set.count, set.topPct, set.at);
+    if (row.holders !== set.count || row.top_holder_pct !== set.topPct) this.broadcastLaunch(address);
     return set;
   }
 

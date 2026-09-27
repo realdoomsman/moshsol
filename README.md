@@ -123,16 +123,20 @@ Indexer (`apps/indexer`):
 | `PORT`, `HOST` | `8787`, `127.0.0.1` | HTTP API + `/ws` |
 | `RPC_URL` | `http://127.0.0.1:8899` | |
 | `WS_URL` | RPC port + 1 | `logsSubscribe`; reconnects with backoff (1 s → 30 s), the 4 s poller covers gaps |
-| `DB_PATH` | `apps/indexer/data/indexer.db` | SQLite (WAL). Safe to delete while stopped: the next start re-indexes |
+| `DB_PATH` | `apps/indexer/data/indexer.db` | SQLite (WAL). Chain data re-indexes by itself, but the file also holds comments and profiles — deleting it loses those |
 | `FILES_DIR` | `apps/indexer/data/files` | Uploaded images + metadata JSON |
 | `PUBLIC_URL` | `http://127.0.0.1:$PORT` | Base of the URIs stored on-chain; must be reachable by browsers and wallets |
 | `RATE_LIMIT_PER_MIN` | `1200` | Per-IP requests per minute across all routes (`0` = off); 429 + `Retry-After` |
-| `UPLOAD_LIMIT_PER_MIN` | `20` | Per-IP `POST /api/upload` per minute (`0` = off) |
-| `TRUST_PROXY` | off | `1` behind a reverse proxy, so limits apply to `X-Forwarded-For` |
+| `UPLOAD_LIMIT_PER_MIN` | `20` | Per-IP `POST /api/upload` + `/api/upload/image` per minute (`0` = off) |
+| `COMMENT_LIMIT_PER_MIN` | `5` | Comments per wallet per minute (`0` = off) |
+| `SOCIAL_IP_LIMIT_PER_MIN` | `20` | Signed writes (comments, profile updates) per IP per minute (`0` = off) |
+| `ADMIN_TOKEN` | unset | Enables comment moderation (`DELETE /api/comments/:id` with header `x-admin-token`); unset = disabled |
+| `TRUST_PROXY` | off | Behind a reverse proxy, so per-IP limits see the client from `X-Forwarded-For`: a comma list of trusted proxy IPs/CIDRs or `loopback`/`linklocal`/`uniquelocal` (clients can't spoof), or `1` = trust every hop |
 | `LOG_LEVEL` | `info` | `debug` adds poller catch-ups and websocket retry attempts |
 
-`GET /api/health` → `{ ok, slot, lastIndexedSlot, lagSlots, wsConnected, genesisHash }` (503 when the RPC is
-unreachable or the first sync hasn't finished).
+Every endpoint, the signed-message scheme for comments/profiles, rate limits and WebSocket messages are documented in
+[`apps/indexer/API.md`](apps/indexer/API.md). `GET /api/health` → `{ ok, slot, lastIndexedSlot, lagSlots, wsConnected,
+genesisHash }` (503 when the RPC is unreachable or the first sync hasn't finished).
 
 Agent (`apps/agent`):
 
@@ -173,9 +177,9 @@ between transactions), `SIM_TRADERS` (10), `SIM_BACKERS` (6), `SIM_MEDIAN_TRADE_
   `curl -s -X POST -H "content-type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getHealth\"}" http://127.0.0.1:8899`.
 - **Chain reset.** After `pnpm localnet --reset` / `pnpm reset:localnet` the genesis hash changes. The indexer
   checks it at start, every 30 s and after every RPC or websocket outage; on a mismatch (or when its cursor
-  vanished from retained history) it wipes its DB, re-indexes and pushes `{ type: "reset" }` so open pages
-  refetch. Re-run `pnpm setup:localnet` on the new chain (`reset:localnet` does). Wallets keep their keys but
-  have 0 SOL on the new chain.
+  vanished from retained history) it wipes its DB (comments included; profiles are kept), re-indexes and pushes
+  `{ type: "reset" }` so open pages refetch. Re-run `pnpm setup:localnet` on the new chain (`reset:localnet` does).
+  Wallets keep their keys but have 0 SOL on the new chain.
 - **Validator restarts.** The indexer reconnects its websocket with backoff and the agent retries with
   backoff; `GET :8787/api/health` shows `wsConnected` and `lagSlots` (≈0–10 when healthy).
 - **History gaps.** `solana-test-validator` only keeps `--limit-ledger-size` shreds (its default, 10,000, is
@@ -211,7 +215,7 @@ failure, and watch paths so a push only rebuilds what it touched (`apps/<service
 
 | Service | Variables | Healthcheck | Notes |
 |---|---|---|---|
-| `indexer` | `RPC_URL`, `WS_URL`, `PUBLIC_URL` (its own Railway domain), `PORT=8787`, `POLL_MS=8000`, `FULL_REFRESH_MS=30000`, `HOLDERS_TTL_MS=120000`, `CHAIN_CHECK_MS=60000` | `/api/health` | Volume at `/data` (SQLite DB + uploaded images/metadata). |
+| `indexer` | `RPC_URL`, `WS_URL`, `PUBLIC_URL` (its own Railway domain), `PORT=8787`, `POLL_MS=8000`, `FULL_REFRESH_MS=30000`, `HOLDERS_TTL_MS=120000`, `CHAIN_CHECK_MS=60000`, `ADMIN_TOKEN` (secret, comment moderation), `TRUST_PROXY=uniquelocal` | `/api/health` | Volume at `/data` (SQLite DB with comments/profiles + uploaded images/metadata). |
 | `agent` | `RPC_URL`, `AGENT_KEYPAIR_JSON` (secret), `PORT=8788`, `POLL_MS=10000` | `/status` | Keep ~0.1+ SOL on the agent key for fees. |
 | `web` | `NEXT_PUBLIC_CLUSTER=devnet`, `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_INDEXER_URL`, `NEXT_PUBLIC_AGENT_URL`, `NEXT_PUBLIC_SITE_URL`, `PORT=3000` | `/` | Pages are server-rendered with live indexer data. `NEXT_PUBLIC_*` are baked in at build time — redeploy after changing them. |
 
