@@ -1,4 +1,4 @@
-import { Skeleton } from "../ui/primitives";
+import { Skeleton } from "../legacy/primitives";
 
 /** Placeholder with the live launch page's geometry (header, chart, stats, tabs · trade rail). */
 export function LaunchSkeleton() {

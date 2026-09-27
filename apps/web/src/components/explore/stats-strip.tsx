@@ -5,8 +5,8 @@ import { Bot, Coins, Rocket, TrendingUp, Users } from "lucide-react";
 import { fmtSolValue } from "@/lib/format";
 import { useStats } from "@/lib/queries";
 import { cn } from "../ui/cn";
-import { AnimatedNumber } from "../ui/interactive";
-import { Skeleton } from "../ui/primitives";
+import { AnimatedNumber } from "../legacy/interactive";
+import { Skeleton } from "../legacy/primitives";
 
 const int = (n: number) => (n >= 10_000 ? compact(n, 1) : Math.round(n).toLocaleString("en-US"));
 

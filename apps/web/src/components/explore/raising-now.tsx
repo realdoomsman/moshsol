@@ -8,8 +8,8 @@ import { usePlatform } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { RaiseBar } from "../launch/raise-bar";
 import { cn } from "../ui/cn";
-import { Countdown, TokenAvatar } from "../ui/interactive";
-import { PhasePill } from "../ui/status";
+import { Countdown, TokenAvatar } from "../legacy/interactive";
+import { PhasePill } from "../legacy/status";
 
 /** Horizontal raise card: identity on the left, a big progress bar and the call to action on the right. */
 function RaiseSpotlight({

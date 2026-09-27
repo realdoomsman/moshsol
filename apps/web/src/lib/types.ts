@@ -216,6 +216,44 @@ export interface AgentStatus {
   decisions: AgentDecision[];
 }
 
+/** `GET /api/health` (the same body comes back with a 503 while unhealthy). */
+export interface IndexerHealth {
+  ok: boolean;
+  slot: number | null;
+  programId: string;
+  lastIndexedSlot: number | null;
+  lagSlots: number | null;
+  wsConnected: boolean;
+  genesisHash: string | null;
+  error?: string;
+}
+
+/** `GET /api/search?q=`: up to 8 launches and 8 wallets. */
+export interface SearchLaunch {
+  mint: string;
+  name: string;
+  symbol: string;
+  image: string | null;
+  status: LaunchStatus;
+  priceSol: number;
+  marketCapSol: number;
+  raised: string;
+  holders: number;
+  creatorName: string | null;
+}
+
+export interface SearchUser {
+  wallet: string;
+  name: string | null;
+  avatar: string | null;
+}
+
+export interface SearchResult {
+  query: string;
+  launches: SearchLaunch[];
+  users: SearchUser[];
+}
+
 export type WsMessage =
   | { type: "event"; event: ActivityEvent }
   | { type: "launch"; launch: LaunchSummary }

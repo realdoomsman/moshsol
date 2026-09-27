@@ -17,10 +17,10 @@ import {
   type PagedFeed,
 } from "@/lib/queries";
 import type { LaunchSummary, TradeRow } from "@/lib/types";
-import { Button } from "../ui/button";
+import { Button } from "../legacy/button";
 import { cn } from "../ui/cn";
-import { AddressLink } from "../ui/interactive";
-import { Badge, EmptyState, Meter, Skeleton } from "../ui/primitives";
+import { AddressLink } from "../legacy/interactive";
+import { Badge, EmptyState, Meter, Skeleton } from "../legacy/primitives";
 
 const HOLDERS_PAGE = 25;
 const BACKERS_PAGE = 50;

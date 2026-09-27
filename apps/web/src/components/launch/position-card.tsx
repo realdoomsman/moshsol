@@ -9,8 +9,8 @@ import { useBackerAccount, useMoshClient, useTokenBalance } from "@/lib/chain";
 import { fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
 import { useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
-import { Button } from "../ui/button";
-import { Card, CardHeader, Row, Skeleton } from "../ui/primitives";
+import { Button } from "../legacy/button";
+import { Card, CardHeader, Row, Skeleton } from "../legacy/primitives";
 
 export function PositionCard({ launch: l }: { launch: LaunchSummary }) {
   const { publicKey } = useWallet();

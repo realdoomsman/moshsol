@@ -29,8 +29,8 @@ import { useLocalStorage, useMounted, useNow } from "@/lib/hooks";
 import { useCandles, useTrades } from "@/lib/queries";
 import type { Candle, LaunchSummary } from "@/lib/types";
 import { cn } from "../ui/cn";
-import { Segmented } from "../ui/interactive";
-import { EmptyState, Skeleton } from "../ui/primitives";
+import { Segmented } from "../legacy/interactive";
+import { EmptyState, Skeleton } from "../legacy/primitives";
 
 const TIMEFRAMES: { value: string; label: string; tf: Timeframe }[] = [
   { value: "60", label: "1m", tf: 60 },

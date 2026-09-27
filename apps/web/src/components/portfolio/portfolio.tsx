@@ -14,11 +14,11 @@ import { phaseOf } from "@/lib/launch";
 import { usePortfolio } from "@/lib/queries";
 import { useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
-import { Button, ButtonLink } from "../ui/button";
+import { Button, ButtonLink } from "../legacy/button";
 import { cn } from "../ui/cn";
-import { AnimatedNumber, TokenAvatar } from "../ui/interactive";
-import { Card, CardHeader, EmptyState, Skeleton } from "../ui/primitives";
-import { ChangeText, PhasePill } from "../ui/status";
+import { AnimatedNumber, TokenAvatar } from "../legacy/interactive";
+import { Card, CardHeader, EmptyState, Skeleton } from "../legacy/primitives";
+import { ChangeText, PhasePill } from "../legacy/status";
 
 /** Claim instructions per transaction; each claim is small, this keeps well inside size/CU limits. */
 const CLAIMS_PER_TX = 6;

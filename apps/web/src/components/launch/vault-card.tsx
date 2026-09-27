@@ -8,8 +8,8 @@ import { useAgentStatus } from "@/lib/queries";
 import type { AgentZones } from "@holdfast/sdk";
 import type { LaunchSummary } from "@/lib/types";
 import { cn } from "../ui/cn";
-import { Hint } from "../ui/interactive";
-import { Card, CardHeader, Meter, Row } from "../ui/primitives";
+import { Hint } from "../legacy/interactive";
+import { Card, CardHeader, Meter, Row } from "../legacy/primitives";
 
 /** Price track showing where spot sits relative to the agent buy/sell thresholds. */
 function BandTrack({ price, zones }: { price: number; zones: AgentZones }) {

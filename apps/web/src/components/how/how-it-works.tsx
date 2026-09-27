@@ -17,8 +17,8 @@ import {
 import type { ReactNode } from "react";
 import { usePlatform } from "@/lib/queries";
 import { VaultScene } from "../explore/vault-scene";
-import { ButtonLink } from "../ui/button";
-import { Card } from "../ui/primitives";
+import { ButtonLink } from "../legacy/button";
+import { Card } from "../legacy/primitives";
 
 const pct = (bps: number) => `${+(bps / 100).toFixed(2)}%`;
 

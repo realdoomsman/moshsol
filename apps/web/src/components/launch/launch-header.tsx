@@ -8,9 +8,9 @@ import type { Phase } from "@/lib/launch";
 import { useTokenColor } from "@/lib/token-color";
 import type { LaunchSummary } from "@/lib/types";
 import { cn } from "../ui/cn";
-import { AddressLink, AnimatedNumber, CopyButton, TokenAvatar } from "../ui/interactive";
-import { Badge } from "../ui/primitives";
-import { ChangePill, PhasePill } from "../ui/status";
+import { AddressLink, AnimatedNumber, CopyButton, TokenAvatar } from "../legacy/interactive";
+import { Badge } from "../legacy/primitives";
+import { ChangePill, PhasePill } from "../legacy/status";
 import { ShareButton } from "./share-button";
 
 function Social({ href, label, icon: Icon }: { href: string; label: string; icon: typeof Globe }) {

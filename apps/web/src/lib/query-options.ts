@@ -40,6 +40,11 @@ export const agentsQuery = () => queryOptions({ queryKey: ["agents"], queryFn: a
 
 export const agentStatusQuery = () => queryOptions({ queryKey: ["agent-status"], queryFn: api.agentStatus });
 
+export const healthQuery = () => queryOptions({ queryKey: ["health"], queryFn: api.health });
+
+export const searchQuery = (q: string) =>
+  queryOptions({ queryKey: ["search", q], queryFn: () => api.search(q), staleTime: 15_000 });
+
 export const FEED_PAGE = 50;
 
 /**

@@ -7,10 +7,12 @@ import type {
   Candle,
   DepositRow,
   HolderRow,
+  IndexerHealth,
   LaunchSummary,
   PlatformInfo,
   PlatformStats,
   Portfolio,
+  SearchResult,
   TradeRow,
 } from "./types";
 
@@ -62,7 +64,29 @@ export interface UploadInput {
   whitelist?: string[];
 }
 
+/**
+ * Indexer health. Unlike other endpoints a 503 still carries the health body (e.g. first sync not
+ * finished); only an unreachable indexer throws.
+ */
+async function health(): Promise<IndexerHealth> {
+  let res: Response;
+  try {
+    res = await fetch(`${INDEXER_URL}/api/health`, {
+      cache: "no-store",
+      signal: typeof window === "undefined" ? AbortSignal.timeout(SERVER_TIMEOUT_MS) : undefined,
+    });
+  } catch {
+    throw new ApiError(0, `Can't reach ${INDEXER_URL}`);
+  }
+  const body = (await res.json().catch(() => null)) as IndexerHealth | null;
+  if (!body) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  return { ...body, ok: res.ok && body.ok };
+}
+
 export const api = {
+  health,
+  /** Launches (name/symbol/mint prefix) and wallets (profile name/address prefix); `q` is 1–64 chars. */
+  search: (q: string) => request<SearchResult>(INDEXER_URL, `/api/search?q=${encodeURIComponent(q)}`),
   platform: () => request<PlatformInfo>(INDEXER_URL, "/api/platform"),
   stats: () => request<PlatformStats>(INDEXER_URL, "/api/stats"),
   launches: (p: { status: LaunchFilter; sort: LaunchSort; q?: string; limit?: number }) => {

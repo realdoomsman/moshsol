@@ -23,10 +23,10 @@ import { usePlatform } from "@/lib/queries";
 import { solForTokens } from "@holdfast/sdk";
 import { useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
-import { Button } from "../ui/button";
+import { Button } from "../legacy/button";
 import { cn } from "../ui/cn";
-import { Segmented } from "../ui/interactive";
-import { Card, Row } from "../ui/primitives";
+import { Segmented } from "../legacy/interactive";
+import { Card, Row } from "../legacy/primitives";
 
 export type Side = "buy" | "sell";
 const SLIPPAGE_PRESETS = [50, 100, 200, 500];

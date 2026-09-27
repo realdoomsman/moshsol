@@ -8,9 +8,9 @@ import { phaseOf, type Phase } from "@/lib/launch";
 import { useCandles, usePlatform } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { cn } from "../ui/cn";
-import { AnimatedNumber, Countdown, Sparkline, TokenAvatar } from "../ui/interactive";
-import { Badge, Skeleton } from "../ui/primitives";
-import { ChangePill, ChangeText, PhasePill } from "../ui/status";
+import { AnimatedNumber, Countdown, Sparkline, TokenAvatar } from "../legacy/interactive";
+import { Badge, Skeleton } from "../legacy/primitives";
+import { ChangePill, ChangeText, PhasePill } from "../legacy/status";
 import { RaiseBar } from "../launch/raise-bar";
 
 export type CardSize = "md" | "lg";

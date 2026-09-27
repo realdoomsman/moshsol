@@ -45,15 +45,26 @@ export interface TxRequest {
   successMessage?: string;
 }
 
-function ExplorerLink({ signature }: { signature: string }) {
+/** Where a transaction is in the wallet pipeline (§3.8.6); drives button copy and the toast. */
+export type TxStage = "preparing" | "signing" | "sending" | "confirming";
+
+/** Button/toast copy per stage, e.g. `<Button busy>{TX_STAGE_LABEL[stage]}</Button>`. */
+export const TX_STAGE_LABEL: Record<TxStage, string> = {
+  preparing: "Preparing",
+  signing: "Confirm in wallet",
+  sending: "Sending",
+  confirming: "Confirming",
+};
+
+export function ExplorerLink({ signature, children = "View on explorer" }: { signature: string; children?: string }) {
   return (
     <a
       href={explorerTx(signature)}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-1 font-medium text-lime hover:underline"
+      className="inline-flex items-center gap-1 font-medium text-ink underline decoration-line-2 underline-offset-2 hover:decoration-ink"
     >
-      View transaction <ExternalLink className="size-3" aria-hidden />
+      {children} <ExternalLink className="size-3" strokeWidth={1.5} aria-hidden />
     </a>
   );
 }
@@ -61,6 +72,7 @@ function ExplorerLink({ signature }: { signature: string }) {
 /**
  * Wallet transaction pipeline: build → simulate (human errors before the wallet prompt) →
  * partial-sign extra signers → wallet sign → send → confirm, with a single evolving toast.
+ * `stage` follows the pipeline for button copy; success toasts stay 6 s, errors until dismissed.
  */
 export function useTx() {
   const { connection } = useConnection();
@@ -69,6 +81,7 @@ export function useTx() {
   const client = useMoshClient();
   const qc = useQueryClient();
   const [pending, setPending] = useState<string | null>(null);
+  const [stage, setStage] = useState<TxStage | null>(null);
 
   const run = useCallback(
     async (req: TxRequest): Promise<string | null> => {
@@ -76,8 +89,9 @@ export function useTx() {
         setVisible(true);
         return null;
       }
-      const id = toast.loading(req.label, { description: "Preparing transaction…" });
+      const id = toast.loading(req.label, { description: `${TX_STAGE_LABEL.preparing}…` });
       setPending(req.label);
+      setStage("preparing");
       try {
         const ixs = await req.build(publicKey);
         const { tx, blockhash, lastValidBlockHeight } = await client.buildTx(publicKey, ixs, {
@@ -94,17 +108,20 @@ export function useTx() {
         }
 
         if (req.signers?.length) tx.partialSign(...req.signers);
-        toast.loading(req.label, { id, description: "Approve in your wallet…" });
+        setStage("signing");
+        toast.loading(req.label, { id, description: `${TX_STAGE_LABEL.signing}…` });
 
         let signature: string;
         if (signTransaction) {
           const signed = await signTransaction(tx);
-          toast.loading(req.label, { id, description: "Sending…" });
+          setStage("sending");
+          toast.loading(req.label, { id, description: `${TX_STAGE_LABEL.sending}…` });
           signature = await connection.sendRawTransaction(signed.serialize(), { preflightCommitment: "confirmed" });
         } else {
           signature = await sendTransaction(tx, connection, { preflightCommitment: "confirmed" });
         }
 
+        setStage("confirming");
         toast.loading(req.label, { id, description: <ExplorerLink signature={signature} /> });
         const res = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
         if (res.value.err) {
@@ -124,14 +141,15 @@ export function useTx() {
         for (const key of req.invalidate ?? []) qc.invalidateQueries({ queryKey: key });
         return signature;
       } catch (err) {
-        toast.error(`${req.label} failed`, { id, description: humanError(err), duration: 8_000 });
+        toast.error(`${req.label} failed`, { id, description: humanError(err), duration: Infinity });
         return null;
       } finally {
         setPending(null);
+        setStage(null);
       }
     },
     [client, connection, publicKey, qc, sendTransaction, setVisible, signTransaction],
   );
 
-  return { run, pending, connected: !!publicKey };
+  return { run, pending, stage, connected: !!publicKey };
 }

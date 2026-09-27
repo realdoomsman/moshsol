@@ -11,11 +11,11 @@ import { useAgents, useAgentStatus, useCandles, useLaunches, usePlatform, useSta
 import { useTokenColor } from "@/lib/token-color";
 import type { LaunchSummary } from "@/lib/types";
 import { RaiseBar } from "../launch/raise-bar";
-import { ButtonLink } from "../ui/button";
+import { ButtonLink } from "../legacy/button";
 import { cn } from "../ui/cn";
-import { AnimatedNumber, Countdown, Sparkline, TokenAvatar } from "../ui/interactive";
-import { Skeleton } from "../ui/primitives";
-import { ChangePill } from "../ui/status";
+import { AnimatedNumber, Countdown, Sparkline, TokenAvatar } from "../legacy/interactive";
+import { Skeleton } from "../legacy/primitives";
+import { ChangePill } from "../legacy/status";
 import { VaultScene } from "./vault-scene";
 
 /** The top trending live launch: price, chart, what's locked, and what its agent is doing. */

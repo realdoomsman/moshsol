@@ -23,8 +23,8 @@ import { useNow } from "@/lib/hooks";
 import { useAgents, useAgentStatus, usePlatform } from "@/lib/queries";
 import type { AgentDecision, AgentLaunchRow } from "@/lib/types";
 import { cn } from "../ui/cn";
-import { AddressLink, AnimatedNumber, TokenAvatar } from "../ui/interactive";
-import { Badge, Card, CardHeader, EmptyState, Meter, Skeleton } from "../ui/primitives";
+import { AddressLink, AnimatedNumber, TokenAvatar } from "../legacy/interactive";
+import { Badge, Card, CardHeader, EmptyState, Meter, Skeleton } from "../legacy/primitives";
 
 const pct = (bps: number) => `${bps / 100}%`;
 

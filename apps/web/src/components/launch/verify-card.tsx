@@ -9,8 +9,8 @@ import { explorerAddress } from "@/lib/explorer";
 import { fmtTokens } from "@/lib/format";
 import type { LaunchSummary } from "@/lib/types";
 import { cn } from "../ui/cn";
-import { CopyButton } from "../ui/interactive";
-import { Card, CardHeader, Skeleton } from "../ui/primitives";
+import { CopyButton } from "../legacy/interactive";
+import { Card, CardHeader, Skeleton } from "../legacy/primitives";
 
 function Check({ ok, children }: { ok: boolean | null; children: ReactNode }) {
   return (

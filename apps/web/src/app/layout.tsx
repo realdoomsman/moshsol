@@ -1,60 +1,41 @@
-import { GeistMono } from "geist/font/mono";
-import { GeistSans } from "geist/font/sans";
 import type { Metadata, Viewport } from "next";
+import { JetBrains_Mono, Mona_Sans } from "next/font/google";
 import { connection } from "next/server";
 import type { ReactNode } from "react";
-import { ActivityTicker } from "@/components/shell/activity-ticker";
-import { AppBackground } from "@/components/shell/app-background";
-import { Footer } from "@/components/shell/footer";
-import { Header } from "@/components/shell/header";
 import { SITE_URL } from "@/lib/env";
-import { Hydrate, prefetch, serverQueryClient } from "@/lib/prefetch";
-import { activityQuery } from "@/lib/query-options";
 import "./globals.css";
 import { Providers } from "./providers";
 
+const sans = Mona_Sans({ subsets: ["latin"], axes: ["wdth"], variable: "--font-mona", display: "swap" });
+const mono = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-jetbrains", display: "swap" });
+
+const title = "Holdfast — launches that can't be dumped";
 const description =
-  "Solana memecoin launchpad where the backer-funded bundle is locked forever in an on-chain vault and traded only by rate-limited agents. Backers earn the trading fees.";
+  "The Solana launchpad where the first buy can never be dumped. Backers fund the first buy; it's locked in a vault forever, traded only by a rate-limited agent, and backers earn half of every trading fee.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: { default: "holdfast — launches that can't be dumped", template: "%s · holdfast" },
+  title: { default: title, template: "%s · Holdfast" },
   description,
-  applicationName: "holdfast",
-  openGraph: { siteName: "holdfast", type: "website", title: "holdfast — launches that can't be dumped", description },
+  applicationName: "Holdfast",
+  openGraph: { siteName: "Holdfast", type: "website", title, description },
+  twitter: { card: "summary_large_image", title, description },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#060708",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
 };
 
-/** Renders alongside the page (both prefetch concurrently), so the ticker's first paint shows events. */
-async function PrefetchedTicker() {
-  const client = serverQueryClient();
-  await prefetch(client, activityQuery());
-  return (
-    <Hydrate client={client}>
-      <ActivityTicker />
-    </Hydrate>
-  );
-}
-
+/** Theme, header and footer come from the route group layouts: (marketing) = Paper, (app) = Night. */
 export default async function RootLayout({ children }: { children: ReactNode }) {
   // Every page renders live indexer data per request (never prerendered at build time).
   await connection();
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <body>
-        <AppBackground />
-        <Providers now={Math.floor(Date.now() / 1000)}>
-          <Header />
-          <PrefetchedTicker />
-          <main className="mx-auto w-full max-w-[1400px] px-4 pt-6 sm:px-6 lg:px-8">{children}</main>
-          <Footer />
-        </Providers>
+        <Providers now={Math.floor(Date.now() / 1000)}>{children}</Providers>
       </body>
     </html>
   );

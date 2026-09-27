@@ -3,7 +3,7 @@
 import { useAnimationFrame, useReducedMotion } from "motion/react";
 import { useEffect, useId, useRef, type CSSProperties } from "react";
 import { cn } from "../ui/cn";
-import { TokenAvatar } from "../ui/interactive";
+import { TokenAvatar } from "../legacy/interactive";
 
 export interface Orbiter {
   key: string;

@@ -13,10 +13,10 @@ import type { Phase } from "@/lib/launch";
 import { usePlatform } from "@/lib/queries";
 import { useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
-import { Button } from "../ui/button";
+import { Button } from "../legacy/button";
 import { cn } from "../ui/cn";
-import { AnimatedNumber } from "../ui/interactive";
-import { Card, CardHeader, Row } from "../ui/primitives";
+import { AnimatedNumber } from "../legacy/interactive";
+import { Card, CardHeader, Row } from "../legacy/primitives";
 import { RaiseBar } from "./raise-bar";
 
 /** Rent for a new backer account is paid on first deposit; keep headroom for it and the fee. */
