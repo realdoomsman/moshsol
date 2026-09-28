@@ -122,7 +122,7 @@ export function AgentSimulator({ launch, compact = false, className }: { launch:
     levels.push({
       key: "sellfloor",
       p: z.sellAbove,
-      label: "Sell fill floor",
+      label: "Min sell fill",
       className: "stroke-accent-ink",
       text: "text-accent-ink",
       dash: "2 3",
@@ -135,7 +135,7 @@ export function AgentSimulator({ launch, compact = false, className }: { launch:
   // Levels off the chart are pinned to the edge they lie beyond, with their value.
   const pinnedBelow = [
     ...levels.filter((l) => l.p < domain.min),
-    ...(domain.floor < domain.min ? [{ key: "floor", p: domain.floor, label: "Curve floor", text: "text-ink-3" }] : []),
+    ...(domain.floor < domain.min ? [{ key: "floor", p: domain.floor, label: "Curve start", text: "text-ink-3" }] : []),
   ].sort((a, b) => b.p - a.p);
   const pinnedAbove = levels.filter((l) => l.p > domain.max).sort((a, b) => b.p - a.p);
   const cardY = h / 2;
@@ -233,7 +233,7 @@ export function AgentSimulator({ launch, compact = false, className }: { launch:
           className="micro num pointer-events-none absolute left-3 whitespace-nowrap pt-1 text-ink-3"
           style={{ top: y(domain.floor) }}
         >
-          Curve floor {fmtPrice(domain.floor)} · price can&rsquo;t go lower
+          Curve start {fmtPrice(domain.floor)} · lowest price the curve can quote
         </span>
       ) : null}
       <span

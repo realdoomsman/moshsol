@@ -50,7 +50,7 @@ export const overview: DocPage = {
             ["Back a raise and earn fees", <A key="b" href="/docs/for-backers">For backers</A>],
             ["Launch a token", <A key="c" href="/docs/for-creators">For creators</A>],
             ["Trade", <A key="t" href="/docs/for-traders">For traders</A>],
-            ["Check the guarantees", <A key="v" href="/docs/verify">Verify on-chain</A>],
+            ["Check the claims", <A key="v" href="/docs/verify">Verify on-chain</A>],
             ["Build on the data", <A key="a" href="/docs/api">Indexer API</A>],
           ]}
         />

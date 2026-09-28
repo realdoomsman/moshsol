@@ -213,7 +213,7 @@ export const verify: DocPage = {
   group: "Protocol",
   nav: "Verify on-chain",
   title: "Security & verification",
-  description: "Check every guarantee yourself: the program, its authorities, a mint, a vault, and the instruction list.",
+  description: "Check every claim yourself: the program, its authorities, a mint, a vault, and the instruction list.",
   sections: ({ facts, platform, seed }) => [
     {
       id: "checklist",

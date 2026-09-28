@@ -213,8 +213,8 @@ export const forTraders: DocPage = {
             withdrawn, so the curve is always there to sell into.
           </P>
           <P>
-            The curve has a floor: sells can only pay out real SOL, so price can&rsquo;t fall below the level where the curve&rsquo;s
-            real SOL is zero.
+            Sells can only pay out real SOL in the curve, so the curve stops quoting at the price where its real SOL reaches zero:
+            the price it started at. That&rsquo;s a property of the curve&rsquo;s math, not a promise about what a token is worth.
           </P>
         </>
       ),
