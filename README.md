@@ -62,6 +62,10 @@ Guarantees enforced in code (see `programs/moshsol/src/constants.rs` for hard ca
 - **Accounting.** All launch SOL sits on the launch PDA; `lamports == rent + raise escrow` (raising/refunding) or `rent + curve + vault + unclaimed fees` (live). Tests assert this after every step.
 - **Fees.** 1% on public trades: 50% backers (pro-rata accumulator, claim any time), 30% creator, 20% platform. 1% launch fee on the raise. Flat create fee (anti-spam). All bounded by hard caps.
 - **Deployment.** Only the program's upgrade authority can run `initialize_platform` (no front-running after deploy).
+- **Beta caps.** `PlatformParams.max_raise_lamports` caps a new launch's `raise_max` (`RaiseAboveBetaCap`), and
+  `max_wallet_deposit_lamports` caps any one wallet's deposit: `create_launch` snapshots
+  min(creator cap, platform cap) into `launch.max_per_wallet`, so later changes never touch open raises.
+  `0` disables either cap; both are bounded by the 100,000 SOL hard limit.
 
 ## Run it locally
 
@@ -235,9 +239,90 @@ when the public faucet throttles. For real traffic set `RPC_URL`/`WS_URL` on the
 dedicated provider (Helius, Triton, QuickNode) — keep keyed URLs server-side only; the web's
 `NEXT_PUBLIC_RPC_URL` is visible to every visitor.
 
+## Mainnet beta
+
+Mainnet launches start under **beta caps**, enforced on-chain and shown in the create form ("Beta cap: 25 SOL"):
+
+| Param | `PROFILE=production` default | Override | Effect |
+|---|---|---|---|
+| `max_raise_lamports` | 25 SOL | `MAX_RAISE_SOL` | `create_launch` rejects `raise_max` above it (`RaiseAboveBetaCap`) |
+| `max_wallet_deposit_lamports` | 5 SOL | `MAX_WALLET_SOL` | effective per-wallet cap = min(creator's cap, this), frozen into the launch |
+
+Localnet defaults to `0`/`0` (no caps). Raise or lift the caps later with
+`MAX_RAISE_SOL=100 MAX_WALLET_SOL=20 RPC_URL=… KEYS_DIR=.mainnet-beta PROFILE=production pnpm setup:localnet -- --update`
+(`0` removes a cap). Open raises keep the caps they were created with.
+
+**Layout change.** The caps added two `u64`s to `PlatformParams`, so the `Platform` account layout changed.
+This is fine for a fresh mainnet deploy, but this build (program, SDK, indexer, agent, web) can't decode
+devnet's existing platform account (`pnpm mainnet:check` against devnet shows it). A PDA can't be re-initialized
+without program support, so upgrading devnet means either redeploying it under a new program id (fresh
+`target/deploy/moshsol-keypair.json` + `declare_id!`/`Anchor.toml`, then setup) or keeping the Railway devnet
+services on the previous build.
+
+### Deploy steps
+
+1. Build + fund check: `DRY_RUN=1 CLUSTER=mainnet-beta RPC_URL=https://<keyed-rpc> bash scripts/deploy.sh`
+   (WSL/Linux/macOS). It builds, sizes the `.so`, queries `solana rent` on the target cluster and prints the
+   exact SOL the deployer needs. It never deploys and never creates keys in dry-run mode.
+2. `CLUSTER=mainnet-beta RPC_URL=https://<keyed-rpc> bash scripts/deploy.sh` creates `.mainnet-beta/admin.json`
+   (the upgrade authority; **back it up**, it's gitignored), prints the shortfall and the funding command, and
+   refuses to deploy until the balance covers it:
+   `solana transfer --url mainnet-beta --allow-unfunded-recipient <admin pubkey> <amount>`. Re-run to deploy.
+3. `RPC_URL=https://<keyed-rpc> KEYS_DIR=.mainnet-beta PROFILE=production pnpm setup:localnet` initializes the
+   platform (1% fee split 50/30/20, hourly agent windows, 30-min EMA, 25 SOL / 5 SOL caps) and creates
+   `.mainnet-beta/agent.json` and `treasury.json`. Setup never airdrops off localnet.
+4. Fund the agent key (≥ 0.1 SOL; it only pays fees) and the treasury (rent-exempt minimum).
+5. `RPC_URL=https://<keyed-rpc> pnpm mainnet:check` must print all PASS (table below).
+6. Hand `admin` to a Squads multisig (`propose_admin` → `accept_admin`) and move the program upgrade authority
+   to it (`solana program set-upgrade-authority`); rerun the checklist.
+
+### Costs (mainnet, measured with `DRY_RUN=1`, 532,872-byte `.so`, rent 5,080 lamports/byte)
+
+| Item | SOL |
+|---|---|
+| ProgramData account rent (`.so` + 45 B) | 2.707868600 |
+| Program account rent (36 B) | 0.000833120 |
+| Deploy transactions (≤ 603 txs × (5,000 + 2,000 priority) lamports) | ≤ 0.004221000 |
+| Platform setup headroom (account rent + fees) | 0.010000000 |
+| **Deployer (admin) total** | **2.722922720** |
+| Agent key (fees only) | ≥ 0.1 |
+| Treasury rent-exempt minimum (0-byte system account) | 0.00065024 |
+
+The rent is locked, not spent: closing the program (`solana program close`) returns it. Upgrades need a
+temporary buffer of the same size (refunded) plus rent for any growth; `deploy.sh` computes that too.
+
+### Checklist (`pnpm mainnet:check`)
+
+Read-only; exits 1 if anything fails. Uses `RPC_URL` (default localnet).
+
+| Check | Passes when |
+|---|---|
+| RPC reachable | `getVersion` answers (only the host is printed, never a keyed URL) |
+| Cluster is not devnet/testnet | genesis hash isn't devnet's/testnet's (mainnet-beta is named) |
+| Program deployed (upgradeable) | program is executable and owned by the upgradeable loader |
+| Upgrade authority set | ProgramData has an authority (fixes still possible) |
+| Platform initialized | the platform PDA exists and decodes with this build |
+| Beta caps set | both caps are non-zero |
+| Platform not paused | neither `paused` nor `agentsPaused` |
+| Agent key funded ≥ 0.1 SOL | `platform.agent_authority` balance |
+| Treasury rent-exempt | `platform.fee_recipient` balance ≥ rent-exempt minimum |
+
+### Railway env for mainnet
+
+Same three services as devnet, pointed at mainnet:
+
+| Service | Mainnet variables |
+|---|---|
+| `indexer` | `RPC_URL=https://<provider>/?api-key=…` and `WS_URL=wss://…` from a keyed provider (Helius, Triton, QuickNode) as **Railway secrets**; the rest as on devnet |
+| `agent` | the same keyed `RPC_URL`; `AGENT_KEYPAIR_JSON` = `.mainnet-beta/agent.json` contents (secret); `PRIORITY_MICROLAMPORTS` if blocks are congested |
+| `web` | `NEXT_PUBLIC_CLUSTER=mainnet-beta`, `NEXT_PUBLIC_INDEXER_URL`/`NEXT_PUBLIC_AGENT_URL` of the mainnet services, `NEXT_PUBLIC_SITE_URL`; `NEXT_PUBLIC_RPC_URL`/`NEXT_PUBLIC_WS_URL` = a **browser-safe** endpoint (a separate provider key locked to the site's domain), never the server key |
+
+Keyed RPC URLs stay server-side: `NEXT_PUBLIC_*` values are baked into the client bundle and visible to
+every visitor, so the indexer/agent key must never be put there.
+
 ## Deploy to another cluster
 
-1. `CLUSTER=devnet bash scripts/deploy.sh` (or `CLUSTER=mainnet-beta`) — creates `.<cluster>/admin.json` on first run; fund it (~3 SOL for the ~530 KB program) and re-run. The admin is the upgrade authority (required to initialize).
-2. `RPC_URL=<rpc> KEYS_DIR=.<cluster> PROFILE=production pnpm setup:localnet` (hourly agent windows, 30-min EMA), then fund `.<cluster>/agent.json` for fees.
+1. `CLUSTER=devnet bash scripts/deploy.sh` (or `CLUSTER=mainnet-beta`, see above) — creates `.<cluster>/admin.json` on first run, prints the exact SOL it needs (computed from the `.so` size via `solana rent`) and refuses to deploy until funded. The admin is the upgrade authority (required to initialize).
+2. `RPC_URL=<rpc> KEYS_DIR=.<cluster> PROFILE=production pnpm setup:localnet` (hourly agent windows, 30-min EMA, beta caps), then fund `.<cluster>/agent.json` for fees.
 3. Create the Railway services as above (or any Docker host) pointing at the cluster.
-4. Before mainnet: external audit, move `admin` to a Squads multisig (`propose_admin` → `accept_admin`), transfer the program upgrade authority to the multisig, keep low `raise_max` caps during beta, use a dedicated RPC, and store uploads on Arweave/IPFS instead of the indexer volume.
+4. Before mainnet: external audit, move `admin` to a Squads multisig (`propose_admin` → `accept_admin`), transfer the program upgrade authority to the multisig, keep the beta caps on, use a dedicated RPC, and store uploads on Arweave/IPFS instead of the indexer volume.

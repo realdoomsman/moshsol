@@ -33,6 +33,11 @@ pub struct PlatformParams {
     pub virtual_sol_reserves: u64,
     pub max_bundle_supply_bps: u16,
     pub min_raise_lamports: u64,
+    /// Mainnet-beta ceiling on a launch's `raise_max`. 0 = no platform cap.
+    pub max_raise_lamports: u64,
+    /// Mainnet-beta ceiling on any one wallet's deposit, applied on top of the creator's
+    /// own cap and snapshotted into the launch at creation. 0 = no platform cap.
+    pub max_wallet_deposit_lamports: u64,
     /// Max share of vault SOL agents may spend per window.
     pub agent_buy_bps_per_window: u16,
     /// Max share of vault tokens agents may sell per window.
@@ -71,6 +76,16 @@ impl PlatformParams {
         );
         require!(
             self.min_raise_lamports > 0 && self.min_raise_lamports <= MAX_RAISE_LAMPORTS,
+            MoshError::InvalidParam
+        );
+        require!(
+            self.max_raise_lamports == 0
+                || (self.max_raise_lamports >= self.min_raise_lamports
+                    && self.max_raise_lamports <= MAX_RAISE_LAMPORTS),
+            MoshError::InvalidParam
+        );
+        require!(
+            self.max_wallet_deposit_lamports <= MAX_RAISE_LAMPORTS,
             MoshError::InvalidParam
         );
         require!(self.agent_buy_bps_per_window <= MAX_AGENT_WINDOW_BPS, MoshError::InvalidParam);

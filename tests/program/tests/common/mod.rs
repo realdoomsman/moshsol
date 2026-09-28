@@ -35,6 +35,8 @@ pub fn test_params() -> PlatformParams {
         virtual_sol_reserves: 30 * SOL,
         max_bundle_supply_bps: 2_500,
         min_raise_lamports: SOL,
+        max_raise_lamports: 0,
+        max_wallet_deposit_lamports: 0,
         agent_buy_bps_per_window: 1_000,
         agent_sell_bps_per_window: 500,
         agent_max_impact_bps: 300,

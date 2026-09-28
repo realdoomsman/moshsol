@@ -252,13 +252,16 @@ Returned by the launch list/detail endpoints, `/api/trending` and the `launch` W
 ### `GET /api/platform`
 
 Global platform account (`404` if not initialized). Use a launch's `terms`, not these params, for quotes.
+`maxRaiseLamports` / `maxWalletDepositLamports` are the mainnet-beta caps on a new launch's max raise and on
+any one wallet's deposit (`"0"` = no cap). A launch snapshots the effective wallet cap into its own `maxPerWallet`.
 
 ```json
 { "address": "675WZQsKXyFfCXD2a2iQdhFdYFdgz8HWiCJwrcCBuUgs", "admin": "FwYL…", "feeRecipient": "J2zc…",
   "agentAuthority": "3qLL…", "launchCount": 4,
   "params": { "tradeFeeBps": 100, "backerFeeShareBps": 5000, "creatorFeeShareBps": 3000, "launchFeeBps": 100,
     "createFeeLamports": "5000000", "virtualSolReserves": "30000000000", "maxBundleSupplyBps": 2500,
-    "minRaiseLamports": "50000000", "agentBuyBpsPerWindow": 1000, "agentSellBpsPerWindow": 500,
+    "minRaiseLamports": "50000000", "maxRaiseLamports": "0", "maxWalletDepositLamports": "0",
+    "agentBuyBpsPerWindow": 1000, "agentSellBpsPerWindow": 500,
     "agentMaxImpactBps": 300, "agentBandBps": 200, "agentWindowSecs": 3600, "emaPeriodSecs": 1800,
     "paused": false, "agentsPaused": false } }
 ```

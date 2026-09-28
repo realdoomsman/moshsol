@@ -98,6 +98,17 @@ pub fn create_launch(ctx: Context<CreateLaunch>, args: CreateLaunchArgs) -> Resu
         MoshError::InvalidParam
     );
     require!(
+        params.max_raise_lamports == 0 || args.raise_max <= params.max_raise_lamports,
+        MoshError::RaiseAboveBetaCap
+    );
+    // Effective per-wallet cap = the tighter of the creator's and the platform's (0 = none on
+    // either side). Snapshotted so later platform changes never alter an open raise.
+    let max_per_wallet = match (args.max_per_wallet, params.max_wallet_deposit_lamports) {
+        (0, platform) => platform,
+        (creator, 0) => creator,
+        (creator, platform) => creator.min(platform),
+    };
+    require!(
         (MIN_RAISE_DURATION_SECS..=MAX_RAISE_DURATION_SECS).contains(&args.duration_secs),
         MoshError::InvalidParam
     );
@@ -210,7 +221,7 @@ pub fn create_launch(ctx: Context<CreateLaunch>, args: CreateLaunchArgs) -> Resu
         terms: LaunchTerms::from(&params),
         raise_min: args.raise_min,
         raise_max: args.raise_max,
-        max_per_wallet: args.max_per_wallet,
+        max_per_wallet,
         raise_deadline: now + args.duration_secs,
         raised: 0,
         refunded: 0,

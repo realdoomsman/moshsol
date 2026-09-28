@@ -62,4 +62,6 @@ pub enum MoshError {
     AgentBelowCostBasis,
     #[msg("Only the program upgrade authority can initialize the platform")]
     NotUpgradeAuthority,
+    #[msg("Raise maximum is above the platform's beta cap")]
+    RaiseAboveBetaCap,
 }

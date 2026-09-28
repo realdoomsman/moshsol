@@ -1857,6 +1857,11 @@
       "code": 6029,
       "name": "NotUpgradeAuthority",
       "msg": "Only the program upgrade authority can initialize the platform"
+    },
+    {
+      "code": 6030,
+      "name": "RaiseAboveBetaCap",
+      "msg": "Raise maximum is above the platform's beta cap"
     }
   ],
   "types": [
@@ -2579,6 +2584,21 @@
           },
           {
             "name": "min_raise_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "max_raise_lamports",
+            "docs": [
+              "Mainnet-beta ceiling on a launch's `raise_max`. 0 = no platform cap."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "max_wallet_deposit_lamports",
+            "docs": [
+              "Mainnet-beta ceiling on any one wallet's deposit, applied on top of the creator's",
+              "own cap and snapshotted into the launch at creation. 0 = no platform cap."
+            ],
             "type": "u64"
           },
           {

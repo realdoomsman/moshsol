@@ -15,6 +15,7 @@
     "setup:localnet": "pnpm --filter @holdfast/scripts run setup",
     "seed:localnet": "pnpm --filter @holdfast/scripts run seed",
     "simulate:localnet": "pnpm --filter @holdfast/scripts run simulate",
+    "mainnet:check": "pnpm --silent --filter @holdfast/scripts run mainnet-check",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {

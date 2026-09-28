@@ -6,7 +6,9 @@
  *
  *   RPC_URL=https://api.devnet.solana.com KEYS_DIR=.devnet PROFILE=production pnpm setup:localnet
  *
- * Optional overrides: MIN_RAISE_SOL (default 1), CREATE_FEE_SOL (default 0.02).
+ * Optional overrides: MIN_RAISE_SOL (default 1), CREATE_FEE_SOL (default 0.02),
+ * MAX_RAISE_SOL / MAX_WALLET_SOL — mainnet-beta caps on a launch's max raise and on any one
+ * wallet's deposit (0 = no cap; defaults 0/0, or 25/5 SOL with PROFILE=production).
  * On non-local clusters the admin keypair must already be funded (no airdrops).
  */
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -16,23 +18,29 @@ import fs from "node:fs";
 import path from "node:path";
 import { LOCALNET_DIR, RPC_URL, airdrop, clientFor, loadOrCreateKeypair, send } from "./common";
 
+const PRODUCTION = process.env.PROFILE === "production";
+const sol = (env: string | undefined, fallback: number) =>
+  new BN(Math.round(Number(env ?? fallback) * LAMPORTS_PER_SOL));
+
 const LOCALNET_PARAMS: PlatformParams = {
   tradeFeeBps: 100,
   backerFeeShareBps: 5_000,
   creatorFeeShareBps: 3_000,
   launchFeeBps: 100,
-  createFeeLamports: new BN(Math.round(Number(process.env.CREATE_FEE_SOL ?? 0.02) * LAMPORTS_PER_SOL)),
+  createFeeLamports: sol(process.env.CREATE_FEE_SOL, 0.02),
   virtualSolReserves: new BN(30 * LAMPORTS_PER_SOL),
   maxBundleSupplyBps: 2_500,
-  minRaiseLamports: new BN(Math.round(Number(process.env.MIN_RAISE_SOL ?? 1) * LAMPORTS_PER_SOL)),
+  minRaiseLamports: sol(process.env.MIN_RAISE_SOL, 1),
+  maxRaiseLamports: sol(process.env.MAX_RAISE_SOL, PRODUCTION ? 25 : 0),
+  maxWalletDepositLamports: sol(process.env.MAX_WALLET_SOL, PRODUCTION ? 5 : 0),
   agentBuyBpsPerWindow: 1_000,
   agentSellBpsPerWindow: 500,
   agentMaxImpactBps: 300,
   agentBandBps: 200,
   // Short windows on localnet so agent behaviour is observable within minutes;
   // PROFILE=production uses hourly windows and a 30 minute EMA.
-  agentWindowSecs: process.env.PROFILE === "production" ? 3_600 : 600,
-  emaPeriodSecs: process.env.PROFILE === "production" ? 1_800 : 600,
+  agentWindowSecs: PRODUCTION ? 3_600 : 600,
+  emaPeriodSecs: PRODUCTION ? 1_800 : 600,
   paused: false,
   agentsPaused: false,
 };

@@ -8,6 +8,7 @@
     "simulate": "tsx src/simulate.ts",
     "preflight": "tsx src/preflight.ts",
     "record:demos": "tsx src/record-demos.ts",
+    "mainnet-check": "tsx src/mainnet-checklist.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

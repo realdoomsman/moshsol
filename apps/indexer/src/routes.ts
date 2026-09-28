@@ -184,6 +184,8 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
         virtualSolReserves: pr.virtualSolReserves.toString(),
         maxBundleSupplyBps: pr.maxBundleSupplyBps,
         minRaiseLamports: pr.minRaiseLamports.toString(),
+        maxRaiseLamports: pr.maxRaiseLamports.toString(),
+        maxWalletDepositLamports: pr.maxWalletDepositLamports.toString(),
         agentBuyBpsPerWindow: pr.agentBuyBpsPerWindow,
         agentSellBpsPerWindow: pr.agentSellBpsPerWindow,
         agentMaxImpactBps: pr.agentMaxImpactBps,

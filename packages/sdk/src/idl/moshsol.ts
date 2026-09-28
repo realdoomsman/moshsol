@@ -1863,6 +1863,11 @@ export type Moshsol = {
       "code": 6029,
       "name": "notUpgradeAuthority",
       "msg": "Only the program upgrade authority can initialize the platform"
+    },
+    {
+      "code": 6030,
+      "name": "raiseAboveBetaCap",
+      "msg": "Raise maximum is above the platform's beta cap"
     }
   ],
   "types": [
@@ -2585,6 +2590,21 @@ export type Moshsol = {
           },
           {
             "name": "minRaiseLamports",
+            "type": "u64"
+          },
+          {
+            "name": "maxRaiseLamports",
+            "docs": [
+              "Mainnet-beta ceiling on a launch's `raise_max`. 0 = no platform cap."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "maxWalletDepositLamports",
+            "docs": [
+              "Mainnet-beta ceiling on any one wallet's deposit, applied on top of the creator's",
+              "own cap and snapshotted into the launch at creation. 0 = no platform cap."
+            ],
             "type": "u64"
           },
           {

@@ -469,3 +469,103 @@ fn admin_controls_are_bounded_and_transferable() {
     assert_eq!(env.platform().admin, multisig.pubkey());
     assert_err(env.update_platform(&admin, test_params()), MoshError::Unauthorized);
 }
+
+fn beta_params(max_raise: u64, max_wallet: u64) -> moshsol::state::PlatformParams {
+    let mut p = test_params();
+    p.max_raise_lamports = max_raise;
+    p.max_wallet_deposit_lamports = max_wallet;
+    p
+}
+
+#[test]
+fn beta_raise_cap_rejects_raises_above_it() {
+    let mut env = Env::with_params(beta_params(25 * SOL, 0));
+    let creator = env.user(5);
+    let mut a = default_args(); // raise_max 50 SOL
+    assert_err(env.create(&creator, a.clone()).1, MoshError::RaiseAboveBetaCap);
+    a.raise_max = 25 * SOL + 1;
+    assert_err(env.create(&creator, a.clone()).1, MoshError::RaiseAboveBetaCap);
+    a.raise_max = 25 * SOL;
+    let mint = env.create_ok(&creator, a);
+    let l = env.launch(&mint);
+    assert_eq!(l.raise_max, 25 * SOL);
+    assert_eq!(l.max_per_wallet, 0, "no wallet cap on either side");
+}
+
+#[test]
+fn beta_wallet_cap_snapshots_the_tighter_cap_into_the_launch() {
+    let mut env = Env::with_params(beta_params(0, 5 * SOL));
+    let admin = env.admin.insecure_clone();
+    let creator = env.user(5);
+
+    // Creator has no cap -> platform cap applies.
+    let open = env.create_ok(&creator, default_args());
+    assert_eq!(env.launch(&open).max_per_wallet, 5 * SOL);
+    // Creator cap tighter -> creator cap kept.
+    let mut a = default_args();
+    a.max_per_wallet = 3 * SOL;
+    let tight = env.create_ok(&creator, a);
+    assert_eq!(env.launch(&tight).max_per_wallet, 3 * SOL);
+    // Creator cap looser -> clipped to the platform cap.
+    let mut a = default_args();
+    a.max_per_wallet = 8 * SOL;
+    let loose = env.create_ok(&creator, a);
+    assert_eq!(env.launch(&loose).max_per_wallet, 5 * SOL);
+
+    // Deposits clip to the snapshotted cap.
+    let b = env.user(20);
+    ok(env.deposit(&b, &open, 8 * SOL, vec![]));
+    assert_eq!(env.backer(&open, &b.pubkey()).unwrap().deposited, 5 * SOL);
+    assert_err(env.deposit(&b, &open, SOL, vec![]), MoshError::WalletCapReached);
+
+    // Later platform changes never touch open raises; new launches get the new cap.
+    ok(env.update_platform(&admin, beta_params(0, 2 * SOL)));
+    assert_eq!(env.launch(&open).max_per_wallet, 5 * SOL);
+    let b2 = env.user(20);
+    ok(env.deposit(&b2, &open, 5 * SOL, vec![]));
+    assert_eq!(env.backer(&open, &b2.pubkey()).unwrap().deposited, 5 * SOL);
+    let newer = env.create_ok(&creator, default_args());
+    assert_eq!(env.launch(&newer).max_per_wallet, 2 * SOL);
+    env.assert_invariants(&open);
+}
+
+#[test]
+fn admin_can_raise_lower_and_disable_beta_caps() {
+    let mut env = Env::with_params(beta_params(25 * SOL, 5 * SOL));
+    let admin = env.admin.insecure_clone();
+    let stranger = env.user(2);
+    let creator = env.user(5);
+    assert_eq!(env.platform().params.max_raise_lamports, 25 * SOL);
+    assert_eq!(env.platform().params.max_wallet_deposit_lamports, 5 * SOL);
+
+    // Only the admin, and only within hard bounds.
+    assert_err(env.update_platform(&stranger, beta_params(0, 0)), MoshError::Unauthorized);
+    assert_err(
+        env.update_platform(&admin, beta_params(MAX_RAISE_LAMPORTS + 1, 5 * SOL)),
+        MoshError::InvalidParam,
+    );
+    assert_err(
+        env.update_platform(&admin, beta_params(25 * SOL, MAX_RAISE_LAMPORTS + 1)),
+        MoshError::InvalidParam,
+    );
+    // A raise cap below the platform minimum would make every launch impossible.
+    assert_err(env.update_platform(&admin, beta_params(SOL - 1, 5 * SOL)), MoshError::InvalidParam);
+
+    // Raise the cap: a 50 SOL raise now fits.
+    ok(env.update_platform(&admin, beta_params(100 * SOL, 10 * SOL)));
+    let mint = env.create_ok(&creator, default_args());
+    assert_eq!(env.launch(&mint).max_per_wallet, 10 * SOL);
+
+    // Lower it: the same raise is rejected again.
+    ok(env.update_platform(&admin, beta_params(20 * SOL, SOL)));
+    assert_err(env.create(&creator, default_args()).1, MoshError::RaiseAboveBetaCap);
+
+    // 0 disables both caps: up to the hard limit, no wallet cap.
+    ok(env.update_platform(&admin, beta_params(0, 0)));
+    let mut a = default_args();
+    a.raise_max = MAX_RAISE_LAMPORTS;
+    let mint = env.create_ok(&creator, a);
+    let l = env.launch(&mint);
+    assert_eq!(l.raise_max, MAX_RAISE_LAMPORTS);
+    assert_eq!(l.max_per_wallet, 0);
+}
