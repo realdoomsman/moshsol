@@ -3,24 +3,25 @@ import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ComponentProps, ReactN
 import { cn } from "./cn";
 import { Spinner } from "./spinner";
 
-/** `inverse` = the secondary button on an `ink` band (landing final CTA): 1px ink-2 border, paper text. */
-export type ButtonVariant = "primary" | "accent" | "secondary" | "ghost" | "buy" | "sell" | "danger" | "inverse";
+export type ButtonVariant = "primary" | "accent" | "secondary" | "ghost" | "buy" | "sell" | "danger";
 export type ButtonSize = "sm" | "md" | "lg";
 
-/** Hover steps the fill darker (§3.6: `color-mix(in oklab, <fill>, black 8%)`) over 100 ms. */
+/**
+ * On the dark ground, hover lifts: filled buttons mix 10% toward white (ink dims 10% toward the
+ * ground instead), outlined ones step up to `raised` with a brighter rule. 100 ms, house easing.
+ */
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: "bg-ink text-paper hover:bg-[color-mix(in_oklab,var(--color-ink),black_8%)]",
-  accent: "bg-accent text-on-accent hover:bg-[color-mix(in_oklab,var(--color-accent),black_8%)]",
-  secondary: "border border-line-2 bg-surface text-ink hover:bg-sunken",
-  ghost: "text-ink-2 hover:bg-sunken hover:text-ink",
-  buy: "bg-up text-on-up hover:bg-[color-mix(in_oklab,var(--color-up),black_8%)]",
-  sell: "bg-down text-on-down hover:bg-[color-mix(in_oklab,var(--color-down),black_8%)]",
+  primary: "bg-ink text-paper hover:bg-[color-mix(in_oklab,var(--color-ink),var(--color-paper)_12%)]",
+  accent: "bg-accent text-on-accent hover:bg-[color-mix(in_oklab,var(--color-accent),white_10%)]",
+  secondary: "border border-line-2 bg-surface text-ink hover:border-ink-3 hover:bg-raised",
+  ghost: "text-ink-2 hover:bg-raised hover:text-ink",
+  buy: "bg-up text-on-up hover:bg-[color-mix(in_oklab,var(--color-up),white_10%)]",
+  sell: "bg-down text-on-down hover:bg-[color-mix(in_oklab,var(--color-down),white_10%)]",
   danger: "border border-down text-down hover:bg-down-wash",
-  inverse: "border border-ink-2 text-paper hover:bg-[color-mix(in_oklab,var(--color-ink),white_10%)]",
 };
 
 /** A disabled (not busy) button drops its fill so it never reads as actionable. */
-const INERT = "border border-line bg-sunken text-ink-3";
+const INERT = "border border-line bg-surface text-ink-3";
 
 /** 32 / 40 / 48 px (sm grows to 40 on touch screens). */
 const SIZES: Record<ButtonSize, string> = {

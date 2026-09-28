@@ -3,17 +3,12 @@
  * file only holds values the browser chrome or generated artwork needs as literals.
  */
 
-export type Theme = "paper" | "night";
-
-/** `<meta name="theme-color">` per surface (= the `paper` token of each theme). */
-export const THEME_COLOR: Record<Theme, string> = {
-  paper: "#F6F5F1",
-  night: "#0F100E",
-};
+/** `<meta name="theme-color">`: the `paper` token (the page ground). */
+export const THEME_COLOR = "#0F100E";
 
 /**
  * Wallet identicon tones (§3.7): 12 warm/neutral hues derived from the ink and accent families,
- * as OKLCH so every tone sits at the same perceived lightness on Paper and Night.
+ * as OKLCH so every tone sits at the same perceived lightness on the dark ground.
  */
 export const IDENTICON_TONES: readonly string[] = [
   "oklch(0.66 0.17 41)", // accent orange
@@ -30,20 +25,20 @@ export const IDENTICON_TONES: readonly string[] = [
   "oklch(0.42 0.04 60)", // umber
 ];
 
-/** Background tones for the token-image fallback tile (two per tile, picked from the mint hash). */
+/** Background tones for the token-image fallback tile (two per tile, picked from the mint hash). Low-lightness, warm, muted: they sit on the dark ground like token art, not like stickers. */
 export const TOKEN_TILE_TONES: readonly string[] = [
-  "oklch(0.86 0.05 60)",
-  "oklch(0.80 0.06 45)",
-  "oklch(0.84 0.04 95)",
-  "oklch(0.78 0.03 120)",
-  "oklch(0.82 0.03 200)",
-  "oklch(0.76 0.04 30)",
-  "oklch(0.88 0.02 90)",
-  "oklch(0.74 0.05 75)",
+  "oklch(0.36 0.05 60)",
+  "oklch(0.32 0.06 40)",
+  "oklch(0.38 0.04 95)",
+  "oklch(0.33 0.03 130)",
+  "oklch(0.34 0.03 210)",
+  "oklch(0.30 0.04 25)",
+  "oklch(0.40 0.02 85)",
+  "oklch(0.35 0.05 75)",
 ];
 
-/** Initials on the fallback tile: the tones are light in both themes, so the ink is fixed. */
-export const TOKEN_TILE_INK = "rgb(14 15 12 / 0.78)";
+/** Initials on the fallback tile: the tones are all dark, so the ink is fixed off-white. */
+export const TOKEN_TILE_INK = "rgb(242 241 236 / 0.86)";
 
 /** Stable 32-bit hash (FNV-1a) of an address, for deterministic identicons and fallback tiles. */
 export function hashString(s: string): number {

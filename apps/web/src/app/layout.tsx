@@ -3,6 +3,7 @@ import { JetBrains_Mono, Mona_Sans } from "next/font/google";
 import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { SITE_URL } from "@/lib/env";
+import { THEME_COLOR } from "@/lib/theme";
 import "./globals.css";
 import { Providers } from "./providers";
 
@@ -26,9 +27,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: THEME_COLOR,
 };
 
-/** Theme, header and footer come from the route group layouts: (marketing) = Paper, (app) = Night. */
+/** Header, footer and page framing come from the route group layouts (all through `SiteShell`). */
 export default async function RootLayout({ children }: { children: ReactNode }) {
   // Every page renders live indexer data per request (never prerendered at build time).
   await connection();

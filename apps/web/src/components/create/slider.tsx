@@ -3,8 +3,9 @@
 import { cn } from "../ui/cn";
 
 /**
- * Range input on a 4px `sunken` track with an `ink` fill and a 16px thumb. The native input sits
- * on top (transparent track) so keyboard, touch and screen readers get the real control.
+ * Range input on a 4px `line` track (the progress-bar track) with an `ink-2` fill and a 16px `ink`
+ * thumb: the thumb is the control, the fill only says how far. The native input sits on top
+ * (transparent track) so keyboard, touch and screen readers get the real control.
  */
 export function Slider({
   id,
@@ -31,8 +32,8 @@ export function Slider({
   const pct = max > min ? ((Math.min(max, Math.max(min, value)) - min) / (max - min)) * 100 : 0;
   return (
     <div className={cn("relative h-10", className)}>
-      <div aria-hidden className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-sunken">
-        <div className={cn("h-full", invalid ? "bg-down" : "bg-ink")} style={{ width: `${pct}%` }} />
+      <div aria-hidden className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-[2px] bg-line">
+        <div className={cn("h-full", invalid ? "bg-down" : "bg-ink-2")} style={{ width: `${pct}%` }} />
       </div>
       <input
         id={id}

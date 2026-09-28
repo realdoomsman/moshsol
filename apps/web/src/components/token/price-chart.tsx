@@ -11,13 +11,16 @@ import {
   LineStyle,
   TickMarkType,
   createChart,
-  createSeriesMarkers,
   type AutoscaleInfo,
   type IChartApi,
   type IPriceLine,
+  type IPrimitivePaneRenderer,
+  type IPrimitivePaneView,
   type ISeriesApi,
-  type ISeriesMarkersPluginApi,
-  type SeriesMarker,
+  type ISeriesPrimitive,
+  type LineWidth,
+  type PrimitivePaneViewZOrder,
+  type SeriesAttachedParameter,
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
@@ -28,6 +31,7 @@ import { fmtSolValue } from "@/lib/format";
 import { useLocalStorage, useMounted, useNow } from "@/lib/hooks";
 import { useCandles, useTrades } from "@/lib/queries";
 import type { Candle, LaunchSummary } from "@/lib/types";
+import { AgentGlyph } from "../brand/glyphs";
 import { IconButton } from "../ui/button";
 import { cn } from "../ui/cn";
 import { EmptyState } from "../ui/empty-state";
@@ -71,6 +75,7 @@ interface Palette {
   accent: string;
   accentInk: string;
   raised: string;
+  surface: string;
   paper: string;
   mono: string;
 }
@@ -88,6 +93,7 @@ function readPalette(): Palette {
     accent: v("--color-accent"),
     accentInk: v("--color-accent-ink"),
     raised: v("--color-raised"),
+    surface: v("--color-surface"),
     paper: v("--color-paper"),
     mono: v("--font-mono") || "monospace",
   };
@@ -114,6 +120,147 @@ interface Bar {
   agentSells: number;
 }
 
+type DrawTarget = Parameters<IPrimitivePaneRenderer["draw"]>[0];
+type ToX = (time: number) => number | null;
+type ToY = (price: number) => number | null;
+
+/**
+ * A canvas layer attached to a price series, for the two chart marks the library has no shape for:
+ * the band fill and the agent diamonds. Paints in media pixels; x from the time scale, y from the
+ * series' price scale. The owner calls `set…` with new data, which requests a redraw.
+ */
+abstract class CanvasOverlay implements ISeriesPrimitive<Time> {
+  private host: SeriesAttachedParameter<Time> | null = null;
+  private readonly views: readonly IPrimitivePaneView[];
+
+  constructor(zOrder: PrimitivePaneViewZOrder) {
+    this.views = [{ zOrder: () => zOrder, renderer: () => ({ draw: (target: DrawTarget) => this.draw(target) }) }];
+  }
+  attached(host: SeriesAttachedParameter<Time>) {
+    this.host = host;
+  }
+  detached() {
+    this.host = null;
+  }
+  paneViews() {
+    return this.views;
+  }
+  protected redraw() {
+    this.host?.requestUpdate();
+  }
+  private draw(target: DrawTarget) {
+    const host = this.host;
+    if (!host) return;
+    const ts = host.chart.timeScale();
+    target.useMediaCoordinateSpace(({ context }) =>
+      this.paint(
+        context,
+        (t) => ts.timeToCoordinate(t as UTCTimestamp),
+        (p) => host.series.priceToCoordinate(p),
+        ts.options().barSpacing,
+      ),
+    );
+  }
+  protected abstract paint(ctx: CanvasRenderingContext2D, x: ToX, y: ToY, barSpacing: number): void;
+}
+
+interface BandPoint {
+  time: number;
+  low: number;
+  high: number;
+}
+
+/**
+ * The agent's band (§3.4 rule 6): `accent` at 7% between the buy and sell edges, and the edges
+ * themselves dashed 3-4 in `accent` at 80% (the library only dashes 2-2). Drawn under the grid and
+ * the price; the edge line series stay (hidden) so autoscale keeps the band in view.
+ */
+class BandOverlay extends CanvasOverlay {
+  private points: BandPoint[] = [];
+  private fill = "";
+  private edge = "";
+  constructor() {
+    super("bottom");
+  }
+  set(points: BandPoint[], fill: string, edge: string) {
+    this.points = points;
+    this.fill = fill;
+    this.edge = edge;
+    this.redraw();
+  }
+  protected paint(ctx: CanvasRenderingContext2D, x: ToX, y: ToY, barSpacing: number) {
+    const pts: { x: number; hi: number; lo: number }[] = [];
+    for (const p of this.points) {
+      const px = x(p.time);
+      const hi = y(p.high);
+      const lo = y(p.low);
+      if (px !== null && hi !== null && lo !== null) pts.push({ x: px, hi, lo });
+    }
+    if (!pts.length) return;
+    // A lone point spans one bar, the way the library draws a one-point line.
+    const run = pts.length === 1 ? [{ ...pts[0], x: pts[0].x - barSpacing / 2 }, { ...pts[0], x: pts[0].x + barSpacing / 2 }] : pts;
+    ctx.beginPath();
+    run.forEach((p, i) => (i ? ctx.lineTo(p.x, p.hi) : ctx.moveTo(p.x, p.hi)));
+    for (let i = run.length - 1; i >= 0; i--) ctx.lineTo(run[i].x, run[i].lo);
+    ctx.closePath();
+    ctx.fillStyle = this.fill;
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = this.edge;
+    ctx.setLineDash([3, 4]);
+    for (const key of ["hi", "lo"] as const) {
+      ctx.beginPath();
+      run.forEach((p, i) => (i ? ctx.lineTo(p.x, p[key]) : ctx.moveTo(p.x, p[key])));
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+}
+
+interface AgentMark {
+  time: number;
+  buy: boolean;
+  /** Where the diamond hangs: under the bar's low for buys, over its high for sells (the value in line mode). */
+  price: number;
+}
+
+/** Agent trades (§3.4 rule 6): a filled `accent` diamond (10px) under the bar for buys, an outlined one over it for sells. */
+class AgentDiamonds extends CanvasOverlay {
+  private marks: AgentMark[] = [];
+  private accent = "";
+  private surface = "";
+  constructor() {
+    super("normal");
+  }
+  set(marks: AgentMark[], accent: string, surface: string) {
+    this.marks = marks;
+    this.accent = accent;
+    this.surface = surface;
+    this.redraw();
+  }
+  protected paint(ctx: CanvasRenderingContext2D, x: ToX, y: ToY) {
+    const r = 5;
+    const gap = 10;
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = this.accent;
+    for (const m of this.marks) {
+      const px = x(m.time);
+      const py = y(m.price);
+      if (px === null || py === null) continue;
+      const cy = m.buy ? py + gap : py - gap;
+      ctx.beginPath();
+      ctx.moveTo(px, cy - r);
+      ctx.lineTo(px + r, cy);
+      ctx.lineTo(px, cy + r);
+      ctx.lineTo(px - r, cy);
+      ctx.closePath();
+      ctx.fillStyle = m.buy ? this.accent : this.surface;
+      ctx.fill();
+      if (!m.buy) ctx.stroke();
+    }
+  }
+}
+
 interface ChartRefs {
   chart: IChartApi;
   palette: Palette;
@@ -123,8 +270,9 @@ interface ChartRefs {
   bandLow: ISeriesApi<"Line">;
   bandHigh: ISeriesApi<"Line">;
   volume: ISeriesApi<"Histogram">;
-  candleMarkers: ISeriesMarkersPluginApi<Time>;
-  areaMarkers: ISeriesMarkersPluginApi<Time>;
+  band: BandOverlay;
+  candleAgents: AgentDiamonds;
+  areaAgents: AgentDiamonds;
   costLine: { series: ISeriesApi<"Candlestick"> | ISeriesApi<"Area">; line: IPriceLine } | null;
 }
 
@@ -192,7 +340,7 @@ function Toggle({
       onClick={() => onChange(!pressed)}
       className={cn(
         "small inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm border px-2.5 [font-weight:560] transition-colors pointer-coarse:h-10",
-        pressed ? "border-line-2 bg-raised text-ink" : "border-line text-ink-3 hover:text-ink-2",
+        pressed ? "border-line-2 bg-raised text-ink" : "border-line text-ink-3 hover:border-line-2 hover:text-ink-2",
       )}
     >
       <span aria-hidden className={cn("inline-flex items-center", !pressed && "opacity-40")}>
@@ -260,8 +408,10 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
         attributionLogo: false,
       },
       localization: { timeFormatter: (t: Time) => dateTime.format(new Date((t as number) * 1000)) },
-      grid: { vertLines: { color: withAlpha(p.line, 0.6) }, horzLines: { color: withAlpha(p.line, 0.6) } },
-      rightPriceScale: { borderColor: p.line, minimumWidth: 72, scaleMargins: { top: 0.18, bottom: 0.18 } },
+      // §3.4 rule 6: horizontal grid only, in `line`.
+      grid: { vertLines: { visible: false }, horzLines: { color: p.line } },
+      // `entireTextOnly` drops a tick label rather than clip it at the pane's top or bottom edge.
+      rightPriceScale: { borderColor: p.line, minimumWidth: 72, entireTextOnly: true, scaleMargins: { top: 0.18, bottom: 0.18 } },
       timeScale: {
         borderColor: p.line,
         timeVisible: true,
@@ -289,17 +439,23 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
       autoscaleInfoProvider: minSpan(0.12),
     });
     const area = chart.addSeries(AreaSeries, {
-      lineWidth: 2,
+      // Line mode is `ink` at 1.75px (§3.4 rule 6); the canvas takes fractional widths.
+      lineColor: p.ink,
+      lineWidth: 1.75 as LineWidth,
+      // The fill fades from the line's highest point to the bottom of the pane, not across the whole pane.
+      relativeGradient: true,
       priceLineStyle: LineStyle.Dotted,
       crosshairMarkerRadius: 4,
       crosshairMarkerBorderWidth: 2,
-      crosshairMarkerBorderColor: p.paper,
+      crosshairMarkerBorderColor: p.surface,
+      crosshairMarkerBackgroundColor: p.ink,
       visible: false,
       autoscaleInfoProvider: minSpan(0.04),
     });
     const quiet = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false } as const;
-    const ema = chart.addSeries(LineSeries, { ...quiet, color: p.ink2, lineWidth: 1 });
-    const bandEdge = { ...quiet, color: withAlpha(p.accent, 0.7), lineWidth: 1, lineStyle: LineStyle.Dashed } as const;
+    const ema = chart.addSeries(LineSeries, { ...quiet, color: p.ink3, lineWidth: 1, lineStyle: LineStyle.SparseDotted });
+    // The band's edges are drawn by `BandOverlay`; these hidden lines keep it inside the autoscale.
+    const bandEdge = { ...quiet, lineVisible: false } as const;
     const bandLow = chart.addSeries(LineSeries, bandEdge);
     const bandHigh = chart.addSeries(LineSeries, bandEdge);
     const volume = chart.addSeries(HistogramSeries, {
@@ -310,6 +466,12 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
     });
     chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.86, bottom: 0 } });
     chart.subscribeCrosshairMove((e) => setHover(e.time === undefined ? null : (e.time as number)));
+    const bandOverlay = new BandOverlay();
+    bandHigh.attachPrimitive(bandOverlay);
+    const candleAgents = new AgentDiamonds();
+    candleSeries.attachPrimitive(candleAgents);
+    const areaAgents = new AgentDiamonds();
+    area.attachPrimitive(areaAgents);
     refs.current = {
       chart,
       palette: p,
@@ -319,8 +481,9 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
       bandLow,
       bandHigh,
       volume,
-      candleMarkers: createSeriesMarkers(candleSeries, [], { autoScale: true }),
-      areaMarkers: createSeriesMarkers(area, [], { autoScale: true }),
+      band: bandOverlay,
+      candleAgents,
+      areaAgents,
       costLine: null,
     };
     setReady(true);
@@ -364,13 +527,9 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
     const list = [...bars.values()];
     const first = list[0];
     const last = list.at(-1);
-    const markers: SeriesMarker<Time>[] = [];
     const emaLine: { time: UTCTimestamp; value: number }[] = [];
     for (const b of list) {
-      const time = b.time as UTCTimestamp;
-      if (b.agentBuys) markers.push({ time, position: "belowBar", shape: "arrowUp", color: "", size: 0.6 });
-      if (b.agentSells) markers.push({ time, position: "aboveBar", shape: "arrowDown", color: "", size: 0.6 });
-      if (b.ema !== null) emaLine.push({ time, value: b.ema * mult });
+      if (b.ema !== null) emaLine.push({ time: b.time as UTCTimestamp, value: b.ema * mult });
     }
     // Line view: the first bucket's open, every close, then the current price carried to now, so a
     // launch with a single trade still draws a line across the chart.
@@ -389,7 +548,7 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
       line,
       volume: list.map((b) => ({ time: b.time as UTCTimestamp, value: b.volumeSol, up: b.close >= b.open })),
       ema: emaLine,
-      markers,
+      agentBars: list.filter((b) => b.agentBuys || b.agentSells),
     };
   }, [candles.data, trades.data, tf, mult, now, l.priceSol]);
 
@@ -402,10 +561,10 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
     r.candles.applyOptions({ visible: !line });
     r.area.applyOptions({
       visible: line,
-      lineColor: tone,
-      topColor: withAlpha(tone, 0.18),
+      // The line stays `ink`; the fill and the last-price label carry the direction.
+      priceLineColor: tone,
+      topColor: withAlpha(tone, 0.12),
       bottomColor: withAlpha(tone, 0),
-      crosshairMarkerBackgroundColor: tone,
     });
     // Volume bars would be slabs at line-mode spacing; the legend still reports each bucket's volume.
     r.volume.applyOptions({ visible: !line });
@@ -413,18 +572,30 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
     r.candles.setData(series.candles);
     r.area.setData(series.line);
     r.volume.setData(
-      series.volume.map((v) => ({ time: v.time, value: v.value, color: withAlpha(v.up ? p.up : p.down, 0.28) })),
+      series.volume.map((v) => ({ time: v.time, value: v.value, color: withAlpha(v.up ? p.up : p.down, 0.35) })),
     );
     const showBand = overlays.band;
     r.ema.applyOptions({ visible: showBand });
     r.bandLow.applyOptions({ visible: showBand });
     r.bandHigh.applyOptions({ visible: showBand });
     r.ema.setData(series.ema);
-    r.bandLow.setData(series.ema.map((e) => ({ time: e.time, value: e.value * (1 - band) })));
-    r.bandHigh.setData(series.ema.map((e) => ({ time: e.time, value: e.value * (1 + band) })));
-    const markers = overlays.agent ? series.markers.map((m) => ({ ...m, color: p.accent })) : [];
-    r.candleMarkers.setMarkers(line ? [] : markers);
-    r.areaMarkers.setMarkers(line ? markers : []);
+    const lowEdge = series.ema.map((e) => ({ time: e.time, value: e.value * (1 - band) }));
+    const highEdge = series.ema.map((e) => ({ time: e.time, value: e.value * (1 + band) }));
+    r.bandLow.setData(lowEdge);
+    r.bandHigh.setData(highEdge);
+    r.band.set(
+      showBand ? lowEdge.map((e, i) => ({ time: e.time, low: e.value, high: highEdge[i].value })) : [],
+      withAlpha(p.accent, 0.07),
+      withAlpha(p.accent, 0.8),
+    );
+    const marks = overlays.agent
+      ? series.agentBars.flatMap((b) => [
+          ...(b.agentBuys ? [{ time: b.time, buy: true, price: line ? b.close : b.low }] : []),
+          ...(b.agentSells ? [{ time: b.time, buy: false, price: line ? b.close : b.high }] : []),
+        ])
+      : [];
+    r.candleAgents.set(line ? [] : marks, p.accent, p.surface);
+    r.areaAgents.set(line ? marks : [], p.accent, p.surface);
 
     const count = line ? series.line.length : series.candles.length;
     // Sparse views re-fit as points arrive; dense ones fit once so a user's zoom isn't reset.
@@ -522,12 +693,12 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
       ref={panel}
       aria-label="Price chart"
       className={cn(
-        "min-w-0 rounded-md border border-line bg-surface [&:fullscreen]:flex [&:fullscreen]:flex-col [&:fullscreen]:rounded-none [&:fullscreen]:border-0 [&:fullscreen]:bg-paper",
+        "min-w-0 rounded-md border border-line bg-surface [&:fullscreen]:flex [&:fullscreen]:flex-col [&:fullscreen]:rounded-none [&:fullscreen]:border-0",
         className,
       )}
     >
       {/* Wraps instead of scrolling: below 640px the timeframe is a select and chart type shows icons. */}
-      <div className="flex flex-wrap items-center gap-2 px-3 pt-3">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
         <Segmented<Unit>
           size="sm"
           label="Chart unit"
@@ -593,7 +764,7 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
         <Toggle
           pressed={overlays.agent}
           onChange={(agent) => setOverlays({ ...overlays, agent })}
-          swatch={<span className="text-[10px] leading-none text-accent">▲</span>}
+          swatch={<AgentGlyph size={12} className="text-accent" />}
         >
           Agent
         </Toggle>
@@ -617,10 +788,10 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
           )}
         </IconButton>
       </div>
-      <div className={cn("relative mt-2", fullscreen ? "min-h-0 flex-1" : "h-[320px] md:h-[440px]")}>
+      <div className={cn("relative", fullscreen ? "min-h-0 flex-1" : "h-[320px] md:h-[440px]")}>
         <div ref={host} className="absolute inset-0" />
         {shown ? (
-          <div className="micro num pointer-events-none absolute top-1 left-3 z-10 grid max-w-[calc(100%-6rem)] gap-1">
+          <div className="micro num pointer-events-none absolute top-2 left-4 z-10 grid max-w-[calc(100%-6rem)] gap-1">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
               {/* Local time zone exists only in the browser; the server-rendered legend leaves it blank. */}
               <span className="text-ink-2">{mounted ? dateTime.format(new Date(shown.time * 1000)) : null}</span>

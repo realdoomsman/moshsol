@@ -221,7 +221,7 @@ export function TradesTab({
               type="button"
               onClick={() => set({ maker: null })}
               aria-label="Clear maker filter"
-              className="inline-flex size-8 items-center justify-center rounded-sm text-ink-3 transition-colors hover:bg-sunken hover:text-ink pointer-coarse:size-10"
+              className="inline-flex size-8 items-center justify-center rounded-sm text-ink-3 transition-colors hover:bg-raised hover:text-ink pointer-coarse:size-10"
             >
               <X className="size-4" strokeWidth={1.5} aria-hidden />
             </button>

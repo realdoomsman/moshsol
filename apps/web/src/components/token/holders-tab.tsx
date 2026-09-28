@@ -20,34 +20,38 @@ import { LoadingRows } from "./trades-tab";
 
 const MAX_HOLDERS = 1_000;
 
-/** 48px distribution bar (§4.5): vault (accent), curve (ink-3), top 10 wallets (ink), everyone else (sunken). */
+/**
+ * 48px distribution bar (§4.5). Brightness steps down left to right so the protocol's share reads
+ * first and the un-owned curve recedes: vault (accent), top 10 wallets (`ink-2`), everyone else
+ * (`ink-3`), the curve (`line-2`). 1px `surface` gaps keep the segments crisp.
+ */
 function DistributionBar({ launch: l }: { launch: LaunchSummary }) {
   const h = useHolderStats(l);
   const others = Math.max(0, 100 - h.vaultPct - h.curvePct - h.top10Pct);
   const segments = [
-    { label: "Vault", pct: h.vaultPct, className: "bg-accent" },
-    { label: "Curve", pct: h.curvePct, className: "bg-ink-3" },
-    { label: "Top 10", pct: h.top10Pct, className: "bg-ink" },
-    { label: "Others", pct: others, className: "bg-sunken" },
+    { label: "Vault", pct: h.vaultPct, className: "bg-accent", known: true },
+    { label: "Top 10", pct: h.top10Pct, className: "bg-ink-2", known: h.loaded },
+    { label: "Others", pct: others, className: "bg-ink-3", known: h.loaded },
+    { label: "Curve", pct: h.curvePct, className: "bg-line-2", known: true },
   ];
   return (
     <div className="grid gap-2">
       <div
         role="img"
         aria-label={segments.map((s) => `${s.label} ${fmtPct(s.pct)}`).join(", ")}
-        className="flex h-12 overflow-hidden rounded-sm border border-line bg-sunken"
+        className="flex h-12 gap-px overflow-hidden rounded-sm bg-surface"
       >
         {segments.map((s) =>
           s.pct > 0 ? (
-            <div key={s.label} className={cn("h-full min-w-px", s.className)} style={{ width: `${s.pct}%` }} />
+            <div key={s.label} className={cn("h-full min-w-0.5", s.className)} style={{ width: `${s.pct}%` }} />
           ) : null,
         )}
       </div>
       <ul className="small num flex flex-wrap gap-x-4 gap-y-1 text-ink-2">
         {segments.map((s) => (
           <li key={s.label} className="inline-flex items-center gap-1.5">
-            <span aria-hidden className={cn("size-2 rounded-[2px] border border-line", s.className)} />
-            {s.label} <span className="text-ink">{h.loaded || s.label === "Vault" || s.label === "Curve" ? fmtPct(s.pct) : "—"}</span>
+            <span aria-hidden className={cn("size-2 rounded-[2px]", s.className)} />
+            {s.label} <span className="text-ink">{s.known ? fmtPct(s.pct) : "—"}</span>
           </li>
         ))}
       </ul>

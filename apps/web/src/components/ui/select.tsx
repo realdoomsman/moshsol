@@ -71,7 +71,7 @@ export function Select<T extends string>({
             }
           }}
           className={cn(
-            "ui inline-flex items-center gap-2 rounded-sm border border-line-2 bg-surface pr-2 pl-3 text-ink transition-colors hover:bg-sunken",
+            "ui inline-flex items-center gap-2 rounded-sm border border-line-2 bg-surface pr-2 pl-3 text-ink transition-colors hover:border-ink-3 hover:bg-raised",
             size === "sm" ? "h-8 pointer-coarse:h-10" : "h-10",
             className,
           )}
@@ -111,7 +111,7 @@ export function Select<T extends string>({
                 }}
                 className={cn(
                   "flex min-h-10 cursor-pointer items-center gap-2.5 px-3 py-2 outline-none transition-colors",
-                  o.disabled ? "cursor-not-allowed text-ink-3" : "hover:bg-sunken focus:bg-sunken",
+                  o.disabled ? "cursor-not-allowed text-ink-3" : "hover:bg-ink/[0.06] focus:bg-ink/[0.06]",
                 )}
               >
                 <span className="min-w-0 flex-1">

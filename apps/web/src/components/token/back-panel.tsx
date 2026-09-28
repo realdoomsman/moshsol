@@ -12,7 +12,7 @@ import type { Phase } from "@/lib/launch";
 import { usePlatform } from "@/lib/queries";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
-import { BackerGlyph, ClampGlyph, RefundGlyph } from "../brand/glyphs";
+import { RefundGlyph } from "../brand/glyphs";
 import { Button } from "../ui/button";
 import { cn } from "../ui/cn";
 import { AmountInput } from "../ui/input";
@@ -61,45 +61,32 @@ function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSumm
   const feePctOfTrade = ((l.terms.tradeFeeBps * l.terms.backerFeeShareBps) / 1_000_000) * (share / 100);
   const basis = add ? `for ${fmtLamports(mine)} SOL` : deposited > 0n ? "your deposit" : `e.g. ${fmtLamports(extra)} SOL`;
   return (
-    <div className="grid gap-3 rounded-sm border border-line p-3">
+    <div className="grid gap-3 border-t border-line pt-4">
       <div className="flex items-baseline justify-between gap-2">
         <span className="label text-ink-3">What you get</span>
         <span className="small num text-ink-3">{basis}</span>
       </div>
-      <ul className="small grid gap-3">
-        <li className="grid grid-cols-[16px_minmax(0,1fr)] gap-2.5">
-          <BackerGlyph className="mt-0.5 text-accent-ink" />
-          <div>
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-ink-2">Fee share</span>
-              <span className="num text-ink">{fmtPct(share)} of backer fees</span>
-            </div>
-            <p className="mt-0.5 text-ink-3">
-              ≈ {+feePctOfTrade.toPrecision(2)}% of every trade, forever. Shrinks as others back it.
-            </p>
-          </div>
-        </li>
+      <dl className="small grid gap-3">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3">
+          <dt className="text-ink-2">Fee share</dt>
+          <dd className="num text-right text-ink">{fmtPct(share)} of backer fees</dd>
+          <dd className="col-span-2 mt-0.5 text-ink-3">≈ {+feePctOfTrade.toPrecision(2)}% of every trade, forever. Shrinks as others back it.</dd>
+        </div>
         {bundle ? (
-          <li className="grid grid-cols-[16px_minmax(0,1fr)] gap-2.5">
-            <ClampGlyph className="mt-0.5 text-accent-ink" />
-            <div>
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-ink-2">Vault slice</span>
-                <span className="num text-right text-ink">
-                  {fmtTokens((bundle.bundleTokens * mine) / total)} ${l.symbol}
-                </span>
-              </div>
-              <p className="mt-0.5 text-ink-3">+ {fmtLamports((bundle.vaultSol * mine) / total)} SOL, locked forever. Only the vault agent trades it.</p>
-            </div>
-          </li>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3">
+            <dt className="text-ink-2">Vault slice</dt>
+            <dd className="num text-right text-ink">
+              {fmtTokens((bundle.bundleTokens * mine) / total)} ${l.symbol}
+            </dd>
+            <dd className="col-span-2 mt-0.5 text-ink-3">
+              + {fmtLamports((bundle.vaultSol * mine) / total)} SOL, locked forever. Only the vault agent trades it.
+            </dd>
+          </div>
         ) : null}
-        <li className="grid grid-cols-[16px_minmax(0,1fr)] gap-2.5">
-          <RefundGlyph className="mt-0.5 text-accent-ink" />
-          <p className="text-ink-2">
-            100% refundable if the {fmtLamports(l.raiseMin)} SOL minimum isn&apos;t met by the deadline or the creator cancels.
-          </p>
-        </li>
-      </ul>
+      </dl>
+      <p className="small text-ink-2">
+        100% refundable if the {fmtLamports(l.raiseMin)} SOL minimum isn&apos;t met by the deadline or the creator cancels.
+      </p>
     </div>
   );
 }

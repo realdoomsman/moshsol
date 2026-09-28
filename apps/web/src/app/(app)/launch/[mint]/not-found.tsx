@@ -4,7 +4,7 @@ import { shortAddr } from "@holdfast/sdk";
 import { useParams } from "next/navigation";
 import { ButtonLink } from "@/components/ui/button";
 
-/** Inside the Night app shell: the mint in the URL isn't a Holdfast launch on this cluster. */
+/** Inside the app shell: the mint in the URL isn't a Holdfast launch on this cluster. */
 export default function LaunchNotFound() {
   const { mint } = useParams<{ mint: string }>();
   const label = mint ? decodeURIComponent(mint) : "";

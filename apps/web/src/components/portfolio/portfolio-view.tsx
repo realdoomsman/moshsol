@@ -5,7 +5,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey, type TransactionInstruction } from "@solana/web3.js";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useMoshClient, useSolBalance } from "@/lib/chain";
 import { fmtLamports, fmtSolValue } from "@/lib/format";
 import { useMounted, useNow } from "@/lib/hooks";
@@ -40,6 +40,11 @@ const CLAIMS_PER_TX = 6;
 const CLAIM_ALL = "Claim all";
 
 type Tab = "backed" | "created" | "refunds" | "holdings" | "activity";
+
+/** Zeros are real values, but they shouldn't read as loudly as the numbers this wallet has (§5.3). */
+function quiet(nonZero: boolean, text: string): ReactNode {
+  return nonZero ? text : <span className="text-ink-3">{text}</span>;
+}
 
 /**
  * Disconnected with no lookup (§4.7): one sentence, Connect, and "or look up any wallet". Also the
@@ -81,8 +86,8 @@ function PortfolioSkeleton() {
           <Skeleton className="h-4 w-32" />
         </div>
       </div>
-      <Skeleton className="h-24 w-full" />
-      <Skeleton className="h-64 w-full" />
+      <Skeleton className="h-24 w-full rounded-md" />
+      <Skeleton className="h-64 w-full rounded-md" />
     </div>
   );
 }
@@ -210,20 +215,20 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
       : tx.stage
         ? TX_STAGE_LABEL[tx.stage]
         : "Claiming…"
-    : claimCount > 0 && split
-      ? `Claim all · ${fmtLamports(split.totalClaimable)} SOL`
-      : "Nothing to claim";
-  const claimButton = own ? (
-    <Button
-      variant="accent"
-      busy={claimBusy}
-      disabled={claimCount === 0 || (tx.pending !== null && !claimBusy)}
-      onClick={() => void claimAll()}
-      className="w-full md:w-auto"
-    >
-      {claimLabel}
-    </Button>
-  ) : null;
+    : `Claim all · ${fmtLamports(split?.totalClaimable ?? 0n)} SOL`;
+  // Nothing claimable: the quiet "0 SOL" says it; no dead button next to it.
+  const claimButton =
+    own && (claimCount > 0 || claimBusy) ? (
+      <Button
+        variant="accent"
+        busy={claimBusy}
+        disabled={tx.pending !== null && !claimBusy}
+        onClick={() => void claimAll()}
+        className="w-full md:w-auto"
+      >
+        {claimLabel}
+      </Button>
+    ) : null;
 
   const counts = split && data
     ? {
@@ -250,7 +255,8 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
   const current = tab ?? firstFilled;
 
   return (
-    <div className="grid gap-6">
+    // `minmax(0, 1fr)`: the tab bar scrolls instead of widening the page on phones.
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-6">
       <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
         <div className="flex min-w-0 items-center gap-4">
           <Identicon address={wallet} src={u?.avatar} size={48} />
@@ -291,44 +297,45 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
       ) : (
         <>
           <section aria-label="Summary" className="grid gap-3">
-            <StatRow>
-              <div className="flex flex-wrap items-end justify-between gap-3">
+            {/* One value size across the strip so the baselines line up; zeros step back to `ink-3`. */}
+            <StatRow className="rounded-md border-x bg-surface">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <Stat
                   label="Claimable"
                   rule="Backer fees plus creator fees you can claim right now."
-                  size="xl"
                   tone={split.totalClaimable > 0n ? "accent" : undefined}
-                  value={`${fmtLamports(split.totalClaimable)} SOL`}
+                  value={quiet(split.totalClaimable > 0n, `${fmtLamports(split.totalClaimable)} SOL`)}
                   sub={claimCount > 0 ? `${claimCount} ${claimCount === 1 ? "position" : "positions"}` : undefined}
                 />
-                <div className="hidden md:block">{claimButton}</div>
+                <div className="hidden self-center md:block">{claimButton}</div>
               </div>
               <Stat
                 label="Holdings value"
                 rule="Tokens you hold, valued at the live curve price."
-                value={`${fmtSolValue(split.holdingsValue)} SOL`}
+                value={quiet(split.holdingsValue > 0, `${fmtSolValue(split.holdingsValue)} SOL`)}
                 sub={`${data.holdings.length} ${data.holdings.length === 1 ? "token" : "tokens"}`}
               />
               <Stat
                 label="Deposited as backer"
                 rule="SOL deposited into raises that launched or are still open (refundable deposits excluded)."
-                value={`${fmtLamports(split.deposited)} SOL`}
+                value={quiet(split.deposited > 0n, `${fmtLamports(split.deposited)} SOL`)}
                 sub={`${split.backed.length} ${split.backed.length === 1 ? "launch" : "launches"}`}
               />
               <Stat
                 label="Creator fees claimable"
                 rule="Your creator share of trade fees on the launches you created, not yet claimed."
-                value={`${fmtLamports(split.creatorClaimable)} SOL`}
+                value={quiet(split.creatorClaimable > 0n, `${fmtLamports(split.creatorClaimable)} SOL`)}
                 sub={`${data.created.length} created`}
               />
             </StatRow>
             {claimButton ? <div className="md:hidden">{claimButton}</div> : null}
           </section>
-          <section className="grid gap-0">
+          <section className="rounded-md border border-line bg-surface">
             <Tabs
               label="Positions"
               value={current}
               onChange={setTab}
+              className="px-4"
               items={[
                 { value: "backed", label: "Backed", count: counts!.backed },
                 { value: "created", label: "Created", count: counts!.created },
@@ -337,7 +344,7 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
                 { value: "activity", label: "Activity" },
               ]}
             />
-            <div role="tabpanel" aria-label={current} className="rounded-b-md border-x border-b border-line bg-surface">
+            <div role="tabpanel" aria-label={current}>
               {current === "backed" ? (
                 <BackedPanel rows={split.backed} actions={actions} now={now} />
               ) : current === "created" ? (

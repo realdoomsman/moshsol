@@ -39,7 +39,7 @@ function LaunchCell({ l, size = 32 }: { l: Pick<LaunchSummary, "mint" | "name" |
     <Link href={`/launch/${l.mint}`} className="group flex min-w-0 items-center gap-3">
       <TokenAvatar src={l.image} symbol={l.symbol} mint={l.mint} size={size} />
       <span className="min-w-0">
-        <span className="ui block truncate text-ink group-hover:underline group-hover:decoration-line-2 group-hover:underline-offset-2">
+        <span className="ui block truncate text-ink group-hover:underline group-hover:decoration-ink-3/60 group-hover:underline-offset-2">
           {l.name}
         </span>
         <span className="small block text-ink-3">${l.symbol}</span>

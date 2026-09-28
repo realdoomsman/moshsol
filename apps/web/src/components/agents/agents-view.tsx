@@ -133,7 +133,7 @@ function AgentTrades({ now }: { now: number }) {
             <TR key={`${t.signature}:${t.mint}:${t.isBuy ? "b" : "s"}`} agent>
               <TD className="text-ink-3">{timeAgo(t.timestamp, now)}</TD>
               <TD>
-                <Link href={`/launch/${t.mint}`} className="ui text-ink hover:underline hover:decoration-line-2 hover:underline-offset-2">
+                <Link href={`/launch/${t.mint}`} className="ui text-ink hover:underline hover:decoration-ink-3/60 hover:underline-offset-2">
                   ${t.symbol}
                 </Link>
               </TD>
@@ -191,14 +191,14 @@ export function AgentsView({ aside }: { aside: ReactNode }) {
   const traded = totals ? totals.buys + totals.sells > 0 : false;
 
   return (
-    <div className="grid gap-12 pb-4">
+    <div className="grid gap-10">
       <header className="order-1 grid gap-8 lg:order-none lg:grid-cols-[minmax(0,1fr)_400px] lg:items-center xl:grid-cols-[minmax(0,1fr)_460px]">
         <div className="grid gap-5">
           <div className="grid gap-3">
             <h1 className="display-m text-ink">The vault agent, in the open.</h1>
             <p className="body-l max-w-[60ch] text-ink-2">
               A rate-limited agent trades each vault against the swing, inside limits the program enforces.{" "}
-              <Link href="/docs/agents" className="whitespace-nowrap text-ink underline decoration-line-2 underline-offset-2 hover:decoration-ink">
+              <Link href="/docs/agents" className="whitespace-nowrap text-ink underline decoration-ink-3/60 underline-offset-2 hover:decoration-ink">
                 How it works ›
               </Link>
             </p>

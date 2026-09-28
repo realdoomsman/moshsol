@@ -8,8 +8,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "The Solana launchpad where the first buy can never be dumped.",
     start_url: "/app",
     display: "standalone",
-    background_color: THEME_COLOR.night,
-    theme_color: THEME_COLOR.night,
+    background_color: THEME_COLOR,
+    theme_color: THEME_COLOR,
     icons: [
       { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
       { src: "/icon-512.png", sizes: "512x512", type: "image/png" },

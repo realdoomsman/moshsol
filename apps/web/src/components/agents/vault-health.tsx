@@ -18,7 +18,7 @@ import type { VaultHealth } from "./health";
 
 type Filter = "all" | "attention";
 
-/** Share of a window budget used: a 4px meter plus the figures. */
+/** Share of a window budget used: a 4px meter on the same `line` track as the progress bars. */
 function Budget({ pct, used, cap, label, caption }: { pct: number; used: string; cap: string; label: string; caption?: string }) {
   return (
     <div className="grid w-36 gap-1">
@@ -28,9 +28,9 @@ function Budget({ pct, used, cap, label, caption }: { pct: number; used: string;
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(pct)}
-        className="h-1 overflow-hidden rounded-full bg-sunken"
+        className="h-1 overflow-hidden rounded-[2px] bg-line"
       >
-        <div className="h-full bg-ink" style={{ width: `${Math.min(100, pct)}%` }} />
+        <div className="h-full bg-ink-2" style={{ width: `${Math.min(100, pct)}%` }} />
       </div>
       <span className="micro num text-ink-3">
         {caption ? `${caption} ` : ""}
@@ -157,7 +157,7 @@ export function VaultHealthList({ rows, now, loading }: { rows: VaultHealth[]; n
                       <Link href={`/launch/${h.row.mint}`} className="group flex items-center gap-3">
                         <TokenAvatar src={h.row.image} symbol={h.row.symbol} mint={h.row.mint} size={32} />
                         <span>
-                          <span className="ui block text-ink group-hover:underline group-hover:decoration-line-2 group-hover:underline-offset-2">
+                          <span className="ui block text-ink group-hover:underline group-hover:decoration-ink-3/60 group-hover:underline-offset-2">
                             {h.row.name}
                           </span>
                           <span className="small block text-ink-3">${h.row.symbol}</span>

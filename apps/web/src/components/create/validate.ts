@@ -188,7 +188,16 @@ export function parsePrefill(q: Record<string, string | string[] | undefined>): 
   return out;
 }
 
-export function validateDraft(d: CreateDraft, p: { minRaiseLamports: bigint; maxBundleSupplyBps: number }): Validation {
+export interface DraftLimits {
+  minRaiseLamports: bigint;
+  maxBundleSupplyBps: number;
+  /** Platform beta cap on the max raise; 0n (or omitted) = no cap. */
+  maxRaiseLamports?: bigint;
+  /** Platform beta cap per wallet, applied on-chain on top of the creator's cap; 0n (or omitted) = no cap. */
+  maxWalletDepositLamports?: bigint;
+}
+
+export function validateDraft(d: CreateDraft, p: DraftLimits): Validation {
   const errors: Validation["errors"] = {};
   const name = d.name.trim();
   const symbol = d.symbol.trim();
@@ -224,16 +233,21 @@ export function validateDraft(d: CreateDraft, p: { minRaiseLamports: bigint; max
   const raiseMin = parseSol(d.raiseMin);
   const raiseMax = parseSol(d.raiseMax);
   const minSol = Number(p.minRaiseLamports) / 1e9;
+  const betaRaise = p.maxRaiseLamports ?? 0n;
+  const betaWallet = p.maxWalletDepositLamports ?? 0n;
   if (raiseMin === null) errors.raiseMin = "Enter a minimum";
   else if (raiseMin < p.minRaiseLamports) errors.raiseMin = `At least ${minSol} SOL (platform minimum)`;
+  else if (betaRaise > 0n && raiseMin > betaRaise) errors.raiseMin = `At most ${Number(betaRaise) / 1e9} SOL (beta cap)`;
   if (raiseMax === null) errors.raiseMax = "Enter a maximum";
   else if (raiseMin !== null && raiseMax < raiseMin) errors.raiseMax = "Must be at least the minimum";
   else if (raiseMax > LIMITS.maxRaiseLamports) errors.raiseMax = "At most 100,000 SOL";
+  else if (betaRaise > 0n && raiseMax > betaRaise) errors.raiseMax = `At most ${Number(betaRaise) / 1e9} SOL (beta cap)`;
 
   let maxPerWallet = 0n;
   if (d.perWallet.trim()) {
     const v = parseSol(d.perWallet);
     if (v === null || v === 0n) errors.perWallet = "Enter an amount or leave empty for no cap";
+    else if (betaWallet > 0n && v > betaWallet) errors.perWallet = `At most ${Number(betaWallet) / 1e9} SOL (beta cap)`;
     else maxPerWallet = v;
   }
 

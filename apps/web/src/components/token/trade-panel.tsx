@@ -205,7 +205,7 @@ export function TradePanel({
           onClick={() => setSettingsOpen(true)}
           aria-haspopup="dialog"
           aria-label={`Trade settings, max slippage ${slippageBps / 100}%`}
-          className="small num inline-flex h-9 shrink-0 items-center gap-1.5 rounded-sm px-2.5 text-ink-2 transition-colors hover:bg-sunken hover:text-ink pointer-coarse:h-10"
+          className="small num inline-flex h-9 shrink-0 items-center gap-1.5 rounded-sm px-2.5 text-ink-2 transition-colors hover:bg-raised hover:text-ink pointer-coarse:h-10"
         >
           <Settings2 className="size-4" strokeWidth={1.5} aria-hidden />
           {slippageBps / 100}%

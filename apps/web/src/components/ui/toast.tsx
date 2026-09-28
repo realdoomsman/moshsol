@@ -42,10 +42,10 @@ export function AppToaster() {
           content: "min-w-0 flex-1",
           title: "ui text-ink",
           description: "small mt-0.5 text-ink-2 [overflow-wrap:anywhere]",
-          actionButton: "ui ml-auto shrink-0 rounded-sm px-2 text-ink underline decoration-line-2 underline-offset-2",
+          actionButton: "ui ml-auto shrink-0 rounded-sm px-2 text-ink underline decoration-ink-3/60 underline-offset-2",
           cancelButton: "ui shrink-0 rounded-sm px-2 text-ink-2",
           closeButton:
-            "absolute top-3 right-3 flex size-6 items-center justify-center rounded-xs text-ink-3 transition-colors hover:bg-sunken hover:text-ink",
+            "absolute top-3 right-3 flex size-6 items-center justify-center rounded-xs text-ink-3 transition-colors hover:bg-ink/[0.06] hover:text-ink",
         },
       }}
     />

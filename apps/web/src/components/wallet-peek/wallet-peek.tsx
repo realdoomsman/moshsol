@@ -60,7 +60,7 @@ export function WalletPeekCard({ wallet, position, onFilter }: { wallet: string 
           rel="noreferrer"
           aria-label="View on explorer"
           title="View on explorer"
-          className="inline-flex size-8 shrink-0 items-center justify-center rounded-sm text-ink-3 transition-colors hover:bg-sunken hover:text-ink pointer-coarse:size-10"
+          className="inline-flex size-8 shrink-0 items-center justify-center rounded-sm text-ink-3 transition-colors hover:bg-ink/[0.06] hover:text-ink pointer-coarse:size-10"
         >
           <ArrowUpRight className="size-4" strokeWidth={1.5} aria-hidden />
         </a>

@@ -62,7 +62,7 @@ export function Identicon({
       aria-hidden
       shapeRendering="crispEdges"
       className={cn("shrink-0 rounded-full", className)}
-      // Background: a wash of the second tone over the page colour, so the pattern reads on both themes.
+      // Background: a wash of the second tone over the page colour, so the pattern reads on the dark ground.
       style={{ background: `color-mix(in oklab, ${IDENTICON_TONES[bg]} 30%, var(--color-paper))` }}
     >
       {cells.map(([x, y]) => (

@@ -1,46 +1,44 @@
 @import "tailwindcss";
-@import "./legacy.css";
 
 /*
- * Holdfast design tokens (design brief §7.1). Paper is the default; Night flips the same tokens.
- * Usage guide: apps/web/DESIGN.md.
+ * Holdfast design tokens (design brief §7.1). One surface for the whole site: the Night palette
+ * of the brand kit (X banner: #0F100E ground, #F2F1EC ink, #FF5B1A coin). Usage guide: apps/web/DESIGN.md.
  */
 @theme {
   --font-sans: var(--font-mona), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
 
-  /* Paper (default) */
-  --color-paper: #f6f5f1;
-  --color-surface: #ffffff;
-  --color-raised: #ffffff;
-  --color-sunken: #eeece6;
-  --color-ink: #0e0f0c;
-  --color-ink-2: #55564f;
-  --color-ink-3: #66675f;
-  --color-line: #e3e1da;
-  --color-line-2: #cfccc3;
-  --color-accent: #ff4f00;
-  --color-accent-ink: #b83800;
-  --color-accent-wash: #ffe9de;
-  --color-on-accent: #0e0f0c;
-  --color-up: #087a4a;
-  --color-up-wash: #e4f3ea;
-  --color-on-up: #ffffff;
-  --color-down: #c4302f;
-  --color-down-wash: #fbe7e5;
-  --color-on-down: #ffffff;
-  --color-warn: #8f5c00;
-  --color-warn-wash: #fbefd7;
-  /* Text inputs: `surface` on Paper, `sunken` on Night (§3.4). */
-  --color-field: #ffffff;
-  --color-scrim: rgb(14 15 12 / 0.32);
+  --color-paper: #0f100e;
+  --color-surface: #161714;
+  --color-raised: #1d1e1b;
+  --color-sunken: #0b0c0a;
+  --color-ink: #f2f1ec;
+  --color-ink-2: #a9a89f;
+  --color-ink-3: #85857c;
+  --color-line: #2a2b27;
+  --color-line-2: #3a3b35;
+  --color-accent: #ff5b1a;
+  --color-accent-ink: #ff7a45;
+  --color-accent-wash: #2a1a10;
+  --color-on-accent: #0f100e;
+  --color-up: #3ccb7f;
+  --color-up-wash: #0f2a1c;
+  --color-on-up: #0f100e;
+  --color-down: #f0575c;
+  --color-down-wash: #2e1516;
+  --color-on-down: #0f100e;
+  --color-warn: #f2b33d;
+  --color-warn-wash: #2b2211;
+  /* Text inputs sit below the surface they're on (§3.4). */
+  --color-field: #0b0c0a;
+  --color-scrim: rgb(0 0 0 / 0.64);
 
   --radius-xs: 4px;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
 
-  --shadow-pop: 0 1px 2px rgb(14 15 12 / 0.06), 0 12px 32px -8px rgb(14 15 12 / 0.18);
+  --shadow-pop: 0 0 0 1px #2e2f2a, 0 16px 40px -12px rgb(0 0 0 / 0.7);
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
@@ -148,37 +146,6 @@
   }
 }
 
-/* Night (app routes). `data-theme-root` on a route-group wrapper themes the whole document, so
-   portals (dialogs, toasts, popovers) mounted on <body> pick up the same tokens. */
-[data-theme="night"],
-:root:has([data-theme-root="night"]) {
-  --color-paper: #0f100e;
-  --color-surface: #161714;
-  --color-raised: #1d1e1b;
-  --color-sunken: #0b0c0a;
-  --color-ink: #f2f1ec;
-  --color-ink-2: #a9a89f;
-  --color-ink-3: #85857c;
-  --color-line: #2a2b27;
-  --color-line-2: #3a3b35;
-  --color-accent: #ff5b1a;
-  --color-accent-ink: #ff7a45;
-  --color-accent-wash: #2a1a10;
-  --color-on-accent: #0f100e;
-  --color-up: #3ccb7f;
-  --color-up-wash: #0f2a1c;
-  --color-on-up: #0f100e;
-  --color-down: #f0575c;
-  --color-down-wash: #2e1516;
-  --color-on-down: #0f100e;
-  --color-warn: #f2b33d;
-  --color-warn-wash: #2b2211;
-  --color-field: #0b0c0a;
-  --color-scrim: rgb(0 0 0 / 0.6);
-  --shadow-pop: 0 0 0 1px #2e2f2a, 0 16px 40px -12px rgb(0 0 0 / 0.7);
-  color-scheme: dark;
-}
-
 @layer base {
   html {
     background: var(--color-paper);
@@ -187,7 +154,7 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     -webkit-text-size-adjust: 100%;
-    color-scheme: light;
+    color-scheme: dark;
   }
   body {
     min-height: 100dvh;
@@ -201,7 +168,7 @@
     outline-offset: 2px;
   }
   ::selection {
-    background: var(--color-accent-wash);
+    background: color-mix(in oklab, var(--color-accent) 38%, transparent);
     color: var(--color-ink);
   }
   h1,
@@ -239,15 +206,24 @@
 }
 
 /* ---------- type scale (§3.5; desktop values from 768px) ---------- */
+/* The landing H1: set on two lines like the banner, growing to 112px on wide screens. */
 @utility display-xl {
-  font-size: 44px;
-  line-height: 44px;
+  font-size: 46px;
+  line-height: 46px;
   font-weight: 640;
   font-stretch: 112.5%;
-  letter-spacing: -0.04em;
+  letter-spacing: -0.042em;
   @media (width >= 48rem) {
-    font-size: 88px;
-    line-height: 84px;
+    font-size: 76px;
+    line-height: 72px;
+  }
+  @media (width >= 64rem) {
+    font-size: 96px;
+    line-height: 90px;
+  }
+  @media (width >= 80rem) {
+    font-size: 112px;
+    line-height: 102px;
   }
 }
 @utility display-l {

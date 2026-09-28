@@ -4,15 +4,21 @@ The source of truth for *what* to build is the design brief (`C:/tech/holdfast-r
 file is *how* to build it here: tokens, classes and components that already exist. Use them; don't add a second
 convention.
 
-## Surfaces and route groups
+## One surface, one shell
 
-| Group | Theme | Layout gives you |
-|---|---|---|
-| `app/(marketing)` — `/`, `/docs/**` | Paper | sticky `MarketingHeader`, `<main class="flex-1">`, `MarketingFooter` (links, program ID, status bar) |
-| `app/(app)` — everything else | Night | `AppHeader` (nav, search, network pill, test SOL, wallet), `<main class="frame-app pt-6 …">`, desktop status bar, mobile bottom tabs |
+The whole site is one dark identity — the brand kit / X banner (`#0F100E` ground, `#F2F1EC` ink, `#FF5B1A` coin).
+There is no light theme and no `data-theme` switching: the tokens in `app/globals.css` are the only values.
 
-- Theme = `data-theme` on the group's `ThemeRoot` (`components/shell/theme-root.tsx`); it also themes `<html>`, so
-  portals (dialogs, toasts, popovers) inherit the right tokens. Never set `data-theme` anywhere else.
+| Group | Layout gives you |
+|---|---|
+| `app/(marketing)` — `/`, `/docs/**` | `SiteShell` with a bare `<main class="flex-1">`; sections bring their own `frame-marketing` |
+| `app/(app)` — everything else | `SiteShell` with `<main class="frame-app flex-1 pt-6 pb-16 md:pt-8 md:pb-24">` |
+| `app/not-found.tsx` | `SiteShell` itself (unknown URLs render outside the groups) |
+
+- `SiteShell` (`components/shell/site-shell.tsx`) = `SiteHeader` (sticky, 52px mobile / 56px desktop: lockup → `/`,
+  the one `NAV` list, search, network pill, test SOL, wallet) + `<main>` + `SiteFooter` (lockup + program ID + link
+  columns, then the live status strip — sticky at the viewport bottom from 768px, in the flow on mobile) +
+  `MobileTabs` (below 768px; the shell reserves its height). Every route gets the same chrome.
 - App pages render inside `frame-app` already (max 1600, 24/16px padding). Don't add another page container.
 - Marketing sections: wrap content in `frame-marketing` (max 1264, 32/20px padding). Sections are separated by 1px
   `line` rules, not cards.
@@ -20,15 +26,20 @@ convention.
 
 ## Tokens (Tailwind v4, `app/globals.css`)
 
-Colours (both themes): `paper surface raised sunken field ink ink-2 ink-3 line line-2 accent accent-ink accent-wash
-on-accent up up-wash on-up down down-wash on-down warn warn-wash scrim` → `bg-*`, `text-*`, `border-*`, etc.
+Colours: `paper surface raised sunken field ink ink-2 ink-3 line line-2 accent accent-ink accent-wash on-accent up
+up-wash on-up down down-wash on-down warn warn-wash scrim` → `bg-*`, `text-*`, `border-*`, etc. `paper` is the page
+ground (the name is historical), `surface` panels, `raised` popovers/hover, `sunken`/`field` inputs and tracks.
 
 - Orange (`accent`) = the protocol only: vault/lock, agent, backer share, accent CTAs, focus. ≤ 5% of a screen.
 - `up`/`down` = price/PnL direction and Buy/Sell only. Never statuses, checks or decoration.
-- No hex in components, no gradients (except token art and chart fill), no glows, no `backdrop-blur` except the
-  sticky header.
+- No hex in components, no gradients (except token art and chart fill), no glows, no dot/grid backgrounds, no
+  `backdrop-blur` except the sticky header.
+- On the dark ground, hover **lifts**: rows/cards/outlined buttons go to `raised` (+ `border-ink-3`/`line-2`), items
+  inside a `raised` popover/dialog use `bg-ink/[0.06]`. Never darken to `sunken` on hover.
+- Hairlines are `line` (panels, rows) and `line-2` (inputs, outlined buttons). Link underlines: `decoration-ink-3/60`,
+  `hover:decoration-ink`. Skeletons are `raised`; progress/slider tracks `line`.
 - Radius: `rounded-xs` 4 (chips) · `rounded-sm` 8 (buttons, inputs, token images ≤ 48) · `rounded-md` 12 (panels,
-  popovers, images ≥ 56) · `rounded-lg` 16 (modals) · `rounded-full` only for dots and people.
+  popovers, code blocks, images ≥ 56) · `rounded-lg` 16 (modals) · `rounded-full` only for dots and people.
 - Elevation: panels = `bg-surface border border-line` (no shadow). Popovers/toasts = `bg-raised shadow-pop`.
 - Motion: `duration-(--dur-1…6)`, `ease-out` / `ease-in-out` / `ease-spring` / `ease-roll`. Bare `transition` is
   already 100 ms + house easing. Animations: `animate-flash-up|down` (text, 600 ms), `animate-row-up|down|agent`
@@ -38,7 +49,7 @@ on-accent up up-wash on-up down down-wash on-down warn warn-wash scrim` → `bg-
 
 ## Type (utility classes, desktop values from 768px)
 
-`display-xl` (landing H1) · `display-l` (landing sections, final CTA) · `display-m` (docs H1, app page titles) ·
+`display-xl` (landing H1 on two lines, 46 → 112px; final CTA) · `display-l` (landing sections) · `display-m` (docs H1, app page titles) ·
 `h1` (token name) · `h2` (panel titles) · `h3` (card titles) · `body-l` · `body` · `ui` (buttons, nav, tabs) ·
 `small` (table cells, meta) · `micro` (axes, timestamps; never body copy) · `label` (the only uppercase; add a colour,
 usually `text-ink-3`) · `num-xl` · `num-l` · `num` (tabular figures — use on every changing/aligned number) ·
@@ -58,9 +69,11 @@ import { ClampGlyph, AgentGlyph, BandGlyph, BackerGlyph, RaiseGlyph, RefundGlyph
 // 16px, stroke 1.5, currentColor. <AgentGlyph outline /> = agent sell marker.
 ```
 
-Static assets: `public/brand/holdfast-{mark,wordmark,lockup}.svg`, `public/icon-{192,512}.png`, `app/icon.svg`
-(+ `icon1.png`, `apple-icon.png`), `app/manifest.ts`. OG images: `import { ogFonts } from "@/lib/og-fonts"` →
-families "Mona Sans" (400/600), "Mona Sans Display" (600 = the 640/112.5 display cut), "JetBrains Mono" (400).
+Static assets: `public/brand/holdfast-{mark,wordmark,lockup}.svg` (off-white jaws/letters, `#FF5B1A` coin — for the
+dark ground), `public/icon-{192,512}.png`, `app/icon.svg` (+ `icon1.png`, `apple-icon.png`), `app/manifest.ts`.
+OG images: `import { OG, OgLockup } from "@/lib/og-brand"` (the palette as literals + the real lockup) and
+`import { ogFonts } from "@/lib/og-fonts"` → families "Mona Sans" (400/600), "Mona Sans Display" (600 = the 640/112.5
+display cut), "JetBrains Mono" (400). Every share card is dark, composed like the X banner.
 
 ## Components — `components/ui/*`
 
@@ -80,7 +93,7 @@ wrapper element, and pick variants/sizes instead of overriding them.
 | `ui/dialog` | `Dialog open onOpenChange title description footer width top mobile="sheet\|fullscreen\|dialog" header initialFocus` (bottom sheet below 768 by default) · `Sheet` (always a bottom sheet with drag-to-dismiss) |
 | `ui/toast` | `AppToaster` is mounted once in providers. Call `toast` from `sonner`. Transactions toast via `useTx()` |
 | `ui/chip` | `Chip tone="neutral\|muted\|faint\|ink\|accent\|warn" icon` (22px, 4px radius, label type) · `StatusChip status="raising\|min-reached\|live\|locked\|refunding\|ended"` · `RoleChip role="creator\|backer\|agent\|holder" detail="4.2% share"` · `StatusDot tone="up\|warn\|down\|unknown" live` |
-| `ui/skeleton` | `Skeleton className="h-4 w-24"` (static sunken, appears after 300 ms; `immediate` in `loading.tsx`) |
+| `ui/skeleton` | `Skeleton className="h-4 w-24"` (static `raised`, appears after 300 ms; `immediate` in `loading.tsx`) |
 | `ui/empty-state` | `EmptyState action={…}>No raises open.</EmptyState>` · `ErrorState onRetry retrying>Couldn't load trades. Indexer unreachable.</ErrorState>` |
 | `ui/stat` | `Stat label rule value sub size="m\|l\|xl" tone="warn\|accent"` · `StatRow scroll` (1px-ruled strip, 2-col on mobile) · `HeadlineStat stat value label format context` (§5.3 gate, see below) |
 | `ui/address` | `Address address kind="address\|tx" label chars href peek identicon copy explorer` — click = peek popover (320px) › `href` › copy. `CopyButton value label` |
@@ -88,7 +101,7 @@ wrapper element, and pick variants/sizes instead of overriding them.
 | `ui/token-avatar` | `TokenAvatar src symbol mint size` (8/12px radius by size, fallback tile from mint, fade-in) |
 | `ui/countdown` | `Countdown to prefix="Closes in" endedLabel warnBelowSecs` ("2d 04h 07m", warn < 1h) · `formatCountdown(secs)` |
 | `ui/number-ticker` | `NumberTicker value format roll? flash?` — flashes up/down only when the *displayed* text changes; `roll` for hero/stat numbers, never table cells |
-| `ui/progress` | `ProgressBar value max min size="sm\|md" minLabel="min 2"` (ink → accent once min is reached) |
+| `ui/progress` | `ProgressBar value max min size="sm\|md" tone="default\|muted" minLabel="min 2"` (ink → accent once min is reached; `muted` for raises that are over) |
 | `ui/sparkline` | `Sparkline values className` — renders "—" under 12 points |
 | `ui/spinner` | `Spinner label?` |
 
@@ -129,7 +142,7 @@ Example panel:
 - `lib/tx.tsx` — `useTx()` now also returns `stage` (`preparing|signing|sending|confirming`); show
   `TX_STAGE_LABEL[stage]` on the busy button. `ExplorerLink` is exported for toasts.
 - `lib/api.ts` — `api.health()`, `api.search(q)`; `lib/query-options.ts` — `healthQuery()`, `searchQuery(q)`.
-- `lib/theme.ts` — `THEME_COLOR` (meta theme-color), identicon/tile tones, `hashString`.
+- `lib/theme.ts` — `THEME_COLOR` (meta theme-color = the ground), identicon/tile tones, `hashString`.
 - `lib/burner.ts` — the test wallet; its key lives in `holdfast:burner-secret` (migrated from `moshsol:burner-secret`).
 - `lib/env.ts` — `CLUSTER_NAME` ("localnet" / "devnet" / "mainnet") for running copy ("Live from …"); never type a
   cluster name into UI text.
@@ -144,9 +157,3 @@ Example panel:
 - Do: sentence-case buttons with real verbs ("Back this launch", "Buy $MOSH", "Claim 0.42 SOL").
 - Don't: cards in cards, icons in tinted tiles, pill buttons/tabs, uppercase headings, flip clocks, shine sweeps,
   marquees, USD on devnet, zero-value headline stats, more than one accent/primary button per region.
-
-## Temporary (delete when the last pre-rebrand page is replaced)
-
-`app/legacy.css` (old token names → new tokens, `.card/.field/.data-table/…`) and `components/legacy/*` (old
-Button/Card/Badge/etc.) exist only so un-migrated pages keep working. New code must not import or use them. When
-`grep -r "components/legacy\|text-muted\|text-dim" src` is empty, delete both and the `@import "./legacy.css"`.

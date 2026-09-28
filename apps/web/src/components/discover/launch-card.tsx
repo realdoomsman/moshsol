@@ -108,7 +108,7 @@ function RaisingBody({ l, now }: { l: LaunchSummary; now: number }) {
         </span>
         <span className="small num text-ink-3">min {fmtSolValue(min)}</span>
       </div>
-      <ProgressBar value={raised} max={max} min={min} className="mt-2" />
+      <ProgressBar value={raised} max={max} min={min} tone={open || phase === "ready" ? "default" : "muted"} className="mt-2" />
       <div className="mt-3 flex items-center justify-between gap-2">
         <div className="small num min-w-0 truncate text-ink-3">
           {open ? (
@@ -174,8 +174,8 @@ export function LaunchCard({
   return (
     <article
       className={cn(
-        "relative rounded-md border border-line bg-surface p-4 transition-colors hover:bg-raised",
-        "has-[a[data-card-link]:focus-visible]:outline-2 has-[a[data-card-link]:focus-visible]:outline-accent",
+        "relative rounded-md border border-line bg-surface p-4 transition-colors hover:border-line-2 hover:bg-raised",
+        "has-[a[data-card-link]:focus-visible]:outline-2 has-[a[data-card-link]:focus-visible]:outline-offset-2 has-[a[data-card-link]:focus-visible]:outline-accent",
         fresh && "animate-expand-in overflow-hidden [--expand-to:240px]",
       )}
     >
@@ -248,6 +248,7 @@ export function LaunchRow({ launch: l, now, flash, fresh }: { launch: LaunchSumm
             value={lamportsToSol(l.raised)}
             max={lamportsToSol(l.raiseMax)}
             min={lamportsToSol(l.raiseMin)}
+            tone={phase === "raising" || phase === "ready" ? "default" : "muted"}
             className="my-1.5"
           />
           <div className="small num text-ink-3">

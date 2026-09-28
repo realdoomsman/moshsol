@@ -39,7 +39,7 @@ function Linkified({ text }: { text: string }) {
           href={href}
           target="_blank"
           rel="noreferrer nofollow ugc"
-          className="break-all text-ink underline decoration-line-2 underline-offset-2 hover:decoration-ink"
+          className="break-all text-ink underline decoration-ink-3/60 underline-offset-2 hover:decoration-ink"
         >
           {href}
         </a>

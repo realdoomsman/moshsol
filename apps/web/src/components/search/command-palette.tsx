@@ -151,7 +151,7 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: b
         onClick={() => void go(item)}
         className={cn(
           "mx-2 flex min-h-12 cursor-pointer items-center gap-3 rounded-sm px-3 py-2 transition-colors",
-          selected ? "bg-sunken" : "hover:bg-sunken/60",
+          selected ? "bg-ink/[0.07]" : "hover:bg-ink/[0.04]",
         )}
       >
         {body}

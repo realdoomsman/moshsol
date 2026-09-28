@@ -10,8 +10,8 @@ export default function Loading() {
           <Skeleton immediate className="h-4 w-32" />
         </div>
       </div>
-      <Skeleton immediate className="h-24 w-full" />
-      <Skeleton immediate className="h-64 w-full" />
+      <Skeleton immediate className="h-24 w-full rounded-md" />
+      <Skeleton immediate className="h-64 w-full rounded-md" />
     </div>
   );
 }

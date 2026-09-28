@@ -206,6 +206,10 @@ const UNIT_OPTIONS: { value: DurationUnit; label: string }[] = [
 export function StepRaise({ ctx }: { ctx: StepContext }) {
   const { draft, set, err, params } = ctx;
   const minRaise = params ? fmtLamports(params.minRaiseLamports) : null;
+  // Mainnet-beta caps ("0" or absent = none).
+  const raiseCap = params?.maxRaiseLamports && params.maxRaiseLamports !== "0" ? fmtLamports(params.maxRaiseLamports) : null;
+  const walletCap =
+    params?.maxWalletDepositLamports && params.maxWalletDepositLamports !== "0" ? fmtLamports(params.maxWalletDepositLamports) : null;
   const durationSecs = durationSecsOf(draft);
   const sol = (key: "raiseMin" | "raiseMax" | "perWallet") => (e: { target: { value: string } }) => {
     const v = sanitizeSol(e.target.value);
@@ -237,7 +241,11 @@ export function StepRaise({ ctx }: { ctx: StepContext }) {
             />
           )}
         </Field>
-        <Field label="Maximum" error={err("raiseMax")} hint="Deposits stop at the cap">
+        <Field
+          label="Maximum"
+          error={err("raiseMax")}
+          hint={raiseCap ? `Beta cap: ${raiseCap} SOL` : "Deposits stop at the cap"}
+        >
           {(id) => (
             <Input
               id={id}
@@ -252,7 +260,12 @@ export function StepRaise({ ctx }: { ctx: StepContext }) {
           )}
         </Field>
       </div>
-      <Field label="Per-wallet cap" aside="optional" error={err("perWallet")} hint="Leave empty for no cap">
+      <Field
+        label="Per-wallet cap"
+        aside="optional"
+        error={err("perWallet")}
+        hint={walletCap ? `Beta cap: ${walletCap} SOL per wallet` : "Leave empty for no cap"}
+      >
         {(id) => (
           <Input
             id={id}

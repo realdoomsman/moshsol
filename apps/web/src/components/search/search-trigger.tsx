@@ -5,7 +5,7 @@ import { IconButton } from "../ui/button";
 import { cn } from "../ui/cn";
 import { useCommandPalette } from "./command-palette";
 
-/** Header search field (§4.3): 360px, `sunken`, 8px radius, `/` hint; opens the command palette. */
+/** Header search field (§4.3): 360px, `sunken` with a hairline, 8px radius, `/` hint; opens the command palette. */
 export function SearchTrigger({ className }: { className?: string }) {
   const { setOpen } = useCommandPalette();
   return (
@@ -15,7 +15,7 @@ export function SearchTrigger({ className }: { className?: string }) {
       aria-label="Search tokens and wallets"
       aria-keyshortcuts="/ Control+K Meta+K"
       className={cn(
-        "ui flex h-8 w-full max-w-[360px] items-center gap-2 rounded-sm bg-sunken pr-1.5 pl-3 text-ink-3 transition-colors hover:text-ink-2",
+        "ui flex h-8 w-full max-w-[360px] items-center gap-2 rounded-sm bg-sunken pr-1.5 pl-3 text-ink-3 ring-1 ring-line ring-inset transition-[color,box-shadow] hover:text-ink-2 hover:ring-line-2",
         className,
       )}
     >

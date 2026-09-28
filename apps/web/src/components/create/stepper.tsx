@@ -5,8 +5,9 @@ import { cn } from "../ui/cn";
 import { STEPS, type StepIndex } from "./validate";
 
 /**
- * Desktop stepper (§4.6, 240px): numbered steps joined by a hairline, the current one in `ink`,
- * finished ones checked with a one-line summary. Steps are clickable once visited.
+ * Desktop stepper (§4.6, 240px): numbered steps joined by a hairline. The current step is an `ink`
+ * ring (not a filled disc: on the dark ground a solid white dot outshouts the form), finished ones
+ * are checked with a one-line summary. Steps are clickable once visited.
  */
 export function Stepper({
   step,
@@ -47,12 +48,12 @@ export function Stepper({
                   className={cn(
                     "ui num grid size-7 shrink-0 place-items-center rounded-full border transition-colors",
                     current
-                      ? "border-ink bg-ink text-paper"
+                      ? "border-ink text-ink"
                       : done
-                        ? "border-line-2 bg-surface text-ink"
+                        ? "border-line-2 text-ink-2 group-hover:border-ink-3 group-hover:text-ink"
                         : invalid[i] && reachable
                           ? "border-warn text-warn"
-                          : "border-line-2 text-ink-3",
+                          : "border-line text-ink-3",
                   )}
                 >
                   {done ? <Check className="size-3.5" strokeWidth={2} aria-hidden /> : i + 1}
@@ -79,7 +80,7 @@ export function Stepper({
   );
 }
 
-/** Mobile/tablet progress (§4.6): four segments, filled up to the current step. */
+/** Mobile/tablet progress (§4.6): four segments; done steps `ink-3`, the current one `ink`. */
 export function StepProgress({ step }: { step: StepIndex }) {
   return (
     <div className="grid gap-2">
@@ -95,7 +96,10 @@ export function StepProgress({ step }: { step: StepIndex }) {
         {STEPS.map((s, i) => (
           <span
             key={s.id}
-            className={cn("h-1 rounded-full transition-colors duration-(--dur-3)", i <= step ? "bg-ink" : "bg-line-2")}
+            className={cn(
+              "h-1 rounded-[2px] transition-colors duration-(--dur-3)",
+              i < step ? "bg-ink-3" : i === step ? "bg-ink" : "bg-line",
+            )}
           />
         ))}
       </div>

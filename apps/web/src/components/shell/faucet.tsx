@@ -79,7 +79,7 @@ export function useAirdrop() {
             <span>
               Your address is copied. Paste it at{" "}
               <a
-                className="font-medium text-ink underline decoration-line-2 underline-offset-2 hover:decoration-ink"
+                className="font-medium text-ink underline decoration-ink-3/60 underline-offset-2 hover:decoration-ink"
                 href={WEB_FAUCET}
                 target="_blank"
                 rel="noreferrer"

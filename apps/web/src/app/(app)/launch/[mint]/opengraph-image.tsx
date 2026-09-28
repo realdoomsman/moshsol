@@ -1,8 +1,8 @@
 import { countdown, fmtPrice, lamportsToSol } from "@holdfast/sdk";
 import { ImageResponse } from "next/og";
-import { JAW_LEFT, JAW_RIGHT } from "@/components/brand/mark";
 import { fmtSolValue, fmtTokens } from "@/lib/format";
 import { phaseOf } from "@/lib/launch";
+import { OG as C, OgLockup } from "@/lib/og-brand";
 import { ogFonts } from "@/lib/og-fonts";
 import { loadLaunch, parseMint } from "@/lib/server";
 import type { LaunchSummary } from "@/lib/types";
@@ -11,23 +11,6 @@ export const alt = "Holdfast launch: the first buy is locked in the vault foreve
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-/** Night tokens (§3.4 / globals.css) as literals: Satori can't read CSS variables. */
-const C = {
-  paper: "#0f100e",
-  surface: "#161714",
-  sunken: "#0b0c0a",
-  ink: "#f2f1ec",
-  ink2: "#a9a89f",
-  ink3: "#85857c",
-  line: "#2a2b27",
-  accent: "#ff5b1a",
-  accentInk: "#ff7a45",
-  accentWash: "#2a1a10",
-  up: "#3ccb7f",
-  down: "#f0575c",
-  warn: "#f2b33d",
-  warnWash: "#2b2211",
-};
 /** Formats the OG renderer can decode; anything else falls back to the ticker tile. */
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/svg+xml"];
 
@@ -145,7 +128,7 @@ export default async function Image({ params }: { params: Promise<{ mint: string
           ? { text: "Min reached", bg: C.accentWash, fg: C.accentInk }
           : { text: "Raising", bg: C.warnWash, fg: C.warn }
         : phase
-          ? { text: "Refunding", bg: C.sunken, fg: C.ink2 }
+          ? { text: "Refunding", bg: C.surface, fg: C.ink2 }
           : null;
 
   return new ImageResponse(
@@ -164,14 +147,7 @@ export default async function Image({ params }: { params: Promise<{ mint: string
         }}
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <svg width="44" height="44" viewBox="0 0 32 32">
-              <path d={JAW_LEFT} fill={C.ink} />
-              <path d={JAW_RIGHT} fill={C.ink} />
-              <circle cx="16" cy="16" r="5.5" fill={C.accent} />
-            </svg>
-            <div style={{ fontFamily: "Mona Sans Display", fontSize: 36, fontWeight: 600, letterSpacing: -1 }}>holdfast</div>
-          </div>
+          <OgLockup height={34} />
           {chip ? <Chip {...chip} /> : null}
         </div>
 

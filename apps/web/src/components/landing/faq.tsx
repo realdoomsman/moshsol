@@ -83,7 +83,7 @@ export function FaqList({ items }: { items: Qa[] }) {
           </summary>
           <p className="body max-w-[60ch] pb-5 text-ink-2">
             {item.a}{" "}
-            <Link href={item.href} className="whitespace-nowrap text-ink underline decoration-line-2 underline-offset-4 hover:decoration-ink">
+            <Link href={item.href} className="whitespace-nowrap text-ink underline decoration-ink-3/60 underline-offset-4 hover:decoration-ink">
               {item.more} ›
             </Link>
           </p>

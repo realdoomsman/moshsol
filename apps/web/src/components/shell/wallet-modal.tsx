@@ -25,14 +25,14 @@ function WalletIcon({ src, name }: { src?: string; name: string }) {
     // Adapter icons are data URIs supplied by the wallet itself.
     <img src={src} alt="" width={28} height={28} className="size-7 shrink-0 rounded-sm" />
   ) : (
-    <span aria-hidden className="label flex size-7 shrink-0 items-center justify-center rounded-sm bg-sunken text-ink-2">
+    <span aria-hidden className="label flex size-7 shrink-0 items-center justify-center rounded-sm bg-surface text-ink-2 ring-1 ring-line ring-inset">
       {name.slice(0, 1)}
     </span>
   );
 }
 
 const ROW =
-  "flex h-12 w-full items-center gap-3 rounded-sm px-3 text-left transition-colors hover:bg-sunken focus-visible:bg-sunken disabled:pointer-events-none";
+  "flex h-12 w-full items-center gap-3 rounded-sm px-3 text-left transition-colors hover:bg-ink/[0.06] focus-visible:bg-ink/[0.06] disabled:pointer-events-none";
 
 function Row({
   icon,
@@ -164,7 +164,7 @@ function WalletModal({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
           <section aria-label="Test wallet" className="grid gap-2 border-t border-line pt-3">
             <Row
               icon={
-                <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-sunken text-ink-2">
+                <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-surface text-ink-2 ring-1 ring-line ring-inset">
                   <KeyRound className="size-4" strokeWidth={1.5} />
                 </span>
               }

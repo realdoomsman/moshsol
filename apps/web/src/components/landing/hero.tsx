@@ -4,8 +4,9 @@ import { BandInstrument } from "../band/band-instrument";
 import { pctFromBps } from "../band/model";
 
 /**
- * §1 Hero: the promise (H1 + the verbatim sub-head), the two CTAs, a proof row of invariants (never
- * volume), and the live Band instrument on the right.
+ * §1 Hero, composed like the brand banner: the promise set full-width in display type on two lines,
+ * then the verbatim sub-head, the two CTAs and a spec-sheet of invariants (never volume) beside
+ * the live Band instrument.
  */
 export function Hero({ withdrawInstructions, backerFeeShareBps }: { withdrawInstructions: number; backerFeeShareBps: number | null }) {
   const proof = [
@@ -14,14 +15,15 @@ export function Hero({ withdrawInstructions, backerFeeShareBps }: { withdrawInst
     ...(backerFeeShareBps === null ? [] : [{ label: "Backer share of fees", value: pctFromBps(backerFeeShareBps) }]),
   ];
   return (
-    <section aria-labelledby="hero-title" className="frame-marketing pb-12 pt-10 md:pb-16 md:pt-20">
-      <div className="grid grid-cols-1 gap-12 lg:grid-cols-12 lg:gap-14">
-        <div className="lg:col-span-5 lg:pt-6">
-          <LiveEyebrow />
-          <h1 id="hero-title" className="display-xl mt-5 text-ink">
-            Launches that can&rsquo;t be dumped.
-          </h1>
-          <p className="body-l mt-6 max-w-[34em] text-ink-2">
+    <section aria-labelledby="hero-title" className="frame-marketing pb-16 pt-10 md:pb-24 md:pt-12">
+      <LiveEyebrow />
+      <h1 id="hero-title" className="display-xl mt-5 text-ink">
+        Launches that <br className="hidden sm:block" />
+        can&rsquo;t be dumped.
+      </h1>
+      <div className="mt-10 grid grid-cols-1 gap-12 md:mt-12 lg:grid-cols-12 lg:gap-6">
+        <div className="flex flex-col lg:col-span-4 lg:pr-4">
+          <p className="body-l max-w-[30em] text-ink-2">
             Backers fund the first buy.
             <span className="hidden sm:inline">
               {" "}
@@ -37,19 +39,16 @@ export function Hero({ withdrawInstructions, backerFeeShareBps }: { withdrawInst
               Explore launches
             </ButtonLink>
           </div>
-          <dl className="mt-10 grid border-t border-line sm:grid-cols-3">
+          <dl className="mt-10 border-t border-line lg:mt-auto lg:pt-0">
             {proof.map((p) => (
-              <div
-                key={p.label}
-                className="flex items-baseline justify-between gap-4 border-b border-line py-3 sm:block sm:border-b-0 sm:py-5 sm:pr-4"
-              >
+              <div key={p.label} className="flex items-baseline justify-between gap-4 border-b border-line py-3.5">
                 <dt className="label text-ink-3">{p.label}</dt>
-                <dd className="num-l text-ink sm:mt-2">{p.value}</dd>
+                <dd className="ui num text-ink">{p.value}</dd>
               </div>
             ))}
           </dl>
         </div>
-        <div className="lg:col-span-7">
+        <div className="lg:col-span-8">
           <BandInstrument />
         </div>
       </div>

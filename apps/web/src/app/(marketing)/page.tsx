@@ -21,7 +21,7 @@ import { SimulatorPanel } from "@/components/landing/simulator-panel";
 import { Hydrate, serverQueryClient } from "@/lib/prefetch";
 import { platformQuery } from "@/lib/query-options";
 
-/** Paper landing (§4.2): hero with the live Band, launches row, rules, how it works, simulator, proof, fees, creators, agent, FAQ, CTA. */
+/** Landing (§4.2): hero with the live Band, launches row, rules, how it works, simulator, proof, fees, creators, agent, FAQ, CTA. */
 export default async function LandingPage() {
   const client = serverQueryClient();
   const { seed } = await prefetchHero(client);
@@ -35,7 +35,7 @@ export default async function LandingPage() {
       <div className="relative">
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-y-0 left-1/2 hidden w-full max-w-[1264px] -translate-x-1/2 border-x border-line-2 xl:block"
+          className="pointer-events-none absolute inset-y-0 left-1/2 hidden w-full max-w-[1264px] -translate-x-1/2 border-x border-line xl:block"
         />
         <Hero withdrawInstructions={withdrawInstructionCount()} backerFeeShareBps={p?.backerFeeShareBps ?? null} />
 
@@ -52,7 +52,7 @@ export default async function LandingPage() {
             <SectionHeader title="How a launch works">
               <p className="body-l text-ink-2">
                 Four beats, each one enforced by an instruction on-chain.{" "}
-                <Link href="/docs/how-it-works" className="text-ink underline decoration-line-2 underline-offset-4 hover:decoration-ink">
+                <Link href="/docs/how-it-works" className="text-ink underline decoration-ink-3/60 underline-offset-4 hover:decoration-ink">
                   How it works ›
                 </Link>
               </p>

@@ -1,7 +1,7 @@
 import { shortAddr } from "@holdfast/sdk";
 import { ImageResponse } from "next/og";
-import { JAW_LEFT, JAW_RIGHT } from "@/components/brand/mark";
 import { fmtSolValue } from "@/lib/format";
+import { OG as C, OgLockup } from "@/lib/og-brand";
 import { ogFonts } from "@/lib/og-fonts";
 import { parseMint } from "@/lib/server";
 import { usersApi, type UserProfile } from "@/lib/users";
@@ -9,21 +9,6 @@ import { usersApi, type UserProfile } from "@/lib/users";
 export const alt = "Holdfast profile";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
-
-/**
- * Night tokens from app/globals.css (§3.4). The OG renderer can't read CSS variables, so the
- * literals are repeated here.
- */
-const C = {
-  paper: "#0f100e",
-  surface: "#161714",
-  ink: "#f2f1ec",
-  ink2: "#a9a89f",
-  ink3: "#85857c",
-  line: "#2a2b27",
-  accent: "#ff5b1a",
-  accentInk: "#ff7a45",
-};
 
 /** Formats the OG renderer can decode. */
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif"];
@@ -42,11 +27,14 @@ async function imageDataUri(url: string | null): Promise<string | null> {
   }
 }
 
+/** Same figure style as the launch card's footer: label over a 44px value. */
 function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, paddingLeft: 28, borderLeft: `1px solid ${C.line}` }}>
-      <div style={{ fontSize: 18, color: C.ink3, textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>{label}</div>
-      <div style={{ fontSize: 36, fontWeight: 600, color: accent ? C.accentInk : C.ink, whiteSpace: "nowrap" }}>{value}</div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontSize: 20, fontWeight: 600, color: C.ink3, letterSpacing: 1.6, textTransform: "uppercase", whiteSpace: "nowrap" }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 44, fontWeight: 600, letterSpacing: -0.5, color: accent ? C.accentInk : C.ink, whiteSpace: "nowrap" }}>{value}</div>
     </div>
   );
 }
@@ -70,28 +58,21 @@ export default async function Image({ params }: { params: Promise<{ wallet: stri
         background: C.paper,
         color: C.ink,
         fontFamily: "Mona Sans",
-        padding: 72,
+        padding: "56px 64px",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <svg width="44" height="44" viewBox="0 0 32 32">
-          <path d={JAW_LEFT} fill={C.ink} />
-          <path d={JAW_RIGHT} fill={C.ink} />
-          <circle cx="16" cy="16" r="5.5" fill={C.accent} />
-        </svg>
-        <div style={{ fontFamily: "Mona Sans Display", fontWeight: 600, fontSize: 36, letterSpacing: "-0.02em" }}>holdfast</div>
-      </div>
+      <OgLockup height={34} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 40 }}>
         {avatar ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={avatar} width={168} height={168} style={{ borderRadius: 84, objectFit: "cover" }} alt="" />
+          <img src={avatar} width={152} height={152} style={{ borderRadius: 76, objectFit: "cover", border: `1px solid ${C.line}` }} alt="" />
         ) : (
           <div
             style={{
-              width: 168,
-              height: 168,
-              borderRadius: 84,
+              width: 152,
+              height: 152,
+              borderRadius: 76,
               background: C.surface,
               border: `1px solid ${C.line}`,
               display: "flex",
@@ -114,16 +95,18 @@ export default async function Image({ params }: { params: Promise<{ wallet: stri
         </div>
       </div>
 
-      {s ? (
-        <div style={{ display: "flex", gap: 28 }}>
-          <Stat label="Launches created" value={String(s.launchesCreated)} />
-          <Stat label="Backed" value={String(s.backedLaunches)} />
-          <Stat label="Backer fees earned" value={`${fmtSolValue(s.backerFeesEarnedSol)} SOL`} accent={s.backerFeesEarnedSol > 0} />
-          <Stat label="Volume" value={`${fmtSolValue(s.volumeSol)} SOL`} />
-        </div>
-      ) : (
-        <div style={{ fontSize: 28, color: C.ink2 }}>The Solana launchpad where the first buy can never be dumped.</div>
-      )}
+      <div style={{ display: "flex", gap: 64, paddingTop: 28, borderTop: `1px solid ${C.line}` }}>
+        {s ? (
+          <>
+            <Stat label="Launches created" value={String(s.launchesCreated)} />
+            <Stat label="Backed" value={String(s.backedLaunches)} />
+            <Stat label="Backer fees earned" value={`${fmtSolValue(s.backerFeesEarnedSol)} SOL`} accent={s.backerFeesEarnedSol > 0} />
+            <Stat label="Volume" value={`${fmtSolValue(s.volumeSol)} SOL`} />
+          </>
+        ) : (
+          <div style={{ display: "flex", fontSize: 30, color: C.ink2 }}>Launches that can&apos;t be dumped.</div>
+        )}
+      </div>
     </div>,
     { ...size, fonts: await ogFonts() },
   );

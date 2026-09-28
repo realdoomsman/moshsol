@@ -92,7 +92,7 @@ export function TokenInfo({ launch: l, now, className }: { launch: LaunchSummary
         {cells.map((c, i) => (
           <div
             key={c.label}
-            className={cn("flex min-w-0 flex-col-reverse px-3 py-3", i % 3 !== 0 && "border-l border-line", i >= 3 && "border-t border-line")}
+            className={cn("flex min-w-0 flex-col-reverse px-4 py-3", i % 3 !== 0 && "border-l border-line", i >= 3 && "border-t border-line")}
           >
             <dt className="label mt-1 truncate text-ink-3">{c.rule ? <RuleTooltip rule={c.rule}>{c.label}</RuleTooltip> : c.label}</dt>
             <dd className={cn("num-l truncate", c.warn ? "text-warn" : "text-ink")}>{c.value}</dd>

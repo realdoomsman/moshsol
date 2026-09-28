@@ -108,10 +108,10 @@ export function RulesSheet({ platform, launches }: { platform: PlatformInfo | un
           ]}
         />
       </div>
-      <div className="overflow-hidden rounded-md border border-line">
+      <div className="overflow-hidden rounded-md border border-line bg-surface">
         <table className="small w-full border-collapse">
           <thead className="max-md:sr-only">
-            <tr className="bg-sunken">
+            <tr>
               <th scope="col" className="label h-9 px-4 text-left text-ink-3">
                 Rule
               </th>
@@ -126,7 +126,7 @@ export function RulesSheet({ platform, launches }: { platform: PlatformInfo | un
           <tbody>
             {list.map((r, i) => (
               <tr key={i} className="border-t border-line first:border-t-0 md:first:border-t max-md:grid max-md:gap-1 max-md:px-4 max-md:py-3">
-                <th scope="row" className="font-[inherit] text-left text-ink-2 md:w-[200px] md:px-4 md:py-3 md:align-top">
+                <th scope="row" className="text-left [font-weight:inherit] text-ink-2 md:w-[200px] md:px-4 md:py-3 md:align-top">
                   {r.rule}
                 </th>
                 <td className="num text-ink md:px-4 md:py-3 md:align-top">{r.value}</td>

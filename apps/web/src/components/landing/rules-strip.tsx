@@ -13,7 +13,7 @@ export function RulesStrip() {
             href={explorerAddress(program)}
             target="_blank"
             rel="noreferrer"
-            className="text-ink underline decoration-line-2 underline-offset-4 transition-colors hover:decoration-ink"
+            className="text-ink underline decoration-ink-3/60 underline-offset-4 transition-colors hover:decoration-ink"
           >
             {shortAddr(program)}
           </a>{" "}

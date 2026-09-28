@@ -154,7 +154,7 @@ export function Popover({
 
 const ITEM =
   "ui flex min-h-10 w-full items-center gap-2.5 px-3 text-left text-ink-2 outline-none transition-colors " +
-  "hover:bg-sunken hover:text-ink focus-visible:bg-sunken focus-visible:text-ink focus-visible:outline-none";
+  "hover:bg-ink/[0.06] hover:text-ink focus-visible:bg-ink/[0.06] focus-visible:text-ink focus-visible:outline-none";
 
 type MenuItemProps = { icon?: ReactNode; tone?: "default" | "danger"; children: ReactNode; className?: string };
 

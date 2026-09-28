@@ -3,7 +3,7 @@
 import { fmtPrice } from "@holdfast/sdk";
 import { Check, ChevronDown, ChevronUp, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { useNow } from "@/lib/hooks";
 import type { LaunchSummary } from "@/lib/types";
 import { Button } from "../ui/button";
@@ -43,7 +43,7 @@ function labelBlocks(levels: (Level & { y: number })[], h: number): { top: numbe
 const ACTION_TAG: Record<SimAction, { label: string; className: string }> = {
   buy: { label: "Buy", className: "bg-up-wash text-up" },
   sell: { label: "Sell", className: "bg-down-wash text-down" },
-  hold: { label: "Hold", className: "bg-sunken text-ink-2" },
+  hold: { label: "Hold", className: "bg-raised text-ink-2" },
 };
 
 /** Buy / Sell / Hold tag: Buy and Sell are the only places up/down colour is allowed (§3.4). `label` overrides the copy. */
@@ -77,7 +77,8 @@ export function AgentSimulator({ launch, compact = false, className }: { launch:
   const price = clamp(chosen ?? launch.priceSol);
   const decision = useMemo(() => simulateAgent(launch, price, nowSec), [launch, price, nowSec]);
 
-  const height = compact ? 340 : 560;
+  const height = compact ? 300 : 560;
+  const hatchId = `floor-hatch-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const [boxRef, box] = useElementSize<HTMLDivElement>({ width: compact ? 640 : 820, height });
   const w = box.width;
   const h = box.height;
@@ -150,10 +151,16 @@ export function AgentSimulator({ launch, compact = false, className }: { launch:
       }}
     >
       <svg width={w} height={h} className="absolute inset-0 overflow-visible" aria-hidden>
+        <defs>
+          {/* Below the curve floor the price can't trade: a hairline hatch, not a grey slab. */}
+          <pattern id={hatchId} width={6} height={6} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1={0} y1={0} x2={0} y2={6} className="stroke-line-2" strokeWidth={1} />
+          </pattern>
+        </defs>
         <rect x={0} width={w} y={y(z.bandHigh)} height={Math.max(0, y(z.bandLow) - y(z.bandHigh))} className="fill-accent" fillOpacity={0.07} />
         {domain.floor > domain.min ? (
           <>
-            <rect x={0} width={w} y={y(domain.floor)} height={Math.max(0, h - y(domain.floor))} className="fill-sunken" fillOpacity={0.85} />
+            <rect x={0} width={w} y={y(domain.floor)} height={Math.max(0, h - y(domain.floor))} fill={`url(#${hatchId})`} />
             <line x1={0} x2={w} y1={y(domain.floor)} y2={y(domain.floor)} className="stroke-line-2" strokeWidth={1} />
           </>
         ) : null}
@@ -176,7 +183,7 @@ export function AgentSimulator({ launch, compact = false, className }: { launch:
               key={beamKey}
               d={`M${hx + 8},${hy} C${(hx + w) / 2},${hy} ${(hx + w) / 2},${cardY} ${w},${cardY}`}
               fill="none"
-              className="hidden stroke-accent lg:block"
+              className="hidden stroke-accent @[760px]:block"
               strokeWidth={1.25}
               initial={{ pathLength: 0, opacity: 1 }}
               animate={{ pathLength: 1, opacity: 1 }}
@@ -284,34 +291,37 @@ export function AgentSimulator({ launch, compact = false, className }: { launch:
     );
   }
 
+  // Side by side only when the panel itself is wide enough (the landing), stacked in narrow homes (docs).
   return (
-    <div className={cn("grid overflow-hidden rounded-md border border-line bg-surface lg:h-[560px] lg:grid-cols-[minmax(0,1fr)_340px]", className)}>
-      <div className="relative flex min-h-0 flex-col bg-[radial-gradient(var(--color-line)_1px,transparent_1px)] [background-size:16px_16px]">
-        <div className="order-2 flex flex-wrap gap-2 border-t border-line p-4 lg:order-1 lg:border-t-0 lg:pb-0">
-          {presets.map((p) => (
-            <Button
-              key={p.id}
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                setJump(p.price);
-                setChosen(p.price);
-              }}
-            >
-              {p.label}
-            </Button>
-          ))}
+    <div className={cn("@container", className)}>
+      <div className="grid overflow-hidden rounded-md border border-line bg-surface @[760px]:h-[560px] @[760px]:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="relative flex min-h-0 flex-col">
+          <div className="order-2 flex flex-wrap gap-2 border-t border-line p-4 @[760px]:order-1 @[760px]:border-t-0 @[760px]:pb-0">
+            {presets.map((p) => (
+              <Button
+                key={p.id}
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setJump(p.price);
+                  setChosen(p.price);
+                }}
+              >
+                {p.label}
+              </Button>
+            ))}
+          </div>
+          <div className="order-1 h-[320px] min-h-0 @[760px]:order-2 @[760px]:h-auto @[760px]:flex-1">{diagram}</div>
         </div>
-        <div className="order-1 h-[320px] min-h-0 lg:order-2 lg:h-auto lg:flex-1">{diagram}</div>
+        <DecisionCard decision={decision} animKey={beamKey} symbol={launch.symbol} />
       </div>
-      <DecisionCard decision={decision} animKey={beamKey} symbol={launch.symbol} />
     </div>
   );
 }
 
 function DecisionCard({ decision, animKey, symbol }: { decision: SimDecision; animKey: string; symbol: string }) {
   return (
-    <div className="flex flex-col justify-center border-t border-line p-5 lg:border-l lg:border-t-0 lg:p-6" aria-live="polite">
+    <div className="flex flex-col justify-center border-t border-line p-5 @[760px]:border-l @[760px]:border-t-0 @[760px]:p-6" aria-live="polite">
       <p className="label text-ink-3">Vault agent decision</p>
       <AnimatePresence mode="wait" initial={false}>
         <motion.div

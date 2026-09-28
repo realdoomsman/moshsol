@@ -56,8 +56,9 @@ export function THead({ children }: { children: ReactNode }) {
 export type SortDir = "asc" | "desc";
 
 /**
- * Header cell: `label` type on `sunken`. Pass `sort` + `onSort` to make it a sortable button;
- * `sort` is this column's current direction (undefined = not the sort column).
+ * Header cell: `label` type in `ink-3` over the panel colour with a hairline under it (sticky, so
+ * it needs an opaque fill). Pass `sort` + `onSort` to make it a sortable button; `sort` is this
+ * column's current direction (undefined = not the sort column).
  */
 export function TH({
   align = "left",
@@ -94,7 +95,7 @@ export function TH({
       scope="col"
       aria-sort={sort === "asc" ? "ascending" : sort === "desc" ? "descending" : undefined}
       className={cn(
-        "label h-9 border-b border-line bg-sunken px-3 whitespace-nowrap text-ink-3 first:pl-4 last:pr-4",
+        "label h-9 border-b border-line bg-surface px-3 whitespace-nowrap text-ink-3 first:pl-4 last:pr-4",
         align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left",
         className,
       )}

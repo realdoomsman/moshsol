@@ -14,7 +14,7 @@ function indexerDetail(s: IndexerStatus): string {
 }
 
 /**
- * Network pill (§4.2/§4.3): cluster name on `sunken`, 22px, 4px radius, with a 6px dot from
+ * Network pill (§4.2/§4.3): cluster name on `raised`, 22px, 4px radius, with a 6px dot from
  * `/api/health` (up when synced and < 150 slots behind, warn otherwise, down if unreachable). The
  * dot carries the page's one live pulse. `dotOnly` for the mobile top bar.
  */
@@ -27,7 +27,7 @@ export function NetworkPill({ dotOnly, className }: { dotOnly?: boolean; classNa
         aria-label={`${CLUSTER_LABEL[CLUSTER]}: ${indexerDetail(status)}`}
         className={cn(
           "label inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-xs text-ink-2",
-          dotOnly ? "px-2 pointer-coarse:h-10" : "bg-sunken px-2",
+          dotOnly ? "px-2 pointer-coarse:h-10" : "bg-raised px-2",
           className,
         )}
       >

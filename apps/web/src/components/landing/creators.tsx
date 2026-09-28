@@ -44,9 +44,18 @@ export function Creators() {
   const hi = lamportsOf(max);
   const bundleBps = Math.round(Number(bundle) * 100);
   const minRaise = p ? BigInt(p.minRaiseLamports) : 0n;
+  // Platform beta cap on the max raise ("0" or absent = none), as the create wizard enforces it.
+  const raiseCap = p?.maxRaiseLamports ? BigInt(p.maxRaiseLamports) : 0n;
   const errors = {
     min: lo === null ? "Enter an amount" : p && lo < minRaise ? `At least ${fmtSolValue(Number(minRaise) / 1e9)} SOL` : null,
-    max: hi === null ? "Enter an amount" : lo !== null && hi < lo ? "At least the minimum" : null,
+    max:
+      hi === null
+        ? "Enter an amount"
+        : lo !== null && hi < lo
+          ? "At least the minimum"
+          : raiseCap > 0n && hi > raiseCap
+            ? `At most ${fmtSolValue(Number(raiseCap) / 1e9)} SOL (beta cap)`
+            : null,
     bundle:
       !Number.isFinite(bundleBps) || !p || bundleBps < LIMITS.minBundleSupplyBps || bundleBps > p.maxBundleSupplyBps
         ? p

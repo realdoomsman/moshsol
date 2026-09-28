@@ -71,15 +71,29 @@ function LaneList({
   const held = useHeldOrder(launches, (l) => l.mint);
   if (!launches.length) {
     const empty = LANE_EMPTY[lane];
+    // A quiet placeholder the size of what would be there: a card in a column, a row in the list.
     return (
-      <p className="body px-1 py-4 text-ink-2">
-        {empty.text}{" "}
-        {empty.action ? (
-          <Link href={empty.action.href} className="text-ink underline decoration-line-2 underline-offset-4 hover:decoration-ink">
-            {empty.action.label} →
-          </Link>
-        ) : null}
-      </p>
+      <div
+        className={cn(
+          "grid place-items-center rounded-md border border-dashed border-line-2",
+          layout === "rows" ? "min-h-[72px]" : "min-h-[196px]",
+        )}
+      >
+        <EmptyState
+          action={
+            empty.action ? (
+              <Link
+                href={empty.action.href}
+                className="ui text-ink underline decoration-ink-3/60 underline-offset-4 transition-colors hover:decoration-ink"
+              >
+                {empty.action.label} →
+              </Link>
+            ) : undefined
+          }
+        >
+          {empty.text}
+        </EmptyState>
+      </div>
     );
   }
   if (layout === "rows") {
@@ -243,7 +257,13 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
     );
   } else if (!all.length) {
     body = (
-      <EmptyState action={<Link href="/create" className="ui text-ink underline underline-offset-4">Create the first launch →</Link>}>
+      <EmptyState
+        action={
+          <Link href="/create" className="ui text-ink underline decoration-ink-3/60 underline-offset-4 transition-colors hover:decoration-ink">
+            Create the first launch →
+          </Link>
+        }
+      >
         No launches yet.
       </EmptyState>
     );
@@ -268,7 +288,7 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
         <div className="hidden gap-4 lg:grid lg:grid-cols-3">
           {LANES.map((lane) => (
             <section key={lane.value} aria-labelledby={`lane-${lane.value}`} className="min-w-0">
-              <header className="mb-2 flex h-10 items-center justify-between gap-2 border-b border-line">
+              <header className="mb-3 flex h-10 items-center justify-between gap-2 border-b border-line">
                 <h2 id={`lane-${lane.value}`} className="label text-ink-3">
                   {lane.label} <span className="num text-ink-2">({lanes[lane.value].length})</span>
                 </h2>
@@ -304,7 +324,7 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
   }
 
   return (
-    <div className="flex flex-col gap-6 pb-10">
+    <div className="flex flex-col gap-6">
       <header className="flex items-center justify-between gap-4">
         <h1 className="display-m text-ink">Discover</h1>
         <div className="hidden items-center gap-2 md:flex">
@@ -319,9 +339,10 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
         </div>
       </header>
 
-      {launches.data ? <Spotlight launches={all} now={now} /> : null}
-
-      {body}
+      <div className="flex flex-col gap-8">
+        {launches.data ? <Spotlight launches={all} now={now} /> : null}
+        {body}
+      </div>
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen} title="View and sort">
         <div className="flex flex-col gap-5 px-5 pt-1 pb-5">

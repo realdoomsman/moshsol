@@ -7,9 +7,10 @@ const HATCH = `repeating-linear-gradient(135deg, ${ZONE} 0 3px, transparent 3px 
 
 /**
  * Where spot sits against the vault agent's rules (§4.5 vault card, /agents rows): an 8px track
- * with the buy zone (spot ≤ `buyBelow`, accent 40%), the neutral band (`sunken`) and the hatched
- * sell zone (spot ≥ `sellAbove`); an `ink` needle + dot at `price`, and ticks for the EMA and the
- * vault's average cost. All values are SOL per token. `compact` drops the label row (inline use).
+ * with the buy zone (spot ≤ `buyBelow`, accent 40%), the neutral band (`line`, the same track as
+ * the progress bars) and the hatched sell zone (spot ≥ `sellAbove`); an `ink` needle + dot at
+ * `price`, and ticks for the EMA and the vault's average cost. All values are SOL per token.
+ * `compact` drops the label row (inline use).
  */
 export function BandMeter({
   price,
@@ -46,7 +47,7 @@ export function BandMeter({
       className={cn("w-full", className)}
     >
       <div className={cn("relative", compact ? "h-4" : "h-5")}>
-        <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 overflow-hidden rounded-xs bg-sunken">
+        <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 overflow-hidden rounded-xs bg-line">
           {valid ? (
             <>
               <div className="absolute inset-y-0 left-0" style={{ width: `${at(buyBelow)}%`, background: ZONE }} />

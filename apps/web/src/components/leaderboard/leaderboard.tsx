@@ -270,7 +270,7 @@ function HeroStrip() {
   const count = backers.data?.entries.length;
   const showCount = clearsHeadline("backerFeesSol", paid) && count !== undefined;
   return (
-    <StatRow className={showCount ? undefined : "max-md:grid-cols-1"}>
+    <StatRow className={cn("rounded-md border-x bg-surface", !showCount && "max-md:grid-cols-1")}>
       <HeadlineStat
         stat="backerFeesSol"
         value={paid}
@@ -330,14 +330,19 @@ export function Leaderboard({ initialKind, initialWindow }: { initialKind: Leade
   }
 
   return (
-    <div className="flex flex-col gap-6 pb-10">
-      <h1 className="display-m text-ink">Leaderboard</h1>
-      <HeroStrip />
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between md:gap-6 md:border-b md:border-line">
-        <Tabs label="Leaderboard" items={KINDS} value={kind} onChange={(k) => update(k, range)} className="md:border-b-0" />
-        <Segmented label="Window" size="sm" items={WINDOWS} value={range} onChange={(w) => update(kind, w)} className="md:mb-2" />
+    <div className="flex flex-col gap-6">
+      <header className="flex items-center justify-between gap-4">
+        <h1 className="display-m text-ink">Leaderboard</h1>
+        <Segmented label="Window" size="sm" items={WINDOWS} value={range} onChange={(w) => update(kind, w)} />
+      </header>
+      <div className="flex flex-col gap-3">
+        <HeroStrip />
+        {/* The tab bar's own rule is the panel's header divider: no second line above the table. */}
+        <section className="rounded-md border border-line bg-surface">
+          <Tabs label="Leaderboard" items={KINDS} value={kind} onChange={(k) => update(k, range)} className="px-4" />
+          {table}
+        </section>
       </div>
-      <section className="rounded-md border border-line bg-surface">{table}</section>
     </div>
   );
 }

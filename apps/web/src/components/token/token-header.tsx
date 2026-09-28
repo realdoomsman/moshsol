@@ -11,7 +11,7 @@ import type { Phase } from "@/lib/launch";
 import type { LaunchSummary } from "@/lib/types";
 import { useWatchlist } from "@/lib/watchlist";
 import { Address } from "../ui/address";
-import { Button, IconButton } from "../ui/button";
+import { Button, buttonClass, IconButton } from "../ui/button";
 import { StatusChip } from "../ui/chip";
 import { cn } from "../ui/cn";
 import { Dialog, Sheet } from "../ui/dialog";
@@ -190,7 +190,7 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
                   rel="noreferrer nofollow"
                   aria-label={s.label}
                   title={s.label}
-                  className="inline-flex size-8 items-center justify-center rounded-sm text-ink-3 transition-colors hover:bg-sunken hover:text-ink"
+                  className="inline-flex size-8 items-center justify-center rounded-sm text-ink-3 transition-colors hover:bg-raised hover:text-ink pointer-coarse:size-10"
                 >
                   <SocialIcon kind={s.kind} />
                 </a>
@@ -245,7 +245,7 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
                   href={s.href}
                   target="_blank"
                   rel="noreferrer nofollow"
-                  className="small inline-flex h-10 items-center gap-1.5 rounded-sm border border-line px-3 text-ink-2"
+                  className="small inline-flex h-10 items-center gap-1.5 rounded-sm border border-line px-3 text-ink-2 transition-colors hover:border-line-2 hover:bg-raised hover:text-ink"
                 >
                   <SocialIcon kind={s.kind} />
                   {s.label}
@@ -264,19 +264,10 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
             >
               Copy link
             </Button>
-            <a
-              href={share.intent}
-              target="_blank"
-              rel="noreferrer"
-              className="ui inline-flex h-10 items-center justify-center gap-2 rounded-sm border border-line-2 bg-surface text-ink"
-            >
+            <a href={share.intent} target="_blank" rel="noreferrer" className={buttonClass({ size: "sm", className: "w-full" })}>
               <XLogo className="size-3.5" /> Share on X
             </a>
-            <a
-              href={share.card}
-              download={`holdfast-${l.symbol}.png`}
-              className="ui inline-flex h-10 items-center justify-center gap-2 rounded-sm border border-line-2 bg-surface text-ink"
-            >
+            <a href={share.card} download={`holdfast-${l.symbol}.png`} className={buttonClass({ size: "sm", className: "w-full" })}>
               <Download className="size-4" strokeWidth={1.5} aria-hidden /> Download card
             </a>
           </div>

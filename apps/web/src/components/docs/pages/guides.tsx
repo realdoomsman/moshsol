@@ -145,7 +145,16 @@ export const forCreators: DocPage = {
             head={["Setting", "Limit"]}
             rows={[
               ["Min raise", p ? `≥ ${lamportsToSol(p.minRaiseLamports)} SOL` : "Platform minimum"],
-              ["Max raise", `≥ min raise, ≤ ${Number(LIMITS.maxRaiseLamports / 1_000_000_000n).toLocaleString("en-US")} SOL`],
+              [
+                "Max raise",
+                // A platform beta cap ("0" or absent = none) tightens the program's hard limit.
+                p?.maxRaiseLamports && p.maxRaiseLamports !== "0"
+                  ? `≥ min raise, ≤ ${lamportsToSol(p.maxRaiseLamports)} SOL (beta cap)`
+                  : `≥ min raise, ≤ ${Number(LIMITS.maxRaiseLamports / 1_000_000_000n).toLocaleString("en-US")} SOL`,
+              ],
+              ...(p?.maxWalletDepositLamports && p.maxWalletDepositLamports !== "0"
+                ? [["Per wallet", `≤ ${lamportsToSol(p.maxWalletDepositLamports)} SOL per backer (beta cap)`]]
+                : []),
               ["Duration", `${days(LIMITS.minRaiseDurationSecs)} to ${days(LIMITS.maxRaiseDurationSecs)}`],
               ["Max bundle", p ? `${LIMITS.minBundleSupplyBps / 100}% to ${pctFromBps(p.maxBundleSupplyBps)} of supply` : `From ${LIMITS.minBundleSupplyBps / 100}% of supply`],
               ["SOL reserve", `0% to ${LIMITS.maxReserveBps / 100}% of the raise`],

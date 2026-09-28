@@ -78,7 +78,7 @@ export function RaisePanel({ launch: l, phase }: { launch: LaunchSummary; phase:
 
   return (
     <section aria-label="Raise" className="min-w-0 rounded-md border border-line bg-surface">
-      <div className="grid gap-5 p-4 md:p-5">
+      <div className="grid gap-5 p-4">
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
           <div>
             <div className="label text-ink-3">{ended ? "Raised before it closed" : "Raised"}</div>
@@ -104,6 +104,7 @@ export function RaisePanel({ launch: l, phase }: { launch: LaunchSummary; phase:
             value={raised}
             max={max}
             min={min}
+            tone={ended ? "muted" : "default"}
             minLabel={`min ${fmtSolValue(min)}`}
             label={`Raised ${fmtSolValue(raised)} of ${fmtSolValue(max)} SOL, minimum ${fmtSolValue(min)}`}
           />

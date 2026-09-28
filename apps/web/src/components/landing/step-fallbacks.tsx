@@ -28,7 +28,7 @@ function Head({ launch: l, right }: { launch: LaunchSummary; right?: ReactNode }
   return (
     <Link
       href={`/launch/${l.mint}`}
-      className="flex items-center gap-3 border-b border-line px-5 py-3 transition-colors hover:bg-sunken"
+      className="flex items-center gap-3 border-b border-line px-5 py-3 transition-colors hover:bg-raised"
     >
       <TokenAvatar src={l.image} symbol={l.symbol} mint={l.mint} size={32} />
       <span className="ui min-w-0 flex-1 truncate text-ink">

@@ -1,17 +1,9 @@
-/** App (Night) primary navigation, in header order (§4.3). */
-export const APP_NAV = [
+/** Primary navigation, in header order (§4.3). One list for every route: landing, docs and app. */
+export const NAV = [
   { href: "/app", label: "Discover" },
   { href: "/create", label: "Create" },
   { href: "/portfolio", label: "Portfolio" },
   { href: "/leaderboard", label: "Leaderboard" },
-  { href: "/agents", label: "Agents" },
-  { href: "/docs", label: "Docs" },
-] as const;
-
-/** Marketing (Paper) header links (§4.2 §0). */
-export const MARKETING_NAV = [
-  { href: "/#how", label: "How it works" },
-  { href: "/app", label: "Launches" },
   { href: "/agents", label: "Agents" },
   { href: "/docs", label: "Docs" },
 ] as const;

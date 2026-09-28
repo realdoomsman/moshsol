@@ -84,7 +84,7 @@ function Stats({ user }: { user: UserProfile }) {
   // Zeros are real values, but they shouldn't read as loudly as the numbers this wallet has.
   const quiet = (v: number, text: ReactNode) => (v ? text : <span className="text-ink-3">{text}</span>);
   return (
-    <StatRow scroll className="[&>*]:grow">
+    <StatRow className="rounded-md border-x bg-surface">
       <Stat label="Launches created" value={quiet(s.launchesCreated, s.launchesCreated)} />
       <Stat
         label="Raised for launches"
@@ -141,7 +141,7 @@ function Created({ user, own }: { user: UserProfile; own: boolean }) {
           <Link
             key={u.mint}
             href={`/launch/${u.mint}`}
-            className="flex items-center gap-3 rounded-md border border-line bg-surface p-4 transition-colors hover:bg-raised"
+            className="flex items-center gap-3 rounded-md border border-line bg-surface p-4 transition-colors hover:border-line-2 hover:bg-raised"
           >
             <TokenAvatar src={u.image} symbol={u.symbol} mint={u.mint} size={56} />
             <div className="min-w-0 flex-1">
@@ -405,7 +405,7 @@ export function ProfileView({ wallet, startEditing }: { wallet: string; startEdi
   };
 
   return (
-    <div className="flex flex-col gap-6 pb-10">
+    <div className="flex flex-col gap-6">
       <Header user={u} own={own} onEdit={() => setEditRequested(true)} />
       <Stats user={u} />
       <div>

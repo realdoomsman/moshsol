@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { cn } from "../ui/cn";
 
-/** "On this page" (§4.11, ≥ 1280px only): section links; the one being read is marked in ink. */
+/** "On this page" (§4.11, ≥ 1280px only): section links on a hairline rail; the one being read gets the 2px ink bar, like the docs nav. */
 export function DocsToc({ items }: { items: { id: string; title: string }[] }) {
   const [active, setActive] = useState(items[0]?.id ?? "");
   useEffect(() => {
@@ -20,18 +20,23 @@ export function DocsToc({ items }: { items: { id: string; title: string }[] }) {
     return () => window.removeEventListener("scroll", onScroll);
   }, [items]);
   return (
-    <nav aria-label="On this page" className="grid gap-1">
-      <p className="label mb-2 text-ink-3">On this page</p>
-      {items.map((i) => (
-        <a
-          key={i.id}
-          href={`#${i.id}`}
-          aria-current={i.id === active ? "location" : undefined}
-          className={cn("small py-1 transition-colors hover:text-ink", i.id === active ? "text-ink" : "text-ink-3")}
-        >
-          {i.title}
-        </a>
-      ))}
+    <nav aria-label="On this page">
+      <p className="label mb-3 text-ink-3">On this page</p>
+      <div className="grid border-l border-line">
+        {items.map((i) => (
+          <a
+            key={i.id}
+            href={`#${i.id}`}
+            aria-current={i.id === active ? "location" : undefined}
+            className={cn(
+              "small -ml-px border-l-2 py-1.5 pl-3 transition-colors hover:text-ink focus-visible:outline-offset-0",
+              i.id === active ? "border-ink text-ink" : "border-transparent text-ink-3",
+            )}
+          >
+            {i.title}
+          </a>
+        ))}
+      </div>
     </nav>
   );
 }

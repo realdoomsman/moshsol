@@ -113,7 +113,7 @@ export function BundleTable({ range, loading }: { range: BundleRange | null; loa
       <tbody>
         {rows.map((r, i) => (
           <tr key={i} className="border-t border-line">
-            <th scope="row" className="py-2 text-left font-[inherit] text-ink-2">
+            <th scope="row" className="py-2 text-left [font-weight:inherit] text-ink-2">
               {r.label}
             </th>
             <td className={cn("py-2 text-right", i === 0 ? "text-accent-ink" : "text-ink")}>{r.min}</td>
@@ -141,7 +141,7 @@ export function SupplyBar({ label, supplyPct }: { label: string; supplyPct: numb
         className="flex h-2 gap-0.5 overflow-hidden rounded-xs"
       >
         <span className="h-full bg-accent" style={{ width: `${supplyPct}%` }} />
-        <span className="h-full flex-1 bg-ink-3/40" />
+        <span className="h-full flex-1 bg-line-2" />
       </div>
     </div>
   );

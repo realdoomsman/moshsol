@@ -45,16 +45,16 @@ const noop = () => undefined;
 
 /**
  * Desktop: `main` and `tail` stack in the left column while `rail` (360px) spans both rows; the
- * `1fr` row absorbs the rail's extra height so `tail` starts right under `main`. Below 1024px:
- * one column in source order — main, rail, tail.
+ * `1fr` row absorbs the rail's extra height so `tail` starts right under `main`. Panels sit 12px
+ * apart, columns 16px (§3.6). Below 1024px: one column in source order — main, rail, tail.
  */
 function Columns({ main, rail, tail }: { main: ReactNode; rail: ReactNode; tail: ReactNode }) {
   // Phones: the wrappers dissolve (`contents`) so hidden sections leave no empty gaps.
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[auto_1fr] [&>*>*]:min-w-0">
-      <div className="min-w-0 gap-4 max-lg:contents lg:col-start-1 lg:row-start-1 lg:grid">{main}</div>
-      <aside className="min-w-0 gap-4 max-lg:contents lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:grid">{rail}</aside>
-      <div className="min-w-0 gap-4 max-lg:contents lg:col-start-1 lg:row-start-2 lg:grid">{tail}</div>
+    <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[auto_1fr] lg:gap-x-4 [&>*>*]:min-w-0">
+      <div className="min-w-0 gap-3 max-lg:contents lg:col-start-1 lg:row-start-1 lg:grid">{main}</div>
+      <aside className="min-w-0 gap-3 max-lg:contents lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:grid">{rail}</aside>
+      <div className="min-w-0 gap-3 max-lg:contents lg:col-start-1 lg:row-start-2 lg:grid">{tail}</div>
     </div>
   );
 }
@@ -63,7 +63,7 @@ function Columns({ main, rail, tail }: { main: ReactNode; rail: ReactNode; tail:
 function SectionTabs({ value, onChange }: { value: Section; onChange: (s: Section) => void }) {
   return (
     <div className="sticky top-[52px] z-20 -mx-4 bg-paper px-4 py-2 md:top-14 md:-mx-6 md:px-6 lg:hidden">
-      <div role="tablist" aria-label="Token sections" className="flex gap-0.5 rounded-sm bg-sunken p-0.5">
+      <div role="tablist" aria-label="Token sections" className="flex gap-0.5 rounded-sm bg-sunken p-0.5 ring-1 ring-line ring-inset">
         {SECTIONS.map((s) => (
           <button
             key={s.value}
@@ -87,10 +87,13 @@ function SectionTabs({ value, onChange }: { value: Section; onChange: (s: Sectio
   );
 }
 
-/** Phone bottom bar (§4.5 mobile): 64px, above the app's tab bar; opens the trade/back sheet. */
+/**
+ * Phone bottom bar (§4.5 mobile): 64px, above the app's tab bar below 768px and above the sticky
+ * 32px status strip from 768px; opens the trade/back sheet.
+ */
 function BottomBar({ children }: { children: ReactNode }) {
   return (
-    <div className="fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-30 flex h-16 items-center gap-2 border-t border-line bg-surface px-4 md:bottom-0 lg:hidden">
+    <div className="fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-30 flex h-16 items-center gap-2 border-t border-line bg-surface px-4 md:bottom-8 md:px-6 lg:hidden">
       {children}
     </div>
   );
@@ -129,7 +132,7 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
   const activityTab = !narrow || !phoneTabs ? tab : section === "more" ? moreTab : phoneTabs[0];
 
   return (
-    <>
+    <div className="grid gap-3">
       <SectionTabs value={section} onChange={setSection} />
       <StatStrip launch={l} className="rounded-md border-x bg-surface max-lg:hidden" />
       <Columns
@@ -195,7 +198,7 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
       <Sheet open={sheet} onOpenChange={setSheet} title={`Trade $${l.symbol}`} hideTitle>
         <TradePanel launch={l} side={side} onSideChange={setSide} bare />
       </Sheet>
-    </>
+    </div>
   );
 }
 
@@ -208,7 +211,7 @@ function RaiseLayout({ launch: l, phase }: { launch: LaunchSummary; phase: Phase
   const refundReason = useRefundReason(l);
 
   return (
-    <>
+    <div className="grid gap-3">
       {ended ? (
         <div role="status" className="body flex items-center gap-3 rounded-md bg-warn-wash px-4 py-3 text-ink">
           <RefundGlyph className="shrink-0 text-warn" />
@@ -261,7 +264,7 @@ function RaiseLayout({ launch: l, phase }: { launch: LaunchSummary; phase: Phase
           </Sheet>
         </>
       )}
-    </>
+    </div>
   );
 }
 
@@ -327,7 +330,7 @@ export function TokenView({ mint }: { mint: string }) {
 
   const phase = phaseOf(data, now);
   return (
-    <div className="grid gap-4 max-lg:pb-16">
+    <div className="grid gap-6 max-lg:pb-16">
       <TokenHeader launch={data} phase={phase} now={now} />
       {phase === "live" ? (
         <LiveLayout key={data.mint} launch={data} justLaunched={firstStatus === "raising"} />

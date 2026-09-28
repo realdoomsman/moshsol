@@ -172,7 +172,7 @@ export function AmountInput({
                 type="button"
                 onClick={onMax}
                 disabled={disabled}
-                className="relative [font-weight:560] text-ink underline decoration-line-2 underline-offset-2 transition-colors before:absolute before:-inset-2 hover:decoration-ink"
+                className="relative [font-weight:560] text-ink underline decoration-ink-3/60 underline-offset-2 transition-colors before:absolute before:-inset-2 hover:decoration-ink"
               >
                 Max
               </button>
@@ -206,7 +206,7 @@ export function AmountInput({
             onClick={onToggleUnit}
             disabled={disabled}
             aria-label={`Amount in ${unit}; switch unit`}
-            className="ui flex h-10 shrink-0 items-center gap-1.5 rounded-sm px-2.5 text-ink-2 transition-colors hover:bg-sunken hover:text-ink"
+            className="ui flex h-10 shrink-0 items-center gap-1.5 rounded-sm px-2.5 text-ink-2 transition-colors hover:bg-raised hover:text-ink"
           >
             {unit}
             <ArrowUpDown className="size-4" strokeWidth={1.5} aria-hidden />
@@ -226,7 +226,7 @@ export function AmountInput({
               onClick={p.onSelect}
               className={cn(
                 "small num h-8 rounded-sm border px-2 [font-weight:560] transition-colors pointer-coarse:h-10",
-                p.active ? "border-ink bg-ink text-paper" : "border-line-2 text-ink-2 hover:bg-sunken hover:text-ink",
+                p.active ? "border-ink bg-ink text-paper" : "border-line-2 text-ink-2 hover:border-ink-3 hover:bg-raised hover:text-ink",
               )}
             >
               {p.label}

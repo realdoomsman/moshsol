@@ -12,9 +12,10 @@ export interface HowStep {
 }
 
 /**
- * §4 How a launch works. Desktop: a sticky step list (4/12) beside four full-height frames (8/12);
- * the active step is the frame whose centre is nearest the viewport centre, marked by a 2px ink bar
- * that slides over 160 ms. Mobile: title, description and frame stacked, no sticky column.
+ * §4 How a launch works. Desktop: a sticky step list (4/12) beside four frames (8/12), each given
+ * ~72% of the viewport so one beat fills the screen at a time without dead air; the active step
+ * is the frame whose centre is nearest the viewport centre, marked by a 2px ink bar that slides
+ * over 160 ms. Mobile: title, description and frame stacked, no sticky column.
  */
 export function HowSteps({ steps }: { steps: HowStep[] }) {
   const [active, setActive] = useState(0);
@@ -60,7 +61,7 @@ export function HowSteps({ steps }: { steps: HowStep[] }) {
 
   return (
     <div className="mt-12 lg:mt-4 lg:grid lg:grid-cols-12 lg:gap-6">
-      <ol className="relative hidden self-start border-l border-line lg:sticky lg:top-[120px] lg:col-span-4 lg:block">
+      <ol className="relative hidden self-start border-l border-line lg:sticky lg:top-[max(88px,calc(50dvh-280px))] lg:col-span-4 lg:block">
         {bar ? (
           <span
             aria-hidden
@@ -88,7 +89,7 @@ export function HowSteps({ steps }: { steps: HowStep[] }) {
             ref={(el) => {
               frames.current[i] = el;
             }}
-            className="lg:flex lg:h-screen lg:items-center lg:justify-center"
+            className="lg:flex lg:h-[72dvh] lg:min-h-[520px] lg:items-center lg:justify-center"
           >
             <div className="mb-6 lg:hidden">
               <StepText step={s} index={i} />

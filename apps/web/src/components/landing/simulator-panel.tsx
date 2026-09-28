@@ -57,7 +57,7 @@ function Seeded({ initial, options, onPick }: { initial: LaunchSummary; options:
       <AgentSimulator launch={launch} />
       <p className="micro mt-3 text-ink-3">
         Seeded with{" "}
-        <Link href={`/launch/${launch.mint}`} className="text-ink-2 underline decoration-line-2 underline-offset-4 hover:text-ink">
+        <Link href={`/launch/${launch.mint}`} className="text-ink-2 underline decoration-ink-3/60 underline-offset-4 hover:text-ink">
           ${launch.symbol}
         </Link>
         &rsquo;s live vault, curve and window budgets on {CLUSTER_NAME}. Nothing is sent; this is the program&rsquo;s arithmetic.

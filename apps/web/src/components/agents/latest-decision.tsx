@@ -36,7 +36,7 @@ export function LatestDecision() {
       </div>
       <div className="grid gap-1">
         <div className="flex items-center gap-2">
-          <Link href={`/launch/${d.mint}`} className="h3 text-ink hover:underline hover:decoration-line-2 hover:underline-offset-2">
+          <Link href={`/launch/${d.mint}`} className="h3 text-ink hover:underline hover:decoration-ink-3/60 hover:underline-offset-2">
             ${d.symbol ?? d.mint.slice(0, 4)}
           </Link>
           <ActionChip d={d} />

@@ -62,7 +62,7 @@ export function ExplorerLink({ signature, children = "View on explorer" }: { sig
       href={explorerTx(signature)}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-1 font-medium text-ink underline decoration-line-2 underline-offset-2 hover:decoration-ink"
+      className="inline-flex items-center gap-1 font-medium text-ink underline decoration-ink-3/60 underline-offset-2 hover:decoration-ink"
     >
       {children} <ExternalLink className="size-3" strokeWidth={1.5} aria-hidden />
     </a>

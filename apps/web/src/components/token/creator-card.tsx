@@ -106,7 +106,7 @@ export function CreatorCard({ launch: l, className }: { launch: LaunchSummary; c
                     href={s.href}
                     target="_blank"
                     rel="noreferrer nofollow"
-                    className="small inline-flex h-8 items-center gap-1.5 rounded-sm border border-line px-2.5 text-ink-2 transition-colors hover:bg-sunken hover:text-ink pointer-coarse:h-10"
+                    className="small inline-flex h-8 items-center gap-1.5 rounded-sm border border-line px-2.5 text-ink-2 transition-colors hover:border-line-2 hover:bg-raised hover:text-ink pointer-coarse:h-10"
                   >
                     <SocialIcon kind={s.kind} />
                     {s.label}

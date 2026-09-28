@@ -97,7 +97,7 @@ function Instrument({ mint, initial, chart, nowSec }: { mint: string; initial: L
     <Frame>
       <Link
         href={href}
-        className="flex items-center gap-3 border-b border-line px-4 py-3 transition-colors hover:bg-sunken md:px-5"
+        className="flex items-center gap-3 border-b border-line px-4 py-3 transition-colors hover:bg-raised md:px-5"
         aria-label={`Open ${l.name} ($${l.symbol})`}
       >
         <TokenAvatar src={l.image} symbol={l.symbol} mint={l.mint} size={36} />
@@ -192,7 +192,7 @@ function Footer({ launch: l, href }: { launch: LaunchSummary; href: string }) {
     );
 
   return (
-    <Link href={href} className="grid border-t border-line transition-colors hover:bg-sunken md:grid-cols-3">
+    <Link href={href} className="grid border-t border-line transition-colors hover:bg-raised md:grid-cols-3">
       <Cell label="Locked in vault">
         <span className="num text-ink">
           {fmtTokens(l.vaultTokens)} <span className="text-ink-3">+ {fmtLamports(l.vaultSol)} SOL</span>

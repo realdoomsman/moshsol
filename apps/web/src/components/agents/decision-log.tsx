@@ -84,7 +84,7 @@ export function DecisionLog({ log, now, loading }: { log: LogEntry[]; now: numbe
           >
             <span className="small num text-ink-3">{timeAgo(d.at, now)}</span>
             <span className="flex items-center gap-2 md:contents">
-              <Link href={`/launch/${d.mint}`} className="ui text-ink hover:underline hover:decoration-line-2 hover:underline-offset-2">
+              <Link href={`/launch/${d.mint}`} className="ui text-ink hover:underline hover:decoration-ink-3/60 hover:underline-offset-2">
                 ${d.symbol ?? d.mint.slice(0, 4)}
               </Link>
               <span className="md:hidden">

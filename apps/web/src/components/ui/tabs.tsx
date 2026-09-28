@@ -111,8 +111,8 @@ const SEGMENT_SIZES = {
 };
 
 /**
- * Segmented control (§3.6: 8px radius, `sunken` track): view toggles (Board | Grid | Table),
- * windows (24h · 7d · All) and the Buy/Sell switch. `stretch` fills the width (mobile).
+ * Segmented control (§3.6: 8px radius, `sunken` track with a hairline): view toggles (Board | Grid |
+ * Table), windows (24h · 7d · All) and the Buy/Sell switch. `stretch` fills the width (mobile).
  */
 export function Segmented<T extends string>({
   items,
@@ -139,7 +139,7 @@ export function Segmented<T extends string>({
       role="radiogroup"
       aria-label={label}
       onKeyDown={(e) => rovingKeys(e, items, value, onChange, root.current)}
-      className={cn("inline-flex gap-0.5 rounded-sm bg-sunken p-0.5", stretch && "flex w-full", className)}
+      className={cn("inline-flex gap-0.5 rounded-sm bg-sunken p-0.5 ring-1 ring-line ring-inset", stretch && "flex w-full", className)}
     >
       {items.map((s) => {
         const active = s.value === value;

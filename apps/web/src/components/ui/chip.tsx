@@ -4,10 +4,11 @@ import { cn } from "./cn";
 
 export type ChipTone = "neutral" | "muted" | "faint" | "ink" | "accent" | "warn";
 
+/** Neutral chips lift off the ground (`raised`), they don't punch holes in it. */
 const TONES: Record<ChipTone, string> = {
-  neutral: "bg-sunken text-ink",
-  muted: "bg-sunken text-ink-2",
-  faint: "bg-sunken text-ink-3",
+  neutral: "bg-raised text-ink",
+  muted: "bg-raised text-ink-2",
+  faint: "bg-raised text-ink-3",
   ink: "bg-ink text-paper",
   accent: "bg-accent-wash text-accent-ink",
   warn: "bg-warn-wash text-warn",
@@ -87,7 +88,7 @@ const ROLE: Record<Role, { tone: ChipTone; label: string }> = {
 
 /**
  * Receipt/role chip for makers, holders and comment authors (§4.5): Creator (accent), Backer (ink,
- * optionally "Backer · 4.2% share" via `detail`), Agent (accent + ◆), Holder (sunken).
+ * optionally "Backer · 4.2% share" via `detail`), Agent (accent + ◆), Holder (raised).
  */
 export function RoleChip({ role, detail, className }: { role: Role; detail?: string; className?: string }) {
   const r = ROLE[role];

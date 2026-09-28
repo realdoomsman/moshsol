@@ -1,6 +1,6 @@
 target/
 node_modules/
-.next/
+.next*/
 dist/
 .anchor/
 test-ledger/
@@ -11,3 +11,6 @@ apps/indexer/data/
 .localnet/
 .devnet/
 *.tsbuildinfo
+.mainnet-beta/
+.secrets/
+.x-session/

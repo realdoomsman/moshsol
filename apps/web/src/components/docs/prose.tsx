@@ -4,12 +4,13 @@ import { CopyButton } from "../ui/address";
 import { cn } from "../ui/cn";
 
 /**
- * Docs typography (§4.11): `body` 15/24, `h3` subheads, sunken code blocks in JetBrains Mono 13px
- * with a copy button, callouts with a 2px left rule (ink / warn / accent). Server components.
+ * Docs typography (§4.11): `body` 15/24 in `ink-2` held to a ~66ch measure, `h3` subheads, code in
+ * JetBrains Mono 13px on `surface` panels with a copy button, callouts with a 2px left rule
+ * (ink-2 / warn / accent). Server components.
  */
 
 export function P({ children, className }: { children: ReactNode; className?: string }) {
-  return <p className={cn("body mt-4 text-ink-2 first:mt-0", className)}>{children}</p>;
+  return <p className={cn("body mt-4 max-w-[66ch] text-ink-2 first:mt-0", className)}>{children}</p>;
 }
 
 export function H3({ children, id }: { children: ReactNode; id?: string }) {
@@ -21,11 +22,11 @@ export function H3({ children, id }: { children: ReactNode; id?: string }) {
 }
 
 export function Ul({ children }: { children: ReactNode }) {
-  return <ul className="body mt-4 grid list-disc gap-2 pl-5 text-ink-2 marker:text-ink-3">{children}</ul>;
+  return <ul className="body mt-4 grid max-w-[66ch] list-disc gap-2 pl-5 text-ink-2 marker:text-ink-3">{children}</ul>;
 }
 
 export function Ol({ children }: { children: ReactNode }) {
-  return <ol className="body mt-4 grid list-decimal gap-2 pl-5 text-ink-2 marker:text-ink-3">{children}</ol>;
+  return <ol className="body mt-4 grid max-w-[66ch] list-decimal gap-2 pl-5 text-ink-2 marker:text-ink-3">{children}</ol>;
 }
 
 /** Strong term inside running text. */
@@ -35,12 +36,14 @@ export function B({ children }: { children: ReactNode }) {
 
 /** Inline code / account / instruction name. */
 export function C({ children }: { children: ReactNode }) {
-  return <code className="rounded-xs bg-sunken px-1 py-px font-mono text-[13px] text-ink">{children}</code>;
+  return (
+    <code className="rounded-xs bg-raised px-1.5 py-px font-mono text-[13px] text-ink ring-1 ring-line ring-inset">{children}</code>
+  );
 }
 
 /** Internal or external link in prose. */
 export function A({ href, children }: { href: string; children: ReactNode }) {
-  const cls = "text-ink underline decoration-line-2 underline-offset-4 transition-colors hover:decoration-ink";
+  const cls = "rounded-xs text-ink underline decoration-ink-3/60 underline-offset-4 transition-colors hover:decoration-ink";
   return href.startsWith("http") ? (
     <a href={href} target="_blank" rel="noreferrer" className={cls}>
       {children} ↗
@@ -56,8 +59,8 @@ export function Callout({ tone = "ink", title, children }: { tone?: "ink" | "war
   return (
     <aside
       className={cn(
-        "mt-6 rounded-r-sm border border-l-2 border-line bg-surface px-4 py-3",
-        tone === "ink" ? "border-l-ink" : tone === "warn" ? "border-l-warn" : "border-l-accent",
+        "mt-6 max-w-[66ch] rounded-r-sm border border-l-2 border-line bg-surface px-4 py-3",
+        tone === "ink" ? "border-l-ink-2" : tone === "warn" ? "border-l-warn" : "border-l-accent",
       )}
     >
       {title ? <p className={cn("ui", tone === "warn" ? "text-warn" : tone === "accent" ? "text-accent-ink" : "text-ink")}>{title}</p> : null}
@@ -68,12 +71,12 @@ export function Callout({ tone = "ink", title, children }: { tone?: "ink" | "war
 
 export function Code({ children, label }: { children: string; label?: string }) {
   return (
-    <div className="mt-4 overflow-hidden rounded-sm bg-sunken">
-      <div className="flex items-center justify-between border-b border-line px-3 py-1">
-        <span className="micro text-ink-3">{label ?? "Code"}</span>
+    <div className="mt-4 overflow-hidden rounded-md border border-line bg-surface">
+      <div className="flex h-9 items-center justify-between border-b border-line pr-2 pl-4">
+        <span className="label text-ink-3">{label ?? "Code"}</span>
         <CopyButton value={children} label="Copy code" />
       </div>
-      <pre className="overflow-x-auto px-4 py-3 font-mono text-[13px] leading-5 text-ink">
+      <pre className="overflow-x-auto px-4 py-3.5 font-mono text-[13px] leading-[21px] text-ink">
         <code>{children}</code>
       </pre>
     </div>

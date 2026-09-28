@@ -166,7 +166,7 @@ export function CreateSuccess({ mint, signature }: { mint: string; signature: st
       </section>
 
       <p className="small text-center text-ink-3">
-        <Link href="/create" className="underline decoration-line-2 underline-offset-2 hover:text-ink hover:decoration-ink">
+        <Link href="/create" className="underline decoration-ink-3/60 underline-offset-2 hover:text-ink hover:decoration-ink">
           Create another launch
         </Link>
       </p>

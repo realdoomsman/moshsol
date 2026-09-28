@@ -382,20 +382,21 @@ export const brand: DocPage = {
         <>
           <div className="mt-2 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-line bg-line sm:grid-cols-4">
             {[
-              ["Paper", "bg-paper"],
-              ["Ink", "bg-ink"],
-              ["Buoy orange", "bg-accent"],
-              ["Line", "bg-line-2"],
-            ].map(([name, cls]) => (
+              ["Ground", "#0F100E", "bg-paper"],
+              ["Ink", "#F2F1EC", "bg-ink"],
+              ["Buoy orange", "#FF5B1A", "bg-accent"],
+              ["Line", "#2A2B27", "bg-line"],
+            ].map(([name, hex, cls]) => (
               <div key={name} className="bg-surface p-3">
-                <div className={`h-12 rounded-sm border border-line ${cls}`} />
+                <div className={`h-12 rounded-sm ring-1 ring-line-2 ring-inset ${cls}`} />
                 <p className="small mt-2 text-ink">{name}</p>
+                <p className="mono text-ink-3">{hex}</p>
               </div>
             ))}
           </div>
           <P>
-            Orange means the protocol — the vault, the agent, the backer share. Green and red mean price direction only. Everything else
-            is ink and greys.
+            One surface everywhere: off-white ink on the dark ground, like the mark itself. Orange means the protocol — the vault, the
+            agent, the backer share. Green and red mean price direction only. Everything else is ink and greys.
           </P>
         </>
       ),

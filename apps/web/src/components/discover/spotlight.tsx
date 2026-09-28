@@ -3,8 +3,10 @@
 import { lamportsToSol } from "@holdfast/sdk";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { ClampGlyph } from "@/components/brand/glyphs";
 import { ButtonLink } from "@/components/ui/button";
+import { cn } from "@/components/ui/cn";
 import { Countdown } from "@/components/ui/countdown";
 import { NumberTicker } from "@/components/ui/number-ticker";
 import { ProgressBar } from "@/components/ui/progress";
@@ -27,19 +29,30 @@ function fmtHeld(secs: number): string {
   return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
-const PANEL = "relative min-w-0 rounded-md border border-line bg-surface p-4 transition-colors hover:bg-raised";
+/** Both panels share one skeleton: label, head row, (body), a footer pinned to the bottom edge. */
+const PANEL =
+  "relative flex min-w-0 flex-col rounded-md border border-line bg-surface p-4 transition-colors hover:border-line-2 hover:bg-raised " +
+  "has-[a[data-card-link]:focus-visible]:outline-2 has-[a[data-card-link]:focus-visible]:outline-offset-2 has-[a[data-card-link]:focus-visible]:outline-accent";
+/** Border + 12px + a 32px button (40px on touch): both footers are the same height, text or not. */
+const FOOTER = "mt-auto flex min-h-[45px] items-center gap-x-3 gap-y-1 border-t border-line pt-3 pointer-coarse:min-h-[53px]";
 
-function Head({ l, href }: { l: LaunchSummary; href: string }) {
+function Head({ l, href, value, sub }: { l: LaunchSummary; href: string; value: ReactNode; sub: ReactNode }) {
   return (
-    <div className="flex min-w-0 items-center gap-3">
-      <TokenAvatar src={l.image} symbol={l.symbol} mint={l.mint} size={56} />
-      <div className="min-w-0">
-        <div className="h3 truncate text-ink">
-          <Link href={href} className="outline-none after:absolute after:inset-0 after:content-[''] focus-visible:underline">
-            {l.name}
-          </Link>
+    <div className="mt-3 mb-4 flex items-center justify-between gap-4">
+      <div className="flex min-w-0 items-center gap-3">
+        <TokenAvatar src={l.image} symbol={l.symbol} mint={l.mint} size={56} />
+        <div className="min-w-0">
+          <div className="h3 truncate text-ink">
+            <Link href={href} data-card-link className="outline-none after:absolute after:inset-0 after:content-['']">
+              {l.name}
+            </Link>
+          </div>
+          <div className="small text-ink-3">${l.symbol}</div>
         </div>
-        <div className="small text-ink-3">${l.symbol}</div>
+      </div>
+      <div className="shrink-0 text-right">
+        <div className="h3 num text-ink">{value}</div>
+        <div className="small num text-ink-3">{sub}</div>
       </div>
     </div>
   );
@@ -59,25 +72,25 @@ function TrendingPanel({ launch: l, kingSince, now }: { launch: LaunchSummary; k
           "Top live launch"
         )}
       </div>
-      <div className="mt-3 flex items-center justify-between gap-4">
-        <Head l={l} href={`/launch/${l.mint}`} />
-        <div className="shrink-0 text-right">
-          <div className="small text-ink-3">Mcap</div>
-          <NumberTicker value={l.marketCapSol} format={(v) => `${fmtSolValue(v)} SOL`} className="ui text-ink" />
-          <div>
-            <Change value={l.change24h} className="small" />
-          </div>
-        </div>
-      </div>
-      <div className="small mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-line pt-3 text-ink-2">
+      <Head
+        l={l}
+        href={`/launch/${l.mint}`}
+        value={<NumberTicker value={l.marketCapSol} format={(v) => `${fmtSolValue(v)} SOL`} />}
+        sub={
+          <>
+            mcap · <Change value={l.change24h} /> 24h
+          </>
+        }
+      />
+      <div className={cn(FOOTER, "small text-ink-2")}>
         <ClampGlyph className="shrink-0 text-accent-ink" />
-        <span className="num">
-          Vault {fmtSolValue(vault.sol)} SOL + {vault.supplyPct.toFixed(2)}% supply
+        <span className="num min-w-0 truncate">
+          {fmtSolValue(vault.sol)} SOL + {vault.supplyPct.toFixed(2)}% supply locked
         </span>
         {l.volume1hSol > 0 ? (
           <span className="num ml-auto shrink-0 text-ink-3">{fmtSolValue(l.volume1hSol)} SOL traded 1h</span>
         ) : null}
-        {spark ? <Sparkline values={spark} className="h-6 w-20 shrink-0" /> : null}
+        {spark ? <Sparkline values={spark} className={cn("h-6 w-20 shrink-0", l.volume1hSol > 0 ? "" : "ml-auto")} /> : null}
       </div>
     </article>
   );
@@ -90,17 +103,18 @@ function ClosingPanel({ launch: l }: { launch: LaunchSummary }) {
   return (
     <article className={PANEL}>
       <div className="label text-ink-3">Closing soonest</div>
-      <div className="mt-3 flex items-center justify-between gap-4">
-        <Head l={l} href={`/launch/${l.mint}`} />
-        <div className="shrink-0 text-right">
-          <div className="ui num text-ink">
+      <Head
+        l={l}
+        href={`/launch/${l.mint}`}
+        value={
+          <>
             {fmtSolValue(raised)} <span className="text-ink-3">/ {fmtSolValue(max)} SOL</span>
-          </div>
-          <div className="small num text-ink-3">min {fmtSolValue(min)}</div>
-        </div>
-      </div>
-      <ProgressBar value={raised} max={max} min={min} className="mt-3" />
-      <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-3">
+          </>
+        }
+        sub={`min ${fmtSolValue(min)}`}
+      />
+      <ProgressBar value={raised} max={max} min={min} className="mb-4" />
+      <div className={cn(FOOTER, "justify-between")}>
         <div className="small num min-w-0 truncate text-ink-2">
           <Countdown to={l.raiseDeadline} prefix="Closes" /> · {l.backerCount} {l.backerCount === 1 ? "backer" : "backers"}
         </div>

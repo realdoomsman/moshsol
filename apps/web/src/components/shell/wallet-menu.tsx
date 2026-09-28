@@ -54,7 +54,7 @@ export function WalletButton() {
           {...p}
           aria-label={`Wallet ${shortAddr(address)}${sol ? `, ${sol}` : ""}`}
           className={cn(
-            "ui flex h-8 items-center gap-2 rounded-sm border border-line-2 bg-surface px-2.5 text-ink transition-colors hover:bg-sunken pointer-coarse:h-10 md:pr-2 md:pl-1.5",
+            "ui flex h-8 items-center gap-2 rounded-sm border border-line-2 bg-surface px-2.5 text-ink transition-colors hover:border-ink-3 hover:bg-raised pointer-coarse:h-10 md:pr-2 md:pl-1.5",
           )}
         >
           <Identicon address={address} size={20} />

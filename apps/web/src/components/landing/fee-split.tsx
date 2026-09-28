@@ -33,13 +33,16 @@ export function FeeSplit() {
   );
 }
 
-/** Backers 50% (accent) · Creator 30% (ink) · Platform 20% (ink-3), split by 2px paper gaps. */
+/**
+ * Backers (accent) · Creator (ink-3) · Platform (line-2), split by 2px gaps of ground: weight falls
+ * on the backers' share, the rest steps down in brightness with its size.
+ */
 export function SplitBar({ params: p, className }: { params: PlatformInfo["params"]; className?: string }) {
   const platformBps = 10_000 - p.backerFeeShareBps - p.creatorFeeShareBps;
   const parts = [
     { label: "Backers", bps: p.backerFeeShareBps, fill: "bg-accent" },
-    { label: "Creator", bps: p.creatorFeeShareBps, fill: "bg-ink" },
-    { label: "Platform", bps: platformBps, fill: "bg-ink-3" },
+    { label: "Creator", bps: p.creatorFeeShareBps, fill: "bg-ink-3" },
+    { label: "Platform", bps: platformBps, fill: "bg-line-2" },
   ];
   return (
     <figure className={className}>

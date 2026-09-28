@@ -205,6 +205,10 @@ export interface PlatformInfo {
     virtualSolReserves: string;
     maxBundleSupplyBps: number;
     minRaiseLamports: string;
+    /** Mainnet-beta cap on a launch's max raise; "0" = no cap. */
+    maxRaiseLamports: string;
+    /** Mainnet-beta cap on any one wallet's deposit, applied on top of the creator's cap; "0" = no cap. */
+    maxWalletDepositLamports: string;
     agentBuyBpsPerWindow: number;
     agentSellBpsPerWindow: number;
     agentMaxImpactBps: number;

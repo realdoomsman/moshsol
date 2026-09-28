@@ -7,30 +7,31 @@ import { Mark } from "../brand/mark";
 import { SearchIconButton, SearchTrigger } from "../search/search-trigger";
 import { cn } from "../ui/cn";
 import { FaucetButton } from "./faucet";
-import { APP_NAV, isNavActive } from "./nav";
+import { NAV, isNavActive } from "./nav";
 import { NetworkPill } from "./status";
 import { WalletButton } from "./wallet-menu";
 
 /**
- * App top bar (§4.3). Desktop 56px: lockup · nav · search · network · test SOL · wallet.
+ * The one top bar for every route (§4.3) — landing, docs and app share it, so moving between them
+ * never changes the chrome. Desktop 56px: lockup · nav · search · network · test SOL · wallet.
  * Below 768px: 52px with the mark, network dot, search icon and an identicon-only wallet button;
  * primary navigation moves to the bottom tab bar.
  */
-export function AppHeader() {
+export function SiteHeader() {
   const pathname = usePathname();
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-paper/85 backdrop-blur-[12px]">
-      <div className="frame-app flex h-[52px] items-center gap-1 md:h-14 md:gap-6">
+      <div className="frame-app flex h-[52px] items-center gap-1 md:h-14 md:gap-7">
         <Link
-          href="/app"
-          aria-label="Holdfast — discover launches"
-          className="-ml-1 flex size-10 shrink-0 items-center justify-center text-ink md:ml-0 md:size-auto"
+          href="/"
+          aria-label="Holdfast home"
+          className="-ml-1 flex size-10 shrink-0 items-center justify-center rounded-sm text-ink md:ml-0 md:size-auto"
         >
           <Lockup size={22} className="hidden lg:block" />
           <Mark size={26} className="lg:hidden" />
         </Link>
-        <nav aria-label="Primary" className="hidden h-full items-stretch gap-5 md:flex">
-          {APP_NAV.map((item) => {
+        <nav aria-label="Primary" className="hidden h-full items-stretch gap-6 md:flex">
+          {NAV.map((item) => {
             const active = isNavActive(pathname, item.href);
             return (
               <Link
@@ -38,7 +39,7 @@ export function AppHeader() {
                 href={item.href}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "ui relative flex items-center whitespace-nowrap transition-colors",
+                  "ui relative flex items-center whitespace-nowrap transition-colors focus-visible:outline-offset-[-2px]",
                   active ? "text-ink" : "text-ink-2 hover:text-ink",
                 )}
               >

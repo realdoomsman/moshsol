@@ -95,14 +95,19 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
 
   const imageUrl = useObjectUrl(draft.image?.file);
   const minRaiseLamports = params ? BigInt(params.minRaiseLamports) : null;
+  // Beta caps ("0" = none); absent on indexers older than the caps, which means no cap either.
+  const maxRaiseCap = params?.maxRaiseLamports ?? "0";
+  const maxWalletCap = params?.maxWalletDepositLamports ?? "0";
   const v = useMemo(
     () =>
       validateDraft(draft, {
         // Until /api/platform loads, the raise minimum can't be checked; min 1 lamport keeps the rest honest.
         minRaiseLamports: minRaiseLamports ?? 1n,
         maxBundleSupplyBps: params?.maxBundleSupplyBps ?? LIMITS.minBundleSupplyBps,
+        maxRaiseLamports: BigInt(maxRaiseCap),
+        maxWalletDepositLamports: BigInt(maxWalletCap),
       }),
-    [draft, minRaiseLamports, params?.maxBundleSupplyBps],
+    [draft, minRaiseLamports, params?.maxBundleSupplyBps, maxRaiseCap, maxWalletCap],
   );
   const range = useMemo(() => bundleRange(params, draft), [params, draft]);
   const cost = useCreateCost(draft.name, draft.symbol, params);
@@ -343,12 +348,12 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
     ) : null;
 
   return (
-    <div className="grid gap-6 pb-16 lg:gap-8 lg:pb-0">
+    <div className="grid gap-6 pb-16 lg:pb-0">
       <header className="grid gap-1">
         <h1 className="display-m text-ink">Create a launch</h1>
         <p className="body text-ink-2">
           Open a raise. When it closes, the pooled SOL buys the first slice of supply and locks it in the vault forever.{" "}
-          <Link href="/docs/how-it-works" className="whitespace-nowrap text-ink underline decoration-line-2 underline-offset-2 hover:decoration-ink">
+          <Link href="/docs/how-it-works" className="whitespace-nowrap text-ink underline decoration-ink-3/60 underline-offset-2 hover:decoration-ink">
             How it works ›
           </Link>
         </p>
@@ -408,7 +413,7 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
         </aside>
       </div>
 
-      <div className="fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-30 border-t border-line bg-surface md:bottom-0 lg:hidden">
+      <div className="fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-30 border-t border-line bg-surface md:bottom-8 lg:hidden">
         <div className="frame-app flex h-16 items-center justify-between gap-3">
           {back}
           {cont ?? (
