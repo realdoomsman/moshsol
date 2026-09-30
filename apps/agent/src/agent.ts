@@ -1,9 +1,11 @@
-import { SYSVAR_CLOCK_PUBKEY, type Keypair, type PublicKey, type TransactionError } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, SYSVAR_CLOCK_PUBKEY, type Keypair, type PublicKey } from "@solana/web3.js";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   SAME_SLOT_TRADE_MESSAGE,
   describeError,
   launchPda,
+  prepareTx,
+  sendAndConfirm,
   type LaunchAccount,
   type MoshClient,
 } from "@holdfast/sdk";
@@ -25,6 +27,8 @@ const LAUNCH_STATUS_OFFSET = 80;
 const LIVE_STATUS_BS58 = "2";
 /** Upper bound on the whole-loop retry delay after RPC failures. */
 const MAX_TICK_BACKOFF_MS = 60_000;
+/** Below this the agent cannot keep paying transaction fees for long. */
+const LOW_BALANCE_LAMPORTS = 0.01 * LAMPORTS_PER_SOL;
 
 interface LaunchRuntime {
   symbol?: string;
@@ -52,6 +56,8 @@ export class Agent {
   private readonly sizing: Sizing;
   private lastTickAt: number | null = null;
   private tickCount = 0;
+  /** Fee wallet balance as of the last tick; `low_balance` is logged each time it falls under the threshold. */
+  private balanceLamports: number | null = null;
 
   constructor(
     private readonly cfg: AgentConfig,
@@ -71,6 +77,7 @@ export class Agent {
       startedAt: this.startedAt,
       lastTickAt: this.lastTickAt,
       tick: this.tickCount,
+      balanceSol: this.balanceLamports === null ? null : this.balanceLamports / LAMPORTS_PER_SOL,
       decisions: [...this.decisions.values()],
     };
   }
@@ -97,16 +104,22 @@ export class Agent {
   }
 
   private async tick(signal: AbortSignal): Promise<void> {
-    const [platform, launches, clock] = await Promise.all([
+    const [platform, launches, clock, balance] = await Promise.all([
       this.client.fetchPlatform(),
       this.client.program.account.launch.all([
         { memcmp: { offset: LAUNCH_STATUS_OFFSET, bytes: LIVE_STATUS_BS58 } },
       ]),
       this.client.connection.getAccountInfo(SYSVAR_CLOCK_PUBKEY, "confirmed"),
+      this.client.connection.getBalance(this.signer.publicKey, "confirmed"),
     ]);
     if (!platform) throw new Error("platform account not found (is the program initialized on this cluster?)");
     if (!clock) throw new Error("clock sysvar unavailable");
     const now = clockUnixTs(clock.data);
+    const wasLow = this.balanceLamports !== null && this.balanceLamports < LOW_BALANCE_LAMPORTS;
+    this.balanceLamports = balance;
+    if (balance < LOW_BALANCE_LAMPORTS && !wasLow && !this.cfg.dryRun) {
+      log("low_balance", { agent: this.signer.publicKey.toBase58(), sol: balance / LAMPORTS_PER_SOL });
+    }
 
     let skipReason: string | undefined;
     if (platform.params.agentsPaused) skipReason = "agents paused by platform";
@@ -198,28 +211,32 @@ export class Agent {
 
   private async execute(rt: LaunchRuntime, key: string, mint: PublicKey, ev: Evaluation, plan: TradePlan): Promise<void> {
     const agent = this.signer.publicKey;
+    const connection = this.client.connection;
     const amount = plan.amount.toString();
-    const extra = { expectedOut: plan.expectedOut, minOut: plan.minOut, impactBps: plan.impactBps };
+    let extra: Record<string, unknown> = { expectedOut: plan.expectedOut, minOut: plan.minOut, impactBps: plan.impactBps };
     try {
       const ix =
         plan.action === "buy"
           ? await this.client.agentBuyIx(agent, mint, plan.amount, plan.minOut)
           : await this.client.agentSellIx(agent, mint, plan.amount, plan.minOut);
-      const { tx, blockhash, lastValidBlockHeight } = await this.client.buildTx(agent, [ix], {
-        computeUnits: this.cfg.computeUnits,
-        priorityMicroLamports: this.cfg.priorityMicroLamports,
-      });
+      const prepared = await prepareTx(connection, agent, [ix], this.cfg.priorityFee);
+      const { tx, computeUnits, priorityMicroLamports } = prepared;
+      extra = {
+        ...extra,
+        simulatedUnits: prepared.unitsConsumed,
+        computeUnits,
+        priorityMicroLamports,
+        // What the runtime charges on top of the base fee: limit × price, rounded up.
+        priorityFeeLamports: Math.ceil((computeUnits * priorityMicroLamports) / 1_000_000),
+      };
       tx.sign(this.signer);
-      const connection = this.client.connection;
-      const signature = await connection.sendRawTransaction(tx.serialize());
-      const res = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
-      if (res.value.err) throw await this.failure(signature, res.value.err);
+      const signature = await sendAndConfirm(connection, tx.serialize(), prepared.lastValidBlockHeight);
 
       rt.failures = 0;
       rt.lastError = undefined;
       rt.nextTradeAt = Date.now() + this.cfg.cooldownMs;
-      const fill = await this.fillOf(signature);
-      this.record(rt, key, ev, { action: plan.action, reason: plan.reason, amount, signature }, plan.kind, { ...extra, ...fill });
+      const landed = await this.landed(signature);
+      this.record(rt, key, ev, { action: plan.action, reason: plan.reason, amount, signature }, plan.kind, { ...extra, ...landed });
     } catch (err) {
       const error = describeError(err);
       rt.lastError = error;
@@ -232,25 +249,18 @@ export class Agent {
     }
   }
 
-  /** Error carrying the transaction logs so `describeError` can map the program error. */
-  private async failure(signature: string, err: TransactionError): Promise<Error> {
+  /** Compute used, fee paid, actual fill and resulting vault balances of a landed trade (log detail only). */
+  private async landed(signature: string): Promise<Record<string, unknown>> {
     const tx = await this.client.connection
       .getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 })
       .catch(() => null);
-    return Object.assign(new Error(`transaction ${signature} failed: ${JSON.stringify(err)}`), {
-      logs: tx?.meta?.logMessages ?? [],
-    });
-  }
-
-  /** Actual fill and resulting vault balances from the emitted `trade` event (log detail only). */
-  private async fillOf(signature: string): Promise<Record<string, string>> {
-    const tx = await this.client.connection
-      .getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 })
-      .catch(() => null);
-    const trade = this.client.parseEvents(tx?.meta?.logMessages ?? []).find((e) => e.name === "trade");
-    if (!trade || trade.name !== "trade") return {};
+    if (!tx?.meta) return {};
+    const cost = { unitsConsumed: tx.meta.computeUnitsConsumed, feeLamports: tx.meta.fee };
+    const trade = this.client.parseEvents(tx.meta.logMessages ?? []).find((e) => e.name === "trade");
+    if (!trade || trade.name !== "trade") return cost;
     const d = trade.data;
     return {
+      ...cost,
       filledSol: d.solAmount.toString(),
       filledTokens: d.tokenAmount.toString(),
       vaultSol: d.vaultSol.toString(),

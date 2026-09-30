@@ -237,7 +237,6 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
       label: `Create $${d.symbol}`,
       successMessage: `$${d.symbol} raise is open`,
       signers: [mint],
-      computeUnits: 400_000,
       build: async (payer) => {
         const onChain = await client.fetchPlatform();
         if (!onChain) throw new Error("Platform is not initialized on this cluster");

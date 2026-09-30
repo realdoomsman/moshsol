@@ -146,7 +146,7 @@ async function createRaise(
     reserveBps: 3_000,
     terms: platform.params,
   });
-  await send(client, creator, [ix], [mint], 400_000);
+  await send(client, creator, [ix], [mint]);
   console.log(`created ${meta.symbol} ${mint.publicKey.toBase58()}`);
   return mint.publicKey;
 }

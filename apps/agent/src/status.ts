@@ -25,6 +25,8 @@ export interface StatusSnapshot {
   startedAt: number;
   lastTickAt: number | null;
   tick: number;
+  /** Fee wallet balance as of the last tick (null before the first). */
+  balanceSol: number | null;
   decisions: Decision[];
 }
 

@@ -192,7 +192,6 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
         const sig = await tx.run({
           label: batches > 1 ? `${CLAIM_ALL} (${i + 1}/${batches})` : CLAIM_ALL,
           successMessage: batches > 1 ? `Claimed batch ${i + 1} of ${batches}` : `Claimed ${fmtLamports(total)} SOL in fees`,
-          computeUnits: 400_000,
           build: async (payer) => Promise.all(chunk.map((make) => make(payer))),
           invalidate: invalidate(),
         });

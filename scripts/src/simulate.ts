@@ -495,7 +495,7 @@ class Simulator {
       terms: p,
     });
     await this.ensureSol(creator, 200_000_000n);
-    await send(this.client, creator.kp, [ix], [mint], 400_000);
+    await send(this.client, creator.kp, [ix], [mint]);
     this.symbols.set(mint.publicKey.toBase58(), meta.symbol);
     this.stats.raises++;
     log(`✨ raise ${meta.symbol} "${meta.name}" by ${creator.label}: min ${minSol} / max ${maxSol} SOL, mint ${mint.publicKey.toBase58()}`);

@@ -1,35 +1,14 @@
 "use client";
 
-import { SAME_SLOT_TRADE_MESSAGE, describeError } from "@holdfast/sdk";
+import { DEFAULT_PRIORITY_FEE, confirmSignature, describeError, prepareTx, sendAndConfirm } from "@holdfast/sdk";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { VersionedTransaction, type Keypair, type PublicKey, type TransactionInstruction } from "@solana/web3.js";
+import type { Keypair, PublicKey, TransactionInstruction } from "@solana/web3.js";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { useMoshClient } from "./chain";
 import { explorerTx } from "./explorer";
-
-/**
- * Public trades can't share a slot with a vault-agent trade (anti-sandwich rule). The collision
- * clears on the next slot, so it is retried a few times instead of shown to the user.
- */
-const SAME_SLOT_RETRIES = 5;
-const SLOT_MS = 400;
-// ES2022 lib: no Promise.withResolvers.
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-class SimulationError extends Error {
-  readonly logs: string[];
-  constructor(txErr: unknown, logs: string[]) {
-    const raw = JSON.stringify(txErr);
-    const custom = raw.match(/"Custom":(\d+)/);
-    // Surface custom codes in the format describeError maps through the IDL.
-    super(custom ? `custom program error: 0x${Number(custom[1]).toString(16)}` : raw);
-    this.logs = logs;
-  }
-}
 
 /** Collects program logs from web3 / wallet-adapter / simulation errors and maps them to a program error message. */
 export function humanError(err: unknown): string {
@@ -45,7 +24,6 @@ export interface TxRequest {
   label: string;
   build: (payer: PublicKey) => Promise<TransactionInstruction[]>;
   signers?: Keypair[];
-  computeUnits?: number;
   /**
    * Chain-read query keys to refresh after confirmation. Indexer data refreshes itself from the
    * `/ws` push once the indexer has processed the transaction.
@@ -79,15 +57,16 @@ export function ExplorerLink({ signature, children = "View on explorer" }: { sig
 }
 
 /**
- * Wallet transaction pipeline: build → simulate (human errors before the wallet prompt) →
- * partial-sign extra signers → wallet sign → send → confirm, with a single evolving toast.
+ * Wallet transaction pipeline: build → simulate (human errors before the wallet prompt; sizes the
+ * compute limit) with the priority-fee estimate → partial-sign extra signers → wallet sign → send and
+ * rebroadcast until confirmed, with a single evolving toast. Public trades that collide with a
+ * vault-agent trade in one slot (anti-sandwich rule) are retried a slot later instead of shown.
  * `stage` follows the pipeline for button copy; success toasts stay 6 s, errors until dismissed.
  */
 export function useTx() {
   const { connection } = useConnection();
   const { publicKey, signTransaction, sendTransaction } = useWallet();
   const { setVisible } = useWalletModal();
-  const client = useMoshClient();
   const qc = useQueryClient();
   const [pending, setPending] = useState<string | null>(null);
   const [stage, setStage] = useState<TxStage | null>(null);
@@ -103,56 +82,27 @@ export function useTx() {
       setStage("preparing");
       try {
         const ixs = await req.build(publicKey);
-        const { tx, blockhash, lastValidBlockHeight } = await client.buildTx(publicKey, ixs, {
-          computeUnits: req.computeUnits ?? 300_000,
-        });
-
-        const message = new VersionedTransaction(tx.compileMessage());
-        for (let attempt = 0; ; attempt++) {
-          const sim = await connection.simulateTransaction(message, {
-            sigVerify: false,
-            replaceRecentBlockhash: true,
-            commitment: "confirmed",
-          });
-          if (!sim.value.err) break;
-          const error = new SimulationError(sim.value.err, sim.value.logs ?? []);
-          if (attempt >= SAME_SLOT_RETRIES || humanError(error) !== SAME_SLOT_TRADE_MESSAGE) throw error;
-          await sleep(SLOT_MS);
-        }
+        const { tx, lastValidBlockHeight } = await prepareTx(connection, publicKey, ixs, DEFAULT_PRIORITY_FEE);
 
         if (req.signers?.length) tx.partialSign(...req.signers);
         setStage("signing");
         toast.loading(req.label, { id, description: `${TX_STAGE_LABEL.signing}…` });
 
+        const confirming = (signature: string) => {
+          setStage("confirming");
+          toast.loading(req.label, { id, description: <ExplorerLink signature={signature} /> });
+        };
         let signature: string;
         if (signTransaction) {
           const signed = await signTransaction(tx);
           setStage("sending");
           toast.loading(req.label, { id, description: `${TX_STAGE_LABEL.sending}…` });
-          const raw = signed.serialize();
-          for (let attempt = 0; ; attempt++) {
-            try {
-              signature = await connection.sendRawTransaction(raw, { preflightCommitment: "confirmed" });
-              break;
-            } catch (err) {
-              // Preflight rejected it, so it never landed: the same signed bytes can be resent.
-              if (attempt >= SAME_SLOT_RETRIES || humanError(err) !== SAME_SLOT_TRADE_MESSAGE) throw err;
-              await sleep(SLOT_MS);
-            }
-          }
+          signature = await sendAndConfirm(connection, signed.serialize(), lastValidBlockHeight, confirming);
         } else {
+          // The wallet broadcasts it (compute limit and price included); only confirmation is ours.
           signature = await sendTransaction(tx, connection, { preflightCommitment: "confirmed" });
-        }
-
-        setStage("confirming");
-        toast.loading(req.label, { id, description: <ExplorerLink signature={signature} /> });
-        const res = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
-        if (res.value.err) {
-          const info = await connection.getTransaction(signature, {
-            commitment: "confirmed",
-            maxSupportedTransactionVersion: 0,
-          });
-          throw new SimulationError(res.value.err, info?.meta?.logMessages ?? []);
+          confirming(signature);
+          await confirmSignature(connection, signature, lastValidBlockHeight);
         }
 
         toast.success(req.successMessage ?? `${req.label} confirmed`, {
@@ -171,7 +121,7 @@ export function useTx() {
         setStage(null);
       }
     },
-    [client, connection, publicKey, qc, sendTransaction, setVisible, signTransaction],
+    [connection, publicKey, qc, sendTransaction, setVisible, signTransaction],
   );
 
   return { run, pending, stage, connected: !!publicKey };

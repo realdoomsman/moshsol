@@ -8,8 +8,11 @@ import { INDEXER_URL } from "@/lib/env";
 import type { PlatformInfo } from "@/lib/types";
 import { previewLamports, utf8Len, type CreateDraft } from "./validate";
 
-/** Transaction fee headroom on top of rent + create fee. */
-export const TX_FEE_LAMPORTS = 10_000n;
+/**
+ * Transaction fee headroom on top of rent + create fee: base fees for the creator and mint signatures
+ * (2 × 5,000 lamports) plus the priority fee at the floor for create_launch's ~100k compute limit.
+ */
+export const TX_FEE_LAMPORTS = 20_000n;
 
 export interface BundleRange {
   lo: bigint;

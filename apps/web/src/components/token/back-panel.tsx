@@ -266,7 +266,6 @@ export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSum
               void tx.run({
                 label: launchLabel,
                 successMessage: `$${l.symbol} is live. The bundle is locked in the vault.`,
-                computeUnits: 400_000,
                 build: async (payer) => [await client.launchIx(payer, mint)],
               })
             }

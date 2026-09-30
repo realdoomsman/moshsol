@@ -374,7 +374,7 @@ async function main(): Promise<void> {
       reserveBps: plan.reserveBps,
       terms: platform.params,
     });
-    await send(client, creator, [createIx], [mint], 400_000);
+    await send(client, creator, [createIx], [mint]);
     console.log(`created ${plan.symbol.padEnd(5)} ${mint.publicKey.toBase58()} (${plan.kind})`);
 
     for (const [i, amount] of plan.deposits) {

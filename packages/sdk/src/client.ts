@@ -11,14 +11,7 @@ import {
   type Wallet,
 } from "@coral-xyz/anchor";
 import { getTokenMetadata } from "@solana/spl-token";
-import {
-  ComputeBudgetProgram,
-  Connection,
-  PublicKey,
-  SystemProgram,
-  Transaction,
-  type TransactionInstruction,
-} from "@solana/web3.js";
+import { Connection, PublicKey, SystemProgram, type TransactionInstruction } from "@solana/web3.js";
 import idlJson from "./idl/moshsol.json";
 import type { Moshsol } from "./idl/moshsol";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, BPF_LOADER_UPGRADEABLE_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "./constants";
@@ -516,24 +509,6 @@ export class MoshClient {
         feeRecipient,
       })
       .instruction();
-  }
-
-  // ---------------- transactions ----------------
-
-  /** Legacy transaction with compute budget + optional priority fee, ready to sign. */
-  async buildTx(
-    payer: PublicKey,
-    ixs: TransactionInstruction[],
-    opts: { computeUnits?: number; priorityMicroLamports?: number } = {},
-  ): Promise<{ tx: Transaction; blockhash: string; lastValidBlockHeight: number }> {
-    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash("confirmed");
-    const tx = new Transaction({ feePayer: payer, blockhash, lastValidBlockHeight });
-    tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: opts.computeUnits ?? 300_000 }));
-    if (opts.priorityMicroLamports) {
-      tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: opts.priorityMicroLamports }));
-    }
-    tx.add(...ixs);
-    return { tx, blockhash, lastValidBlockHeight };
   }
 }
 

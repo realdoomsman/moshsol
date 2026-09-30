@@ -1,4 +1,5 @@
 import { Keypair } from "@solana/web3.js";
+import { DEFAULT_PRIORITY_FEE, type PriorityFeeBounds } from "@holdfast/sdk";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,8 +20,8 @@ export interface AgentConfig {
   /** Policy parameters: backtest-tuned defaults, optionally overridden by `STRATEGY_PARAMS` (JSON object). */
   strategy: StrategyParams;
   slippageBps: number;
-  priorityMicroLamports: number | undefined;
-  computeUnits: number;
+  /** µlamports per CU: the fee-market estimate clamped to [floor, cap]. */
+  priorityFee: PriorityFeeBounds;
   maxBackoffMs: number;
 }
 
@@ -50,7 +51,11 @@ function strategyParams(): StrategyParams {
 }
 
 export function loadConfig(): AgentConfig {
-  const priority = int("PRIORITY_MICROLAMPORTS", 0, 0, 1_000_000_000);
+  const priorityFloor = int("PRIORITY_MICROLAMPORTS", DEFAULT_PRIORITY_FEE.floor, 0, 1_000_000_000);
+  const priorityCap = int("MAX_PRIORITY_MICROLAMPORTS", DEFAULT_PRIORITY_FEE.cap, 0, 1_000_000_000);
+  if (priorityCap < priorityFloor) {
+    throw new Error(`MAX_PRIORITY_MICROLAMPORTS (${priorityCap}) must be ≥ PRIORITY_MICROLAMPORTS (${priorityFloor})`);
+  }
   const keypair = process.env.AGENT_KEYPAIR?.trim() || ".localnet/agent.json";
   const keypairJson = process.env.AGENT_KEYPAIR_JSON?.trim();
   const dryRun = (process.env.DRY_RUN ?? "").trim().toLowerCase();
@@ -73,8 +78,7 @@ export function loadConfig(): AgentConfig {
     // Agent trades can't be sandwiched (same-slot rule) and every fill it accepts still passes the vault's cost
     // rules (planned against this floor), so the tolerance only absorbs public trades landing in flight.
     slippageBps: int("SLIPPAGE_BPS", 100, 0, 9_999),
-    priorityMicroLamports: priority > 0 ? priority : undefined,
-    computeUnits: 120_000,
+    priorityFee: { floor: priorityFloor, cap: priorityCap },
     maxBackoffMs: 300_000,
   };
 }

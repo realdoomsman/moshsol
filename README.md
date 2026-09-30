@@ -236,12 +236,24 @@ Agent (`apps/agent`):
 |---|---|---|
 | `RPC_URL` | `http://127.0.0.1:8899` | |
 | `AGENT_KEYPAIR` | `.localnet/agent.json` | Must be the platform's agent authority to trade |
-| `STATUS_PORT`, `STATUS_HOST` | `8788`, `127.0.0.1` | `GET /status`: latest decision per live launch |
+| `STATUS_PORT`, `STATUS_HOST` | `8788`, `127.0.0.1` | `GET /status`: latest decision per live launch and the fee wallet's `balanceSol` (refreshed every tick; a `low_balance` line is logged each time it falls below 0.01 SOL) |
 | `POLL_MS` | `4000` | |
 | `MIN_TRADE_LAMPORTS` | `10000000` | 0.01 SOL: smaller buys/sells are skipped |
 | `STRATEGY_PARAMS` | unset | JSON object overriding any of the backtest-tuned policy parameters (see [Vault agent](#vault-agent)), e.g. `{"holdSlope":0.5}`; unknown keys or out-of-range values stop startup |
 | `COOLDOWN_MS` | `15000` | Per launch after a trade (errors back off exponentially up to 5 min; a same-slot collision with a public trade is retried on the next poll) |
-| `SLIPPAGE_BPS`, `PRIORITY_MICROLAMPORTS` | `100`, `0` | Slippage floor of agent trades (cost rules are planned against it, so an accepted fill always passes them) |
+| `SLIPPAGE_BPS` | `100` | Slippage floor of agent trades (cost rules are planned against it, so an accepted fill always passes them) |
+| `PRIORITY_MICROLAMPORTS`, `MAX_PRIORITY_MICROLAMPORTS` | `100000`, `2000000` | Priority fee floor and cap, µlamports per compute unit (see below). An agent trade consumes ≈28k CU (limit ≈33k), so it pays ≈0.0000033 SOL priority at the floor and at most ≈0.000066 SOL at the cap, on top of the 0.000005 SOL base fee; each trade's `decision` line logs `simulatedUnits`, `computeUnits`, `priorityMicroLamports`, `priorityFeeLamports`, and the landed `unitsConsumed` and `feeLamports` |
+
+Every transaction — agent trades, the web app's wallet transactions and the scripts — is prepared by
+`prepareTx` in `@holdfast/sdk`: the instructions are simulated unsigned to size the compute limit
+(consumed units × 1.15 + 1,000), the priority fee is the 75th percentile of what recent slots required to
+write-lock the transaction's accounts (`getRecentPrioritizationFees`), clamped to the floor and cap
+(web and scripts use the defaults above), and `sendAndConfirm` sends once with preflight, then
+rebroadcasts the signed bytes every 2 s (`skipPreflight`, `maxRetries: 0`) while polling
+`getSignatureStatuses`, until the transaction confirms or the block height passes its
+`lastValidBlockHeight` ("Transaction expired unconfirmed"). A `SameSlotTrade` collision in simulation or
+preflight is retried a slot later, up to 5 times. Accounts only Holdfast writes usually report fees of 0,
+so the floor is the normal price; the estimate rises only when a launch's accounts are contended.
 
 Web (`apps/web`, read at build time):
 
@@ -344,7 +356,7 @@ failure, and watch paths so a push only rebuilds what it touched (`apps/<service
 | Service | Variables | Healthcheck | Notes |
 |---|---|---|---|
 | `indexer` | `RPC_URL`, `WS_URL`, `PUBLIC_URL` (its own Railway domain), `PORT=8787`, `POLL_MS`, `FULL_REFRESH_MS`, `HOLDERS_TTL_MS`, `CHAIN_CHECK_MS`, `ADMIN_TOKEN` (secret, comment moderation), `TRUST_PROXY=uniquelocal,100.64.0.0/10` (Railway's edge; per-IP limits then key on the real client and ignore spoofed `X-Forwarded-For`). Mainnet adds `STORAGE=arweave`, `ARWEAVE_KEYPAIR_JSON` (secret), `ARWEAVE_DAILY_BUDGET_SOL=0.25`, `RPC_PROXY=1`, `RPC_PROXY_LIMIT_PER_MIN=600` | `/api/health` | Volume at `/data` (SQLite DB with comments/profiles, plus uploads when `STORAGE=local`). |
-| `agent` | `RPC_URL`, `AGENT_KEYPAIR_JSON` (secret), `PORT=8788`, `POLL_MS` | `/status` | Keep ~0.1+ SOL on the agent key for fees. |
+| `agent` | `RPC_URL`, `AGENT_KEYPAIR_JSON` (secret), `PORT=8788`, `POLL_MS`; optionally `PRIORITY_MICROLAMPORTS` / `MAX_PRIORITY_MICROLAMPORTS` | `/status` | Keep ~0.1+ SOL on the agent key for fees (a trade costs ≈0.0000083 SOL at the priority floor, ≤0.00007 SOL at the cap); `/status` → `balanceSol` shows what is left. |
 | `web` | `NEXT_PUBLIC_CLUSTER` (`devnet` / `mainnet-beta`), `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_WS_URL` (mainnet: the indexer's `/rpc`, `/rpc-ws`), `NEXT_PUBLIC_INDEXER_URL`, `NEXT_PUBLIC_AGENT_URL`, `NEXT_PUBLIC_SITE_URL`, `PORT=3000` | `/` | Pages are server-rendered with live indexer data. `NEXT_PUBLIC_*` are baked in at build time — redeploy after changing them. |
 
 **Deploying:** push to `master` (mainnet environment; devnet follows the `devnet` branch until it is moved back, see above). Manual deploy of local changes: `railway up --service indexer|agent|web --environment <env> --ci`.

@@ -1,6 +1,6 @@
 import { Wallet } from "@coral-xyz/anchor";
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, type Signer, type TransactionInstruction } from "@solana/web3.js";
-import { MoshClient } from "@holdfast/sdk";
+import { DEFAULT_PRIORITY_FEE, MoshClient, prepareTx, sendAndConfirm } from "@holdfast/sdk";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,19 +26,16 @@ export async function airdrop(connection: Connection, to: PublicKey, sol: number
   await connection.confirmTransaction({ signature: sig, ...bh }, "confirmed");
 }
 
+/** Simulation-sized compute limit, fee-market priority fee (`DEFAULT_PRIORITY_FEE`), rebroadcast until confirmed. */
 export async function send(
   client: MoshClient,
   payer: Keypair,
   ixs: TransactionInstruction[],
   extraSigners: Signer[] = [],
-  computeUnits = 300_000,
 ): Promise<string> {
-  const { tx, blockhash, lastValidBlockHeight } = await client.buildTx(payer.publicKey, ixs, { computeUnits });
+  const { tx, lastValidBlockHeight } = await prepareTx(client.connection, payer.publicKey, ixs, DEFAULT_PRIORITY_FEE);
   tx.sign(payer, ...extraSigners);
-  const sig = await client.connection.sendRawTransaction(tx.serialize());
-  const res = await client.connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-  if (res.value.err) throw new Error(`tx ${sig} failed: ${JSON.stringify(res.value.err)}`);
-  return sig;
+  return sendAndConfirm(client.connection, tx.serialize(), lastValidBlockHeight);
 }
 
 export function clientFor(connection: Connection, kp: Keypair) {
