@@ -70,7 +70,7 @@ import {
   type LaunchAccount,
   type MoshClient,
 } from "@holdfast/sdk";
-import { evaluate, isqrt, marketOf, type Sizing } from "../../apps/agent/src/strategy";
+import { DEFAULT_PARAMS, evaluate, isqrt, marketOf, type Sizing } from "../../apps/agent/src/strategy";
 import { LOCALNET_DIR, RPC_URL, airdrop, clientFor, loadOrCreateKeypair, send } from "./common";
 
 const INDEXER_URL = (process.env.INDEXER_URL ?? "http://127.0.0.1:8787").replace(/\/+$/, "");
@@ -78,10 +78,14 @@ const DEMO_DIR = path.join(LOCALNET_DIR, "demo");
 const STATE_FILE = path.join(DEMO_DIR, "state.json");
 const DAY = 86_400;
 const SLIPPAGE_BPS = 300;
-/** The vault agent's default sizing (apps/agent/src/config.ts), used to predict its next decision. */
-const AGENT_SIZING: Sizing = { minTradeLamports: 10_000_000n, maxFractionBps: 5_000n, slippageBps: 50 };
+/** The vault agent's default sizing and policy (apps/agent/src/config.ts), used to predict its next decision. */
+const AGENT_SIZING: Sizing = { minTradeLamports: 10_000_000n, slippageBps: 100 };
 /** Extra depth below the agent's trigger so EMA drift during the next ticks can't cancel the buy. */
 const DUMP_EXTRA_BPS = 120n;
+/** The agent's decision on `l` at `now`. */
+function predict(l: LaunchAccount, now: bigint) {
+  return evaluate(marketOf(l), AGENT_SIZING, now, DEFAULT_PARAMS);
+}
 
 interface State {
   backARaise?: string;
@@ -161,7 +165,7 @@ async function fetchLaunch(client: MoshClient, mint: PublicKey): Promise<LaunchA
 async function status(client: MoshClient, mint: PublicKey) {
   const l = await fetchLaunch(client, mint);
   const now = BigInt(Math.floor(Date.now() / 1000));
-  const ev = evaluate(marketOf(l), AGENT_SIZING, now);
+  const ev = predict(l, now);
   const p = ev.projection;
   const burner = key("burner").publicKey;
   const b = await client.fetchBacker(mint, burner);
@@ -245,17 +249,17 @@ async function defendDump(connection: Connection, client: MoshClient, mint: Publ
   const now = BigInt(Math.floor(Date.now() / 1000)) + 3n;
   const x = BigInt(l.virtualSol.toString()) + BigInt(l.realSol.toString());
   const y = BigInt(l.tokenReserve.toString());
-  const ema = evaluate(marketOf(l), AGENT_SIZING, now).projection.ema;
+  const ema = predict(l, now).projection.ema;
   const band = BigInt(l.terms.agentBandBps);
   // Spot after selling T tokens is x·y/(y+T)²; start at the price `DUMP_EXTRA_BPS` under the agent's trigger.
-  const target = (ema * (10_000n - band - 25n - DUMP_EXTRA_BPS)) / 10_000n;
+  const target = (ema * (10_000n - band - BigInt(Math.ceil(DEFAULT_PARAMS.buyMarginBps)) - DUMP_EXTRA_BPS)) / 10_000n;
   let tokens = isqrt((((x * y) << 64n) / target)) - y;
   if (tokens < 0n) tokens = 0n;
   // Deepen in 2% steps until the agent's own planner says "buy" (cost-basis or buy-back path).
-  let plan = evaluate(marketOf(afterSell(l, tokens)), AGENT_SIZING, now).plan;
+  let plan = predict(afterSell(l, tokens), now).plan;
   while (plan.action !== "buy" && tokens < held) {
     tokens = tokens + tokens / 50n + 1n;
-    plan = evaluate(marketOf(afterSell(l, tokens)), AGENT_SIZING, now).plan;
+    plan = predict(afterSell(l, tokens), now).plan;
   }
   if (plan.action !== "buy" || tokens > held) {
     throw new Error(`whale holds ${held} base units; not enough for an agent buy (${plan.reason}). Run defend-prep first.`);

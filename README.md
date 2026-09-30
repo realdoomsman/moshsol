@@ -38,7 +38,7 @@ flowchart LR
 | `tests/program` | litesvm integration tests (time travel for deadlines/windows, invariants after every step) |
 | `packages/sdk` | `@holdfast/sdk`: IDL, PDAs, bigint curve math mirroring the program, ix builders, event parser, merkle whitelist, formatters |
 | `apps/indexer` | Data backend: event indexer (backfill + reconnecting live logs + poller, chain-reset detection), SQLite, REST + WebSocket API, rate-limited image/metadata uploads |
-| `apps/agent` | Vault agent: mirrors on-chain EMA/window math, sizes trades to pull price back toward the EMA within limits, status API |
+| `apps/agent` | Vault agent: exact mirror of the program's agent checks plus a backtest-tuned policy (entry margins, inventory floor), status API; `backtest/` replays real memecoin history against a program-exact launch simulator (see [Vault agent](#vault-agent)) |
 | `apps/web` | Next.js site: explore, create, raise/launch/trade pages, portfolio, agent transparency, docs |
 | `scripts` | `localnet.sh` + `localnet.mjs` (validator), `setup.ts` (platform init), `seed.ts` (demo data), `simulate.ts` (live traffic), `preflight.ts` (dev checks) |
 
@@ -64,6 +64,89 @@ Guarantees enforced in code (see `programs/moshsol/src/constants.rs` for hard ca
 - **Fees.** 1% on public trades, rounded up so no trade is fee-free: 50% backers (pro-rata accumulator, claim any time), 30% creator, 20% platform. The split can never drop below 25% for backers or 10% for creators. 1% launch fee on the raise. Flat create fee (anti-spam). All bounded by hard caps.
 - **Beta caps.** `max_raise_lamports` bounds a new launch's `raise_max` and `max_wallet_deposit_lamports` bounds any one wallet's deposit on top of the creator's own cap (0 = none; set by `MAX_RAISE_SOL` / `MAX_WALLET_SOL` in setup).
 - **Deployment.** Only the program's upgrade authority can run `initialize_platform` (no front-running after deploy).
+
+## Vault agent
+
+`apps/agent` polls every live launch (`POLL_MS`), decides with the pure `src/strategy.ts` and sends at most one
+`agent_buy`/`agent_sell` per launch per decision. How it decides:
+
+1. **Program mirror.** `project()` applies the program's `roll_window` + `update_ema` at the current chain time,
+   so band edges, window budgets, cost basis and buy-back budget are exactly what `agent_*` will check. Every
+   size is the largest the mirror accepts (below-cost or buy-back path, ≤ 90% of the impact limit, window caps),
+   with the cost rules checked against the slippage floor so any fill the transaction accepts passes them, and is
+   re-planned on a fresh read right before sending. Inside the band it holds.
+2. **Entry margins.** It buys only `buyMarginBps` past the lower band edge and sells only `sellMarginBps` past the
+   upper one, then sizes the trade to push spot back to the band edge (≤ 90% of the impact limit) with the
+   window's remaining budget — the cushion of [Olympus RBS](https://docs.olympusdao.finance/main/overview/range-bound),
+   whose per-period capacity the program's window caps already enforce.
+3. **Inventory floor.** Rally selling keeps at least `bundleTokens × (1 − holdSlope × ln(spot / bundle price))`
+   tokens, so net selling grows with each e-fold of price rather than with time (a price-indexed inventory
+   target in the spirit of [Hummingbot's inventory skew](https://hummingbot.org/strategies/v1-strategies/pure-market-making/)
+   and [Avellaneda–Stoikov](https://www.math.nyu.edu/~avellane/HighFrequencyTrading.pdf)): a runner can't drain
+   the bag window after window, while buy-backs keep round-tripping below it.
+
+Also built and tested in the backtest, and dropped because switching them off did not hurt (mostly helped) on
+the validation split: volatility-scaled entry depth ([Bollinger](https://en.wikipedia.org/wiki/Bollinger_Bands)-style),
+a depth ladder (RBS cushion → wall), window pacing (TWAP, the risk-neutral
+[Almgren–Chriss](https://www.smallake.kr/wp-content/uploads/2016/03/optliq.pdf) schedule), falling-knife and pump
+filters on the agent's own price samples, and an inventory skew of the entry depth.
+
+The parameters (`StrategyParams`) are tuned in a backtest, not by hand; `STRATEGY_PARAMS` overrides any of them.
+
+### Backtest (`apps/agent/backtest`)
+
+```bash
+pnpm --filter @holdfast/agent backtest:fetch     # 1-minute candles of real pump.fun pools (GeckoTerminal, cached)
+pnpm --filter @holdfast/agent backtest train     # random search + CMA-ES on TRAIN, TRAIN/TEST tables
+pnpm --filter @holdfast/agent backtest eval      # no agent / v1 / tuned (defaults or --params) on TRAIN and TEST
+pnpm --filter @holdfast/agent backtest walkforward   # tune on each pool's first 24 h, test on hours 24–72
+pnpm --filter @holdfast/agent backtest ablate    # tune on a FIT part of TRAIN, switch features off on VALIDATION
+pnpm --filter @holdfast/agent backtest robust    # TEST under other poll/latency/fair-value assumptions
+pnpm --filter @holdfast/agent test               # property + regression tests
+```
+
+- **Simulator.** `program.ts` ports `launch`, `buy`, `sell`, `agent_buy`, `agent_sell` statement by statement
+  (fees rounded up, EMA before reserves, window roll/snapshot, average-cost removal, buy-back budget, impact,
+  same-slot rule) on the SDK math. A launch is seeded from a 5–50 SOL raise (30 SOL virtual, production terms).
+  The simulated agent polls every 10 s (Railway `POLL_MS`), re-reads, lands 0.4–1.2 s later in a later slot,
+  and cools down like `agent.ts`; the frozen pre-backtest rule runs as `v1`.
+- **Flow models.** Candles become a log-price path (o → nearer extreme → other extreme → c inside each minute,
+  wicks > 3× the body clamped as bad prints), started at `1.1 / lowest relative price` × the launch price
+  (≤ 20×) because the public can never sell below the locked bundle's price. *Fair value*: every public trade
+  (12 per candle minute) pulls spot to the path and agent-made deviations decay with a 2 min half-life.
+  *Exogenous*: the no-agent run's public trades are replayed verbatim, so agent impact persists. *Synthetic*:
+  the persona mix of `scripts/src/simulate.ts`, reacting to the agent.
+- **Objective.** Per run `J = 100·ln(V_agent/V_none)` at the 24 h VWAP + 0.25 × drawdown cut (pp) − 0.25 ×
+  net SOL spent (% of starting vault value), clipped to ±50; per flow model the mean over outcome tags (each tag
+  weighs the same) + 0.25 × the worst 10%; each model's score is measured against v1 (0 = v1) and the result is
+  0.5 × mean + 0.5 × min over flow models, so a policy must hold up whether its impact persists, decays or feeds
+  back into traders.
+- **Splits.** TEST = 30% of the pools per outcome tag (by address hash) plus separate synthetic seeds, used
+  only for the final tables; feature selection uses a FIT/VALIDATION split of TRAIN.
+
+**Results** (74 PumpSwap pools' first 72 h: pump 28, rug 28, survivor 14, chop 3, fade 1; ΔV@VWAP = vault
+value vs no agent, v1 → shipped policy, mean with median in brackets):
+
+| | exo (history, impact persists) | fair (history, impact decays) | synthetic |
+|---|---|---|---|
+| TRAIN (53 pools) | 195.5% → 195.5% (25.9% → 26.9%) | 273.0% → 272.7% (24.9% → 24.2%) | 13.9% → 13.5% |
+| TEST (21 pools) | 29.7% → 29.4% (29.5% → 30.2%) | 30.3% → 30.2% (33.0% → 32.5%) | 13.5% → 14.1% |
+| walk-forward TEST, hours 24–72 (73 pools) | 11.4% → 11.6% | 11.3% → 11.3% | — |
+
+TRAIN means are dominated by a few runners; the medians are the honest number. Tuning (random search +
+CMA-ES over margins and the inventory floor) finds a "sell only far above the EMA, keep the bag" corner that
+wins in-sample but not out of sample (walk-forward objective +0.09 vs v1 on the full set, −0.48 on the
+earlier 33-pool TEST split), and richer features (volatility-scaled entry, depth ladder, window pacing,
+falling-knife and pump filters, inventory skew) were implemented, trained and ablated away because
+switching each off did not hurt validation. So the shipped defaults keep v1's 25 bps entry (whole remaining
+window budget per trade instead of half, cost rules planned against a 1% slippage floor): the same value as
+v1 with less than half the failed transactions (TEST exo 499 → 201). Every plan passed the program mirror
+(0 planned rejections in every run). What the agent adds is vault value (+~30% median on held-out pools),
+not price support: max drawdown is within ~1 pp of no agent because the window caps keep it small relative to
+memecoin flows. Limitations: candles don't show intra-minute order flow, so trading the constructed wick path
+is optimistic for any agent; fair-value half-life, 12 public trades per minute and the start multiple are
+assumptions (`robust` varies the timing ones); the vault is marked at its own prices, which the exogenous
+model lets the agent move.
 
 ## Run it locally
 
@@ -155,11 +238,10 @@ Agent (`apps/agent`):
 | `AGENT_KEYPAIR` | `.localnet/agent.json` | Must be the platform's agent authority to trade |
 | `STATUS_PORT`, `STATUS_HOST` | `8788`, `127.0.0.1` | `GET /status`: latest decision per live launch |
 | `POLL_MS` | `4000` | |
-| `DRY_RUN` | off | `1`: decide and report, never send |
 | `MIN_TRADE_LAMPORTS` | `10000000` | 0.01 SOL: smaller buys/sells are skipped |
-| `MAX_FRACTION_PER_TRADE` | `0.5` | Share of the remaining window budget one trade may use |
-| `COOLDOWN_MS` | `15000` | Per launch after a trade (errors back off exponentially up to 5 min) |
-| `SLIPPAGE_BPS`, `PRIORITY_MICROLAMPORTS` | `50`, `0` | |
+| `STRATEGY_PARAMS` | unset | JSON object overriding any of the backtest-tuned policy parameters (see [Vault agent](#vault-agent)), e.g. `{"holdSlope":0.5}`; unknown keys or out-of-range values stop startup |
+| `COOLDOWN_MS` | `15000` | Per launch after a trade (errors back off exponentially up to 5 min; a same-slot collision with a public trade is retried on the next poll) |
+| `SLIPPAGE_BPS`, `PRIORITY_MICROLAMPORTS` | `100`, `0` | Slippage floor of agent trades (cost rules are planned against it, so an accepted fill always passes them) |
 
 Web (`apps/web`, read at build time):
 
@@ -198,8 +280,9 @@ between transactions), `SIM_TRADERS` (10), `SIM_BACKERS` (6), `SIM_MEDIAN_TRADE_
   storage (clear site data for a fresh one) and is for test clusters only; "Get test SOL" airdrops to it.
 - **Phantom on localnet** shows stale balances or "blockhash not found" after a chain reset: switch its
   network away and back to the custom `http://127.0.0.1:8899` RPC.
-- **Agent doesn't trade.** `GET :8788/status` gives the reason per launch: inside the EMA band, cost-basis
-  rule, window budget exhausted, cooldown, or a trade below `MIN_TRADE_LAMPORTS`.
+- **Agent doesn't trade.** `GET :8788/status` gives the reason per launch: inside the EMA band, not far enough
+  past the band yet (entry margin), inventory floor, cost-basis rule, window budget exhausted, cooldown, or a
+  trade below `MIN_TRADE_LAMPORTS`.
 - **429 from the indexer.** Raise `RATE_LIMIT_PER_MIN` / `UPLOAD_LIMIT_PER_MIN` (everything on one machine
   shares the 127.0.0.1 budget).
 
@@ -265,8 +348,8 @@ failure, and watch paths so a push only rebuilds what it touched (`apps/<service
 | `web` | `NEXT_PUBLIC_CLUSTER=devnet`, `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_INDEXER_URL`, `NEXT_PUBLIC_AGENT_URL`, `NEXT_PUBLIC_SITE_URL`, `PORT=3000` | `/` | Pages are server-rendered with live indexer data. `NEXT_PUBLIC_*` are baked in at build time — redeploy after changing them. |
 
 **Deploying:** push to `master`. Manual deploy of local changes: `railway up --service indexer|agent|web --ci`.
-**CI** (GitHub Actions): `CI` typechecks everything and builds the web on every push; `Program`
-runs `anchor build` + the litesvm suite when `programs/`, `tests/` or Cargo/Anchor files change.
+**CI** (GitHub Actions): `CI` typechecks everything, runs the agent's tests (`pnpm --filter @holdfast/agent test`)
+and builds the web on every push; `Program` runs `anchor build` + the litesvm suite when `programs/`, `tests/` or Cargo/Anchor files change.
 
 **Devnet platform params** are set for cheap testing: min raise 0.05 SOL, create fee 0.005 SOL
 (`MIN_RAISE_SOL=0.05 CREATE_FEE_SOL=0.005 … pnpm setup:localnet -- --update`). Live launches keep the

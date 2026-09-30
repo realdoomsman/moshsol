@@ -1,6 +1,7 @@
 import { SYSVAR_CLOCK_PUBKEY, type Keypair, type PublicKey, type TransactionError } from "@solana/web3.js";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
+  SAME_SLOT_TRADE_MESSAGE,
   describeError,
   launchPda,
   type LaunchAccount,
@@ -59,7 +60,6 @@ export class Agent {
   ) {
     this.sizing = {
       minTradeLamports: cfg.minTradeLamports,
-      maxFractionBps: cfg.maxFractionBps,
       slippageBps: cfg.slippageBps,
     };
   }
@@ -145,7 +145,7 @@ export class Agent {
         .catch(() => undefined);
     }
 
-    let ev = evaluate(marketOf(account), this.sizing, now);
+    let ev = evaluate(marketOf(account), this.sizing, now, this.cfg.strategy);
     if (skipReason) {
       this.record(rt, key, ev, { action: "skip", reason: skipReason }, "paused");
       return;
@@ -186,7 +186,7 @@ export class Agent {
     );
     if (!launchInfo || !clockInfo) throw new Error(`launch ${key} or clock vanished during refresh`);
     const fresh = this.client.program.coder.accounts.decode<LaunchAccount>("launch", launchInfo.data);
-    ev = evaluate(marketOf(fresh), this.sizing, clockUnixTs(clockInfo.data));
+    ev = evaluate(marketOf(fresh), this.sizing, clockUnixTs(clockInfo.data), this.cfg.strategy);
     const plan = ev.plan;
     if (plan.action === "hold") {
       rt.failures = 0;
@@ -222,9 +222,11 @@ export class Agent {
       this.record(rt, key, ev, { action: plan.action, reason: plan.reason, amount, signature }, plan.kind, { ...extra, ...fill });
     } catch (err) {
       const error = describeError(err);
-      rt.failures += 1;
       rt.lastError = error;
-      const backoff = Math.min(this.cfg.cooldownMs * 2 ** (rt.failures - 1), this.cfg.maxBackoffMs);
+      // A public trade landed in the same slot first (anti-sandwich rule): nothing is wrong, the next poll lands
+      // in a later slot, so retry then instead of backing off.
+      const backoff =
+        error === SAME_SLOT_TRADE_MESSAGE ? 0 : Math.min(this.cfg.cooldownMs * 2 ** rt.failures++, this.cfg.maxBackoffMs);
       rt.nextTradeAt = Date.now() + backoff;
       this.record(rt, key, ev, { action: plan.action, reason: plan.reason, amount, error }, "error", { ...extra, retryInMs: backoff });
     }

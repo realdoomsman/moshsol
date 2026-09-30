@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
+    "backtest": "tsx backtest/cli.ts",
+    "backtest:fetch": "tsx backtest/fetch.ts",
+    "test": "tsx --test backtest/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

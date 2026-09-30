@@ -1,6 +1,6 @@
 "use client";
 
-import { IDL, describeError } from "@holdfast/sdk";
+import { SAME_SLOT_TRADE_MESSAGE, describeError } from "@holdfast/sdk";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { VersionedTransaction, type Keypair, type PublicKey, type TransactionInstruction } from "@solana/web3.js";
@@ -15,8 +15,6 @@ import { explorerTx } from "./explorer";
  * Public trades can't share a slot with a vault-agent trade (anti-sandwich rule). The collision
  * clears on the next slot, so it is retried a few times instead of shown to the user.
  */
-// The JSON IDL spells error names in PascalCase, its generated type in camelCase.
-const SAME_SLOT_MESSAGE = IDL.errors.find((e) => e.name.toLowerCase() === "sameslottrade")!.msg;
 const SAME_SLOT_RETRIES = 5;
 const SLOT_MS = 400;
 // ES2022 lib: no Promise.withResolvers.
@@ -118,7 +116,7 @@ export function useTx() {
           });
           if (!sim.value.err) break;
           const error = new SimulationError(sim.value.err, sim.value.logs ?? []);
-          if (attempt >= SAME_SLOT_RETRIES || humanError(error) !== SAME_SLOT_MESSAGE) throw error;
+          if (attempt >= SAME_SLOT_RETRIES || humanError(error) !== SAME_SLOT_TRADE_MESSAGE) throw error;
           await sleep(SLOT_MS);
         }
 
@@ -138,7 +136,7 @@ export function useTx() {
               break;
             } catch (err) {
               // Preflight rejected it, so it never landed: the same signed bytes can be resent.
-              if (attempt >= SAME_SLOT_RETRIES || humanError(err) !== SAME_SLOT_MESSAGE) throw err;
+              if (attempt >= SAME_SLOT_RETRIES || humanError(err) !== SAME_SLOT_TRADE_MESSAGE) throw err;
               await sleep(SLOT_MS);
             }
           }

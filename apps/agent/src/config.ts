@@ -2,6 +2,7 @@ import { Keypair } from "@solana/web3.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_PARAMS, withParams, type StrategyParams } from "./strategy";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -15,8 +16,8 @@ export interface AgentConfig {
   dryRun: boolean;
   cooldownMs: number;
   minTradeLamports: bigint;
-  /** MAX_FRACTION_PER_TRADE expressed in bps (0.5 → 5000). */
-  maxFractionBps: bigint;
+  /** Policy parameters: backtest-tuned defaults, optionally overridden by `STRATEGY_PARAMS` (JSON object). */
+  strategy: StrategyParams;
   slippageBps: number;
   priorityMicroLamports: number | undefined;
   computeUnits: number;
@@ -33,12 +34,22 @@ function int(name: string, fallback: number, lo: number, hi: number): number {
   return v;
 }
 
-export function loadConfig(): AgentConfig {
-  const fractionRaw = process.env.MAX_FRACTION_PER_TRADE;
-  const fraction = fractionRaw === undefined || fractionRaw.trim() === "" ? 0.5 : Number(fractionRaw);
-  if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
-    throw new Error(`MAX_FRACTION_PER_TRADE must be in (0, 1], got "${fractionRaw}"`);
+function strategyParams(): StrategyParams {
+  const raw = process.env.STRATEGY_PARAMS?.trim();
+  if (!raw) return DEFAULT_PARAMS;
+  let overrides: unknown;
+  try {
+    overrides = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`STRATEGY_PARAMS must be a JSON object: ${(err as Error).message}`);
   }
+  if (typeof overrides !== "object" || overrides === null || Array.isArray(overrides)) {
+    throw new Error("STRATEGY_PARAMS must be a JSON object");
+  }
+  return withParams(DEFAULT_PARAMS, overrides as Record<string, unknown>);
+}
+
+export function loadConfig(): AgentConfig {
   const priority = int("PRIORITY_MICROLAMPORTS", 0, 0, 1_000_000_000);
   const keypair = process.env.AGENT_KEYPAIR?.trim() || ".localnet/agent.json";
   const keypairJson = process.env.AGENT_KEYPAIR_JSON?.trim();
@@ -58,8 +69,10 @@ export function loadConfig(): AgentConfig {
     cooldownMs: int("COOLDOWN_MS", 15_000, 0, 86_400_000),
     // 0.01 SOL: below this a vault trade barely moves price and mostly adds noise to the tape.
     minTradeLamports: BigInt(int("MIN_TRADE_LAMPORTS", 10_000_000, 1, Number.MAX_SAFE_INTEGER)),
-    maxFractionBps: BigInt(Math.round(fraction * 10_000)),
-    slippageBps: int("SLIPPAGE_BPS", 50, 0, 9_999),
+    strategy: strategyParams(),
+    // Agent trades can't be sandwiched (same-slot rule) and every fill it accepts still passes the vault's cost
+    // rules (planned against this floor), so the tolerance only absorbs public trades landing in flight.
+    slippageBps: int("SLIPPAGE_BPS", 100, 0, 9_999),
     priorityMicroLamports: priority > 0 ? priority : undefined,
     computeUnits: 120_000,
     maxBackoffMs: 300_000,

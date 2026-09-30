@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   js:
-    name: Typecheck + web build
+    name: Typecheck + agent tests + web build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -24,4 +24,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
+      - run: pnpm --filter @holdfast/agent test
       - run: pnpm --filter @holdfast/web build

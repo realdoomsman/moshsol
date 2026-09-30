@@ -8,6 +8,8 @@ test-ledger/
 .env
 .env.local
 apps/indexer/data/
+apps/agent/backtest/data/
+apps/agent/backtest/results/
 .localnet/
 .devnet/
 *.tsbuildinfo

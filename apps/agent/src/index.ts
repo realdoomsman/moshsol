@@ -22,7 +22,7 @@ log("started", {
   pollMs: cfg.pollMs,
   cooldownMs: cfg.cooldownMs,
   minTradeLamports: cfg.minTradeLamports,
-  maxFractionBps: cfg.maxFractionBps,
+  strategy: cfg.strategy,
   slippageBps: cfg.slippageBps,
   priorityMicroLamports: cfg.priorityMicroLamports ?? 0,
   status: `http://${cfg.statusHost}:${cfg.statusPort}/status`,

@@ -537,6 +537,13 @@ export class MoshClient {
   }
 }
 
+/**
+ * `describeError` text of `SameSlotTrade`: a public trade and a vault-agent trade collided in one slot
+ * (anti-sandwich rule). Transient — the same transaction succeeds a slot later.
+ * (The JSON IDL spells error names in PascalCase, its generated type in camelCase.)
+ */
+export const SAME_SLOT_TRADE_MESSAGE = IDL.errors.find((e) => e.name.toLowerCase() === "sameslottrade")!.msg;
+
 /** Human-readable message for program errors thrown by Anchor/web3 during send/simulate. */
 export function describeError(err: unknown): string {
   const anyErr = err as { error?: { errorMessage?: string }; logs?: string[]; message?: string };
