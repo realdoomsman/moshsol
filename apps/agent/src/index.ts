@@ -13,7 +13,8 @@ const server = await startStatusServer(cfg.statusHost, cfg.statusPort, () => age
 
 log("started", {
   agent: signer.publicKey.toBase58(),
-  rpcUrl: cfg.rpcUrl,
+  // Origin only: keyed RPC URLs (Helius `?api-key=`) must not land in hosted logs.
+  rpc: new URL(cfg.rpcUrl).origin,
   programId: client.programId.toBase58(),
   dryRun: cfg.dryRun,
   pollMs: cfg.pollMs,
