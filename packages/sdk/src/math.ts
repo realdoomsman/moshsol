@@ -1,9 +1,14 @@
 import { ACC_PRECISION, BPS, LAMPORTS_PER_SOL_BIG, Q64, TOKEN_UNIT, TOTAL_SUPPLY } from "./constants";
 
-/** Exact mirrors of programs/moshsol/src/math.rs (all bigint, floor semantics). */
+/** Exact mirrors of programs/moshsol/src/math.rs (all bigint, floor semantics unless noted). */
 
 export function bps(amount: bigint, b: number | bigint): bigint {
   return (amount * BigInt(b)) / BPS;
+}
+
+/** `bps` rounded up, as the program charges trade fees. */
+export function bpsCeil(amount: bigint, b: number | bigint): bigint {
+  return (amount * BigInt(b) + BPS - 1n) / BPS;
 }
 
 export function tokensOut(x: bigint, y: bigint, solIn: bigint): bigint {
@@ -69,7 +74,7 @@ export interface BuyQuote {
 }
 
 export function quoteBuy(c: CurveState, solIn: bigint, tradeFeeBps: number): BuyQuote {
-  const fee = bps(solIn, tradeFeeBps);
+  const fee = bpsCeil(solIn, tradeFeeBps);
   const net = solIn - fee;
   const x = curveX(c);
   const out = net > 0n ? tokensOut(x, c.tokenReserve, net) : 0n;
@@ -101,7 +106,7 @@ export function quoteSell(c: CurveState, tokensIn: bigint, tradeFeeBps: number):
   const x = curveX(c);
   const gross = tokensIn > 0n ? solOut(x, c.tokenReserve, tokensIn) : 0n;
   const capped = gross > c.realSol ? c.realSol : gross;
-  const fee = bps(capped, tradeFeeBps);
+  const fee = bpsCeil(capped, tradeFeeBps);
   const before = priceQ64(x, c.tokenReserve);
   const after = tokensIn > 0n ? priceQ64(x - capped, c.tokenReserve + tokensIn) : before;
   return {

@@ -3,7 +3,8 @@
 #   CLUSTER=devnet bash scripts/deploy.sh
 # The deployer/upgrade authority is $KEYS_DIR/admin.json (default .<cluster>/admin.json, created if
 # missing) because only the upgrade authority may initialize the platform. Fund it first
-# (~3 SOL for the ~530 KB program). Later: hand both admin and upgrade authority to a multisig.
+# (~7.6 SOL at peak for the ~536 KB program: ~3.8 SOL rent + a same-size buffer refunded after the
+# deploy). Afterwards hand admin and upgrade authority to a multisig with `pnpm handoff`.
 set -euo pipefail
 # Non-login shells (e.g. `wsl bash …`) don't source the Solana installer's PATH entry.
 export PATH="$HOME/.local/share/solana/install/active_release/bin:$HOME/.cargo/bin:$HOME/.avm/bin:$PATH"
@@ -22,7 +23,7 @@ cd "$ROOT"
 if [ ! -f "$ADMIN" ]; then
   mkdir -p "$KEYS_DIR"
   solana-keygen new --no-bip39-passphrase --silent --outfile "$ADMIN" >/dev/null
-  echo "created admin $(solana-keygen pubkey "$ADMIN") — fund it with ~4 SOL and re-run"
+  echo "created admin $(solana-keygen pubkey "$ADMIN") — fund it with ~7.6 SOL and re-run"
   exit 1
 fi
 anchor build

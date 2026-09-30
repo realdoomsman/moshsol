@@ -5,6 +5,7 @@ import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, { LogController, type FastifyInstance } from "fastify";
+import type { ArweaveStore } from "./arweave";
 import { registerDiscoveryRoutes } from "./discovery";
 import type { Holders } from "./holders";
 import type { Hub } from "./hub";
@@ -64,7 +65,8 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
     throwFileSizeLimit: true,
     limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 10, parts: 12, fieldSize: 3 * 1024 * 1024 },
   });
-  await app.register(websocket);
+  // Clients only ever send small JSON frames (`/rpc-ws` subscriptions); ws would otherwise buffer up to 100 MiB.
+  await app.register(websocket, { options: { maxPayload: 64 * 1024 } });
   await app.register(fastifyStatic, {
     root: opts.filesDir,
     prefix: "/files/",
@@ -92,6 +94,8 @@ export function registerApi(
     adminToken: string | null;
     commentLimitPerMin: number;
     socialIpLimitPerMin: number;
+    /** Upload backend when STORAGE=arweave; null keeps uploads under FILES_DIR. */
+    arweave: ArweaveStore | null;
   },
 ): void {
   app.get("/ws", { websocket: true }, (socket) => deps.hub.add(socket));

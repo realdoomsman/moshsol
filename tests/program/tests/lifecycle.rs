@@ -4,7 +4,7 @@ use common::*;
 use moshsol::constants::*;
 use moshsol::errors::MoshError;
 use moshsol::math;
-use moshsol::state::LaunchStatus;
+use moshsol::state::{LaunchStatus, LaunchTerms};
 use solana_sdk::signature::{Keypair, Signer};
 
 #[test]
@@ -159,6 +159,44 @@ fn deposits_clip_to_raise_and_wallet_caps() {
 
     // Full raise can be launched by anyone.
     ok(env.launch_token(&b4, &mint));
+}
+
+#[test]
+fn platform_beta_caps_bound_raise_and_wallet_deposits() {
+    let mut params = test_params();
+    params.max_raise_lamports = 20 * SOL;
+    params.max_wallet_deposit_lamports = 3 * SOL;
+    let mut env = Env::with_params(params);
+    let creator = env.user(5);
+
+    let mut a = default_args();
+    a.raise_max = 20 * SOL + 1;
+    assert_err(env.create(&creator, a).1, MoshError::InvalidParam);
+    let mut a = default_args();
+    a.raise_max = 20 * SOL;
+    let open = env.create_ok(&creator, a);
+
+    // No creator cap: the platform cap applies.
+    let b1 = env.user(20);
+    ok(env.deposit(&b1, &open, 5 * SOL, vec![]));
+    assert_eq!(env.backer(&open, &b1.pubkey()).unwrap().deposited, 3 * SOL);
+    assert_err(env.deposit(&b1, &open, SOL, vec![]), MoshError::WalletCapReached);
+
+    // A stricter creator cap wins over the platform cap.
+    let mut a = default_args();
+    a.raise_max = 20 * SOL;
+    a.max_per_wallet = 2 * SOL;
+    let strict = env.create_ok(&creator, a);
+    ok(env.deposit(&b1, &strict, 5 * SOL, vec![]));
+    assert_eq!(env.backer(&strict, &b1.pubkey()).unwrap().deposited, 2 * SOL);
+    env.assert_invariants(&open);
+    env.assert_invariants(&strict);
+
+    // The raise cap can't sit below the platform minimum.
+    let admin = env.admin.insecure_clone();
+    let mut bad = params;
+    bad.max_raise_lamports = bad.min_raise_lamports - 1;
+    assert_err(env.update_platform(&admin, bad), MoshError::InvalidParam);
 }
 
 #[test]
@@ -393,14 +431,52 @@ fn agent_window_caps_impact_and_circuit_breaker() {
 }
 
 #[test]
+fn vault_trades_cannot_share_a_slot_with_public_trades() {
+    let mut env = Env::new();
+    let (_c, mint, _b) = env.live_launch(&[20 * SOL]);
+    let whale = env.user(40);
+    env.warp(60);
+    ok(env.buy(&whale, &mint, 15 * SOL, 0));
+    env.warp(300);
+    let chunk = env.launch(&mint).window_sell_cap / 8;
+    let agent = env.agent.insecure_clone();
+    let trader = env.user(10);
+
+    // Front-run leg: a public trade earlier in the slot blocks the agent (one tx or one bundle).
+    let front = [env.buy_ix(&trader.pubkey(), &mint, SOL, 0), env.agent_sell_ix(&agent.pubkey(), &mint, chunk, 0)];
+    assert_err(env.send(&front, &[&trader, &agent]), MoshError::SameSlotTrade);
+    // Back-run leg: nobody can trade against the vault's fill in the same slot.
+    let back = [env.agent_sell_ix(&agent.pubkey(), &mint, chunk, 0), env.sell_ix(&whale.pubkey(), &mint, 1_000_000, 0)];
+    assert_err(env.send(&back, &[&whale, &agent]), MoshError::SameSlotTrade);
+
+    // In separate slots both go through.
+    ok(env.agent_sell(&mint, chunk, 0));
+    ok(env.sell(&whale, &mint, 1_000_000, 0));
+    env.assert_invariants(&mint);
+}
+
+#[test]
+fn trade_fees_round_up_so_dust_trades_still_pay() {
+    let mut env = Env::new();
+    let (_c, mint, _b) = env.live_launch(&[10 * SOL]);
+    let t = env.user(1);
+    let before = env.launch(&mint);
+    ok(env.buy(&t, &mint, 99, 0)); // 99 lamports * 1% = 0.99 -> 1 lamport fee
+    let l = env.launch(&mint);
+    let fees = |l: &moshsol::state::Launch| l.backer_fees_accrued + l.creator_fees_unclaimed + l.platform_fees_unclaimed;
+    assert_eq!(fees(&l) - fees(&before), 1);
+    env.assert_invariants(&mint);
+}
+
+#[test]
 fn launch_terms_are_frozen_at_creation() {
     let mut env = Env::new();
     let (_c, mint, _b) = env.live_launch(&[10 * SOL]);
     let admin = env.admin.insecure_clone();
     let mut p = test_params();
     p.trade_fee_bps = 200;
-    p.backer_fee_share_bps = 0;
-    p.creator_fee_share_bps = 0;
+    p.backer_fee_share_bps = MIN_BACKER_FEE_SHARE_BPS;
+    p.creator_fee_share_bps = MIN_CREATOR_FEE_SHARE_BPS;
     ok(env.update_platform(&admin, p));
 
     let t = env.user(10);
@@ -409,10 +485,17 @@ fn launch_terms_are_frozen_at_creation() {
     assert_eq!(l.terms.trade_fee_bps, 100);
     assert_eq!(l.backer_fees_accrued, SOL / 200, "backers keep their 50% of a 1% fee");
 
+    // A creator who reviewed the old terms is refused instead of getting the new ones.
     let creator = env.user(5);
+    assert_err(env.create_raw(&creator, default_args()).1, MoshError::TermsChanged);
+    let mut stingy = default_args();
+    stingy.expected_terms = LaunchTerms::from(&p);
+    stingy.max_create_fee_lamports = p.create_fee_lamports - 1;
+    assert_err(env.create_raw(&creator, stingy).1, MoshError::TermsChanged);
+
     let newer = env.create_ok(&creator, default_args());
     assert_eq!(env.launch(&newer).terms.trade_fee_bps, 200);
-    assert_eq!(env.launch(&newer).terms.backer_fee_share_bps, 0);
+    assert_eq!(env.launch(&newer).terms.backer_fee_share_bps, MIN_BACKER_FEE_SHARE_BPS);
 }
 
 #[test]
@@ -444,6 +527,13 @@ fn admin_controls_are_bounded_and_transferable() {
     let mut p = test_params();
     p.backer_fee_share_bps = 8_000;
     p.creator_fee_share_bps = 3_000;
+    assert_err(env.update_platform(&admin, p), MoshError::InvalidParam);
+    // The split has floors: fees can't all be routed to the platform.
+    let mut p = test_params();
+    p.backer_fee_share_bps = MIN_BACKER_FEE_SHARE_BPS - 1;
+    assert_err(env.update_platform(&admin, p), MoshError::InvalidParam);
+    let mut p = test_params();
+    p.creator_fee_share_bps = MIN_CREATOR_FEE_SHARE_BPS - 1;
     assert_err(env.update_platform(&admin, p), MoshError::InvalidParam);
 
     // Pause blocks new launches and deposits only.

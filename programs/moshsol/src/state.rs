@@ -47,6 +47,11 @@ pub struct PlatformParams {
     pub paused: bool,
     /// Blocks agent trades (circuit breaker). Vault funds stay locked either way.
     pub agents_paused: bool,
+    /// Beta cap on a new launch's `raise_max`; 0 = only the hard `MAX_RAISE_LAMPORTS` limit.
+    pub max_raise_lamports: u64,
+    /// Beta cap on one wallet's total deposit into any raise, on top of the creator's own
+    /// `max_per_wallet`; 0 = no platform cap.
+    pub max_wallet_deposit_lamports: u64,
 }
 
 impl PlatformParams {
@@ -56,7 +61,9 @@ impl PlatformParams {
             MoshError::InvalidParam
         );
         require!(
-            (self.backer_fee_share_bps as u64 + self.creator_fee_share_bps as u64) <= BPS,
+            self.backer_fee_share_bps >= MIN_BACKER_FEE_SHARE_BPS
+                && self.creator_fee_share_bps >= MIN_CREATOR_FEE_SHARE_BPS
+                && (self.backer_fee_share_bps as u64 + self.creator_fee_share_bps as u64) <= BPS,
             MoshError::InvalidParam
         );
         require!(self.launch_fee_bps <= MAX_LAUNCH_FEE_BPS, MoshError::InvalidParam);
@@ -89,6 +96,12 @@ impl PlatformParams {
         );
         require!(
             (MIN_EMA_PERIOD_SECS..=MAX_EMA_PERIOD_SECS).contains(&self.ema_period_secs),
+            MoshError::InvalidParam
+        );
+        require!(
+            self.max_raise_lamports == 0
+                || (self.max_raise_lamports >= self.min_raise_lamports
+                    && self.max_raise_lamports <= MAX_RAISE_LAMPORTS),
             MoshError::InvalidParam
         );
         Ok(())
@@ -206,6 +219,13 @@ pub struct Launch {
     // ---- stats ----
     pub volume_sol: u64,
     pub trade_count: u64,
+
+    // ---- anti-sandwich ----
+    /// Slot of the last public buy/sell and of the last agent trade. Agents can't trade in a slot
+    /// that already saw a public trade, and public trades can't follow an agent trade in the same
+    /// slot, so nobody can wrap a vault trade atomically (one transaction or one bundle).
+    pub last_public_trade_slot: u64,
+    pub last_agent_trade_slot: u64,
 }
 
 impl Launch {

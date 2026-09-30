@@ -34,19 +34,22 @@ pub struct AgentTrade<'info> {
     pub token_program: Program<'info, Token2022>,
 }
 
-fn prelude(launch: &mut Launch, platform: &Platform, now: i64) -> Result<()> {
+fn prelude(launch: &mut Launch, platform: &Platform, clock: &Clock) -> Result<()> {
     require!(!platform.params.agents_paused, MoshError::AgentsPaused);
     require!(launch.status == LaunchStatus::Live, MoshError::NotLive);
-    launch.roll_window(now)?;
-    launch.update_ema(now)
+    require!(clock.slot > launch.last_public_trade_slot, MoshError::SameSlotTrade);
+    launch.last_agent_trade_slot = clock.slot;
+    launch.roll_window(clock.unix_timestamp)?;
+    launch.update_ema(clock.unix_timestamp)
 }
 
 /// Buy with vault SOL — only on dips (price at least `band` under the EMA) and only at or
 /// below the vault's average cost, so the vault can never be steered into buying high.
 pub fn agent_buy(ctx: Context<AgentTrade>, sol_in: u64, min_tokens_out: u64) -> Result<()> {
-    let now = Clock::get()?.unix_timestamp;
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
     let launch = &mut ctx.accounts.launch;
-    prelude(launch, &ctx.accounts.platform, now)?;
+    prelude(launch, &ctx.accounts.platform, &clock)?;
     let terms = launch.terms;
     require!(sol_in > 0, MoshError::ZeroAmount);
     require!(sol_in <= launch.vault_sol, MoshError::InsufficientVault);
@@ -139,9 +142,10 @@ pub fn agent_buy(ctx: Context<AgentTrade>, sol_in: u64, min_tokens_out: u64) -> 
 /// Sell vault tokens — only into rallies (price at least `band` over the EMA) and only at a
 /// fill price above the vault's average cost plus band, so the vault never realizes a loss.
 pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) -> Result<()> {
-    let now = Clock::get()?.unix_timestamp;
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
     let launch = &mut ctx.accounts.launch;
-    prelude(launch, &ctx.accounts.platform, now)?;
+    prelude(launch, &ctx.accounts.platform, &clock)?;
     let terms = launch.terms;
     require!(tokens_in > 0, MoshError::ZeroAmount);
     require!(tokens_in <= launch.vault_tokens, MoshError::InsufficientVault);

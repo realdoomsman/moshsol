@@ -192,6 +192,8 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
         emaPeriodSecs: pr.emaPeriodSecs,
         paused: pr.paused,
         agentsPaused: pr.agentsPaused,
+        maxRaiseLamports: pr.maxRaiseLamports.toString(),
+        maxWalletDepositLamports: pr.maxWalletDepositLamports.toString(),
       },
     };
   });

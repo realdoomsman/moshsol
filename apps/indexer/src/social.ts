@@ -211,7 +211,8 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
       const file = url.slice(imgPrefix.length);
       return IMG_FILE_RE.test(file) && fs.existsSync(path.join(deps.filesDir, "img", file));
     }
-    return store.isLaunchImage(url);
+    // Arweave uploads (STORAGE=arweave) are recorded in the DB; launch images may come from any host.
+    return store.isUploadedImage(url) || store.isLaunchImage(url);
   };
 
   app.put<{ Params: { wallet: string } }>("/api/users/:wallet", { bodyLimit: WRITE_BODY_LIMIT }, async (req, reply) => {

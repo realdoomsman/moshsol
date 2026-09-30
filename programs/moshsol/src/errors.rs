@@ -62,4 +62,8 @@ pub enum MoshError {
     AgentBelowCostBasis,
     #[msg("Only the program upgrade authority can initialize the platform")]
     NotUpgradeAuthority,
+    #[msg("An agent trade and a public trade can't share a slot; retry in the next slot")]
+    SameSlotTrade,
+    #[msg("Platform terms changed since this launch was prepared; review them and retry")]
+    TermsChanged,
 }

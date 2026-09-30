@@ -50,6 +50,15 @@ const big = (v: BN | number | bigint): bigint => BigInt(v.toString());
 /** u16/u32 terms decode to plain numbers. */
 export type LaunchTermsJson = IdlTypes<Moshsol>["launchTerms"];
 
+/**
+ * Platform params a creator reviewed: the on-chain `PlatformParams` (u64 as BN) or the indexer's
+ * JSON (u64 as strings). `create_launch` fails with `TermsChanged` if the chain differs.
+ */
+export type ReviewedTerms = LaunchTermsJson & {
+  virtualSolReserves: { toString(): string };
+  createFeeLamports: { toString(): string };
+};
+
 /** SOL per whole token for a (lamports, base units) pair. */
 function perToken(sol: BN, tokens: BN): number {
   return tokens.isZero() ? 0 : Number(sol.toString()) / 1e9 / (Number(tokens.toString()) / 1e6);
@@ -291,6 +300,36 @@ export class MoshClient {
       .instruction();
   }
 
+  async setFeeRecipientIx(admin: PublicKey, feeRecipient: PublicKey) {
+    return this.program.methods
+      .setFeeRecipient(feeRecipient)
+      .accountsStrict({ admin, platform: platformPda(this.programId) })
+      .instruction();
+  }
+
+  async setAgentAuthorityIx(admin: PublicKey, agentAuthority: PublicKey) {
+    return this.program.methods
+      .setAgentAuthority(agentAuthority)
+      .accountsStrict({ admin, platform: platformPda(this.programId) })
+      .instruction();
+  }
+
+  /** Step 1 of the two-step admin handoff: the current admin nominates `newAdmin`. */
+  async proposeAdminIx(admin: PublicKey, newAdmin: PublicKey) {
+    return this.program.methods
+      .proposeAdmin(newAdmin)
+      .accountsStrict({ admin, platform: platformPda(this.programId) })
+      .instruction();
+  }
+
+  /** Step 2: signed by the pending admin (e.g. a multisig vault) to take over. */
+  async acceptAdminIx(newAdmin: PublicKey) {
+    return this.program.methods
+      .acceptAdmin()
+      .accountsStrict({ newAdmin, platform: platformPda(this.programId) })
+      .instruction();
+  }
+
   async createLaunchIx(p: {
     creator: PublicKey;
     mint: PublicKey;
@@ -305,7 +344,9 @@ export class MoshClient {
     whitelistRoot: number[];
     bundleSupplyBps: number;
     reserveBps: number;
+    terms: ReviewedTerms;
   }) {
+    const t = p.terms;
     const launch = launchPda(p.mint, this.programId);
     return this.program.methods
       .createLaunch({
@@ -319,6 +360,20 @@ export class MoshClient {
         whitelistRoot: p.whitelistRoot,
         bundleSupplyBps: p.bundleSupplyBps,
         reserveBps: p.reserveBps,
+        expectedTerms: {
+          tradeFeeBps: t.tradeFeeBps,
+          backerFeeShareBps: t.backerFeeShareBps,
+          creatorFeeShareBps: t.creatorFeeShareBps,
+          launchFeeBps: t.launchFeeBps,
+          agentBuyBpsPerWindow: t.agentBuyBpsPerWindow,
+          agentSellBpsPerWindow: t.agentSellBpsPerWindow,
+          agentMaxImpactBps: t.agentMaxImpactBps,
+          agentBandBps: t.agentBandBps,
+          agentWindowSecs: t.agentWindowSecs,
+          emaPeriodSecs: t.emaPeriodSecs,
+        },
+        expectedVirtualSol: new BN(t.virtualSolReserves.toString()),
+        maxCreateFeeLamports: new BN(t.createFeeLamports.toString()),
       })
       .accountsStrict({
         creator: p.creator,

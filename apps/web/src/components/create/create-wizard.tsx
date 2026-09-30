@@ -95,7 +95,7 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
 
   const imageUrl = useObjectUrl(draft.image?.file);
   const minRaiseLamports = params ? BigInt(params.minRaiseLamports) : null;
-  // Beta caps ("0" = none); absent on indexers older than the caps, which means no cap either.
+  // Beta caps ("0" = none).
   const maxRaiseCap = params?.maxRaiseLamports ?? "0";
   const maxWalletCap = params?.maxWalletDepositLamports ?? "0";
   const v = useMemo(
@@ -241,6 +241,7 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
       build: async (payer) => {
         const onChain = await client.fetchPlatform();
         if (!onChain) throw new Error("Platform is not initialized on this cluster");
+        if (!params) throw new Error("Platform terms are still loading");
         return [
           await client.createLaunchIx({
             creator: payer,
@@ -256,6 +257,8 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
             whitelistRoot: d.whitelist ? buildWhitelist(d.whitelist).root : OPEN_WHITELIST_ROOT,
             bundleSupplyBps: d.bundleSupplyBps,
             reserveBps: d.reserveBps,
+            // The terms shown in this wizard; the program refuses the launch if they changed.
+            terms: params,
           }),
         ];
       },

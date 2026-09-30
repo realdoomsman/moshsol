@@ -127,7 +127,9 @@ export function BackPanel({ launch: l, phase, bare, className }: { launch: Launc
   }
   const room = BigInt(l.raiseMax) - BigInt(l.raised);
   const deposited = backer.data?.deposited ?? 0n;
-  const cap = BigInt(l.maxPerWallet);
+  // Same rule as the program: the stricter of the creator's cap and the platform beta cap (0 = none).
+  const caps = [BigInt(l.maxPerWallet), BigInt(platform.data?.params.maxWalletDepositLamports ?? "0")].filter((c) => c > 0n);
+  const cap = caps.length ? minBig(...caps) : 0n;
   const walletRoom = cap > 0n ? (cap > deposited ? cap - deposited : 0n) : null;
   const affordable = sol.data === undefined ? null : sol.data > DEPOSIT_HEADROOM ? sol.data - DEPOSIT_HEADROOM : 0n;
   /** The most this wallet can deposit now (raise room, wallet cap, balance). */

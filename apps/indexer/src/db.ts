@@ -330,6 +330,14 @@ CREATE TABLE IF NOT EXISTS profiles (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS upload_spend (
+  day TEXT PRIMARY KEY,
+  lamports INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS uploaded_images (
+  url TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL
+);
 `;
 
 /** Columns added after the first deployment; applied with a guarded ALTER TABLE (existing rows keep their data). */
@@ -337,7 +345,8 @@ const COLUMN_MIGRATIONS = [{ table: "launches", column: "top_holder_pct", type: 
 
 /**
  * Wiped on a chain reset: everything keyed by chain state, including comments (their mints are gone).
- * `profiles` (wallet-keyed) and `signed_messages` (replay guard, pruned by age) survive.
+ * `profiles` (wallet-keyed), `signed_messages` (replay guard, pruned by age) and the Arweave upload
+ * ledger (`upload_spend`, `uploaded_images`) survive.
  */
 const DATA_TABLES = ["txs", "launches", "events", "trades", "deposits", "sync_state", "comments"] as const;
 
@@ -471,6 +480,13 @@ const SQL = {
       updated_at = excluded.updated_at`,
   profilesIn: "SELECT wallet, name, avatar FROM profiles WHERE wallet IN (SELECT value FROM json_each(?))",
   launchImageExists: "SELECT 1 AS one FROM launches WHERE image = ? LIMIT 1",
+  // Arweave uploads: SOL spend per UTC day (reserved atomically against the cap) and images for avatar checks.
+  uploadSpend: "SELECT lamports FROM upload_spend WHERE day = ?",
+  reserveUploadSpend: `
+    INSERT INTO upload_spend (day, lamports) SELECT :day, :lamports WHERE :lamports <= :cap
+    ON CONFLICT(day) DO UPDATE SET lamports = lamports + excluded.lamports WHERE lamports + excluded.lamports <= :cap`,
+  insertUploadedImage: "INSERT OR IGNORE INTO uploaded_images (url, created_at) VALUES (?, ?)",
+  uploadedImageExists: "SELECT 1 AS one FROM uploaded_images WHERE url = ?",
 
   // ---------------- wallets / discovery ----------------
   walletTrades: `SELECT :wallet AS wallet, ${WALLET_TRADE_AGG} FROM trades t WHERE t.trader = :wallet AND t.is_agent = 0`,
@@ -830,6 +846,26 @@ export class Store {
 
   isLaunchImage(url: string): boolean {
     return row(this.stmts.launchImageExists, [url]) !== undefined;
+  }
+
+  isUploadedImage(url: string): boolean {
+    return row(this.stmts.uploadedImageExists, [url]) !== undefined;
+  }
+
+  addUploadedImage(url: string, nowSecs: number): void {
+    this.stmts.insertUploadedImage.run(url, nowSecs);
+  }
+
+  // ---------------- arweave upload budget ----------------
+
+  /** Lamports already reserved for Arweave funding on `day` (`YYYY-MM-DD`, UTC). */
+  uploadSpend(day: string): number {
+    return row<{ lamports: number }>(this.stmts.uploadSpend, [day])?.lamports ?? 0;
+  }
+
+  /** Atomically adds `lamports` to `day`'s spend unless the total would exceed `cap`; false when refused. */
+  reserveUploadSpend(day: string, lamports: number, cap: number): boolean {
+    return this.stmts.reserveUploadSpend.run({ day, lamports, cap }).changes > 0;
   }
 
   // ---------------- wallets ----------------

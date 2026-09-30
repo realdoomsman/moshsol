@@ -11,6 +11,15 @@ pub fn bps(amount: u64, bps: u16) -> Result<u64> {
     Ok(v as u64)
 }
 
+/// `bps` rounded up; used for trade fees so no trade, however small, is fee-free.
+pub fn bps_ceil(amount: u64, bps: u16) -> Result<u64> {
+    let v = (amount as u128)
+        .checked_mul(bps as u128)
+        .ok_or(MoshError::MathOverflow)?
+        .div_ceil(BPS as u128);
+    Ok(v as u64)
+}
+
 /// Tokens received for `sol_in` lamports on a constant-product curve (x = sol, y = tokens).
 /// Floors, so k never decreases.
 pub fn tokens_out(x: u64, y: u64, sol_in: u64) -> Result<u64> {

@@ -28,7 +28,8 @@ pub struct Deposit<'info> {
 }
 
 pub fn deposit(ctx: Context<Deposit>, amount: u64, proof: Vec<[u8; 32]>) -> Result<()> {
-    require!(!ctx.accounts.platform.params.paused, MoshError::Paused);
+    let params = ctx.accounts.platform.params;
+    require!(!params.paused, MoshError::Paused);
     let launch = &mut ctx.accounts.launch;
     let owner = ctx.accounts.owner.key();
     let now = Clock::get()?.unix_timestamp;
@@ -57,8 +58,13 @@ pub fn deposit(ctx: Context<Deposit>, amount: u64, proof: Vec<[u8; 32]>) -> Resu
     let room = launch.raise_max - launch.raised;
     require!(room > 0, MoshError::RaiseFull);
     let mut amount = amount.min(room);
-    if launch.max_per_wallet > 0 {
-        let wallet_room = launch.max_per_wallet.saturating_sub(backer.deposited);
+    // The stricter of the creator's cap and the platform beta cap (0 = none).
+    let wallet_cap = match (launch.max_per_wallet, params.max_wallet_deposit_lamports) {
+        (0, cap) | (cap, 0) => cap,
+        (a, b) => a.min(b),
+    };
+    if wallet_cap > 0 {
+        let wallet_room = wallet_cap.saturating_sub(backer.deposited);
         require!(wallet_room > 0, MoshError::WalletCapReached);
         amount = amount.min(wallet_room);
     }

@@ -12,5 +12,6 @@ apps/indexer/data/
 .devnet/
 *.tsbuildinfo
 .mainnet-beta/
+.mainnet/
 .secrets/
 .x-session/

@@ -492,6 +492,7 @@ class Simulator {
       whitelistRoot: OPEN_WHITELIST_ROOT,
       bundleSupplyBps: Math.min(p.maxBundleSupplyBps, round(rand(1_000, 2_500), 250)),
       reserveBps: round(rand(2_500, 5_000), 500),
+      terms: p,
     });
     await this.ensureSol(creator, 200_000_000n);
     await send(this.client, creator.kp, [ix], [mint], 400_000);

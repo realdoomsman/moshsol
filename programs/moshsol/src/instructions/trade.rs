@@ -39,14 +39,17 @@ pub struct Buy<'info> {
 }
 
 pub fn buy(ctx: Context<Buy>, sol_in: u64, min_tokens_out: u64) -> Result<()> {
-    let now = Clock::get()?.unix_timestamp;
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
     let launch = &mut ctx.accounts.launch;
     require!(launch.status == LaunchStatus::Live, MoshError::NotLive);
     require!(sol_in > 0, MoshError::ZeroAmount);
+    require!(clock.slot > launch.last_agent_trade_slot, MoshError::SameSlotTrade);
+    launch.last_public_trade_slot = clock.slot;
 
     launch.update_ema(now)?;
 
-    let fee = math::bps(sol_in, launch.terms.trade_fee_bps)?;
+    let fee = math::bps_ceil(sol_in, launch.terms.trade_fee_bps)?;
     let net = sol_in - fee;
     let tokens = math::tokens_out(launch.curve_sol(), launch.token_reserve, net)?;
     require!(tokens > 0, MoshError::ZeroAmount);
@@ -130,16 +133,19 @@ pub struct Sell<'info> {
 }
 
 pub fn sell(ctx: Context<Sell>, tokens_in: u64, min_sol_out: u64) -> Result<()> {
-    let now = Clock::get()?.unix_timestamp;
+    let clock = Clock::get()?;
+    let now = clock.unix_timestamp;
     let launch = &mut ctx.accounts.launch;
     require!(launch.status == LaunchStatus::Live, MoshError::NotLive);
     require!(tokens_in > 0, MoshError::ZeroAmount);
+    require!(clock.slot > launch.last_agent_trade_slot, MoshError::SameSlotTrade);
+    launch.last_public_trade_slot = clock.slot;
 
     launch.update_ema(now)?;
 
     let gross = math::sol_out(launch.curve_sol(), launch.token_reserve, tokens_in)?;
     require!(gross <= launch.real_sol, MoshError::InsufficientLiquidity);
-    let fee = math::bps(gross, launch.terms.trade_fee_bps)?;
+    let fee = math::bps_ceil(gross, launch.terms.trade_fee_bps)?;
     let net = gross - fee;
     require!(net > 0, MoshError::ZeroAmount);
     require!(net >= min_sol_out, MoshError::Slippage);

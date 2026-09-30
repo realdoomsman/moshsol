@@ -18,6 +18,9 @@ pub const MAX_TRADE_FEE_BPS: u16 = 200; // 2%
 /// Non-zero floor so price-manipulation round trips always cost the manipulator.
 pub const MIN_TRADE_FEE_BPS: u16 = 30; // 0.3%
 pub const MAX_LAUNCH_FEE_BPS: u16 = 500; // 5% of raise
+// Floors on the trade-fee split so the admin can never route every fee to the platform.
+pub const MIN_BACKER_FEE_SHARE_BPS: u16 = 2_500; // backers always get at least 25% of trade fees
+pub const MIN_CREATOR_FEE_SHARE_BPS: u16 = 1_000; // creators always get at least 10%
 pub const MAX_CREATE_FEE_LAMPORTS: u64 = 1_000_000_000; // 1 SOL
 pub const MAX_BUNDLE_SUPPLY_BPS: u16 = 3_000; // bundle can never buy more than 30% of supply
 pub const MAX_RESERVE_BPS: u16 = 8_000;

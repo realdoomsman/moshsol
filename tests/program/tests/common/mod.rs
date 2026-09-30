@@ -13,7 +13,7 @@ use litesvm::LiteSVM;
 use moshsol::constants::*;
 use moshsol::errors::MoshError;
 use moshsol::instructions::CreateLaunchArgs;
-use moshsol::state::{Backer, Launch, Platform, PlatformParams};
+use moshsol::state::{Backer, Launch, LaunchTerms, Platform, PlatformParams};
 use solana_sdk::clock::Clock;
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::instruction::{Instruction, InstructionError};
@@ -43,10 +43,14 @@ pub fn test_params() -> PlatformParams {
         ema_period_secs: 1_800,
         paused: false,
         agents_paused: false,
+        max_raise_lamports: 0,
+        max_wallet_deposit_lamports: 0,
     }
 }
 
+/// Launch args agreeing to `test_params()`; `Env::create` re-fills the expected terms from chain.
 pub fn default_args() -> CreateLaunchArgs {
+    let params = test_params();
     CreateLaunchArgs {
         name: "Mosh Dog".into(),
         symbol: "MDOG".into(),
@@ -58,6 +62,9 @@ pub fn default_args() -> CreateLaunchArgs {
         whitelist_root: [0u8; 32],
         bundle_supply_bps: 2_000,
         reserve_bps: 3_000,
+        expected_terms: LaunchTerms::from(&params),
+        expected_virtual_sol: params.virtual_sol_reserves,
+        max_create_fee_lamports: params.create_fee_lamports,
     }
 }
 
@@ -247,6 +254,10 @@ impl Env {
         );
         let res = self.svm.send_transaction(tx);
         self.svm.expire_blockhash();
+        // The next transaction lands in a later slot, as on a real cluster.
+        let mut c = self.svm.get_sysvar::<Clock>();
+        c.slot += 1;
+        self.svm.set_sysvar(&c);
         res
     }
 
@@ -320,7 +331,17 @@ impl Env {
 
     // ---------------- instruction helpers ----------------
 
-    pub fn create(&mut self, creator: &Keypair, args: CreateLaunchArgs) -> (Pubkey, TxResult) {
+    /// Creates a launch agreeing to the platform's current terms, as a client that just read them.
+    pub fn create(&mut self, creator: &Keypair, mut args: CreateLaunchArgs) -> (Pubkey, TxResult) {
+        let params = self.platform().params;
+        args.expected_terms = LaunchTerms::from(&params);
+        args.expected_virtual_sol = params.virtual_sol_reserves;
+        args.max_create_fee_lamports = params.create_fee_lamports;
+        self.create_raw(creator, args)
+    }
+
+    /// Sends `args` exactly as given, including whatever expected terms they carry.
+    pub fn create_raw(&mut self, creator: &Keypair, args: CreateLaunchArgs) -> (Pubkey, TxResult) {
         let mint = Keypair::new();
         let launch = launch_pda(&mint.pubkey());
         let ix = Instruction {
@@ -412,41 +433,49 @@ impl Env {
         self.send(&[ix], &[cranker])
     }
 
-    pub fn buy(&mut self, trader: &Keypair, mint: &Pubkey, sol_in: u64, min_out: u64) -> TxResult {
+    pub fn buy_ix(&self, trader: &Pubkey, mint: &Pubkey, sol_in: u64, min_out: u64) -> Instruction {
         let launch = launch_pda(mint);
-        let ix = Instruction {
+        Instruction {
             program_id: moshsol::ID,
             accounts: moshsol::accounts::Buy {
-                trader: trader.pubkey(),
+                trader: *trader,
                 launch,
                 mint: *mint,
                 curve_tokens: curve_pda(&launch),
-                trader_tokens: ata(&trader.pubkey(), mint),
+                trader_tokens: ata(trader, mint),
                 token_program: TOKEN_2022_ID,
                 associated_token_program: ATA_ID,
                 system_program: system_program::ID,
             }
             .to_account_metas(None),
             data: moshsol::instruction::Buy { sol_in, min_tokens_out: min_out }.data(),
-        };
+        }
+    }
+
+    pub fn buy(&mut self, trader: &Keypair, mint: &Pubkey, sol_in: u64, min_out: u64) -> TxResult {
+        let ix = self.buy_ix(&trader.pubkey(), mint, sol_in, min_out);
         self.send(&[ix], &[trader])
     }
 
-    pub fn sell(&mut self, trader: &Keypair, mint: &Pubkey, tokens_in: u64, min_out: u64) -> TxResult {
+    pub fn sell_ix(&self, trader: &Pubkey, mint: &Pubkey, tokens_in: u64, min_out: u64) -> Instruction {
         let launch = launch_pda(mint);
-        let ix = Instruction {
+        Instruction {
             program_id: moshsol::ID,
             accounts: moshsol::accounts::Sell {
-                trader: trader.pubkey(),
+                trader: *trader,
                 launch,
                 mint: *mint,
                 curve_tokens: curve_pda(&launch),
-                trader_tokens: ata(&trader.pubkey(), mint),
+                trader_tokens: ata(trader, mint),
                 token_program: TOKEN_2022_ID,
             }
             .to_account_metas(None),
             data: moshsol::instruction::Sell { tokens_in, min_sol_out: min_out }.data(),
-        };
+        }
+    }
+
+    pub fn sell(&mut self, trader: &Keypair, mint: &Pubkey, tokens_in: u64, min_out: u64) -> TxResult {
+        let ix = self.sell_ix(&trader.pubkey(), mint, tokens_in, min_out);
         self.send(&[ix], &[trader])
     }
 
@@ -464,12 +493,16 @@ impl Env {
         .to_account_metas(None)
     }
 
-    pub fn agent_buy_as(&mut self, agent: &Keypair, mint: &Pubkey, sol_in: u64, min_out: u64) -> TxResult {
-        let ix = Instruction {
+    pub fn agent_buy_ix(&self, agent: &Pubkey, mint: &Pubkey, sol_in: u64, min_out: u64) -> Instruction {
+        Instruction {
             program_id: moshsol::ID,
-            accounts: self.agent_accounts(&agent.pubkey(), mint),
+            accounts: self.agent_accounts(agent, mint),
             data: moshsol::instruction::AgentBuy { sol_in, min_tokens_out: min_out }.data(),
-        };
+        }
+    }
+
+    pub fn agent_buy_as(&mut self, agent: &Keypair, mint: &Pubkey, sol_in: u64, min_out: u64) -> TxResult {
+        let ix = self.agent_buy_ix(&agent.pubkey(), mint, sol_in, min_out);
         self.send(&[ix], &[agent])
     }
 
@@ -478,13 +511,17 @@ impl Env {
         self.agent_buy_as(&agent, mint, sol_in, min_out)
     }
 
+    pub fn agent_sell_ix(&self, agent: &Pubkey, mint: &Pubkey, tokens_in: u64, min_out: u64) -> Instruction {
+        Instruction {
+            program_id: moshsol::ID,
+            accounts: self.agent_accounts(agent, mint),
+            data: moshsol::instruction::AgentSell { tokens_in, min_sol_out: min_out }.data(),
+        }
+    }
+
     pub fn agent_sell(&mut self, mint: &Pubkey, tokens_in: u64, min_out: u64) -> TxResult {
         let agent = self.agent.insecure_clone();
-        let ix = Instruction {
-            program_id: moshsol::ID,
-            accounts: self.agent_accounts(&agent.pubkey(), mint),
-            data: moshsol::instruction::AgentSell { tokens_in, min_sol_out: min_out }.data(),
-        };
+        let ix = self.agent_sell_ix(&agent.pubkey(), mint, tokens_in, min_out);
         self.send(&[ix], &[&agent])
     }
 

@@ -1,9 +1,11 @@
 import { MoshClient } from "@holdfast/sdk";
 import { Connection } from "@solana/web3.js";
+import { ArweaveStore } from "./arweave";
 import { config } from "./config";
 import { Store } from "./db";
 import { Holders } from "./holders";
 import { Hub } from "./hub";
+import { registerRpcProxy } from "./rpc-proxy";
 import { createServer, registerApi } from "./server";
 import { ChainSync } from "./sync";
 
@@ -32,12 +34,15 @@ const sync = new ChainSync(store, client, hub, holders, app.log.child({ module: 
   wsUrl: config.wsUrl,
   ...files,
 });
+const arweave = config.arweave ? new ArweaveStore(config.arweave, store, app.log.child({ module: "arweave" })) : null;
 registerApi(app, { store, client, sync, hub, holders }, {
   ...files,
   adminToken: config.adminToken,
   commentLimitPerMin: config.commentLimitPerMin,
   socialIpLimitPerMin: config.socialIpLimitPerMin,
+  arweave,
 });
+if (config.rpcProxy) registerRpcProxy(app, { rpcUrl: config.rpcUrl, wsUrl: config.wsUrl, perMin: config.rpcProxyLimitPerMin });
 
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
@@ -62,8 +67,8 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGBREAK"] as const) process.on(sign
 await app.listen({ port: config.port, host: config.host });
 app.log.info(
   {
-    rpc: config.rpcUrl,
-    ws: config.wsUrl,
+    rpc: new URL(config.rpcUrl).origin,
+    ws: new URL(config.wsUrl).origin,
     db: config.dbPath,
     files: config.filesDir,
     publicUrl: config.publicUrl,
@@ -72,6 +77,10 @@ app.log.info(
     commentLimitPerMin: config.commentLimitPerMin,
     socialIpLimitPerMin: config.socialIpLimitPerMin,
     moderation: config.adminToken !== null,
+    storage: config.arweave
+      ? { network: config.arweave.network, payer: arweave?.address, dailyBudgetLamports: config.arweave.dailyBudgetLamports }
+      : "local",
+    rpcProxy: config.rpcProxy ? { perMin: config.rpcProxyLimitPerMin } : false,
   },
   "indexer listening",
 );

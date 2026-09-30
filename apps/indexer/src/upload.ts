@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
+import type { ArweaveStore } from "./arweave";
 import { cleanSocial, cleanText, parsePubkeyList, ValidationError } from "./sanitize";
 
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -67,10 +68,13 @@ function validateFields(raw: Record<string, string>): UploadFields {
 }
 
 /**
- * `POST /api/upload` (multipart): stores the image + a Metaplex-style JSON under FILES_DIR and
- * returns public URIs rooted at PUBLIC_URL.
+ * `POST /api/upload` (multipart): stores the image + a Metaplex-style JSON and returns their public URIs:
+ * under FILES_DIR rooted at PUBLIC_URL, or on Arweave when `arweave` is set (STORAGE=arweave).
  */
-export function registerUpload(app: FastifyInstance, opts: { filesDir: string; publicUrl: string }): void {
+export function registerUpload(
+  app: FastifyInstance,
+  opts: { filesDir: string; publicUrl: string; arweave: ArweaveStore | null },
+): void {
   app.post("/api/upload", async (req, reply) => {
     if (!req.isMultipart()) throw new ValidationError("expected multipart/form-data");
     const raw: Record<string, string> = {};
@@ -89,24 +93,32 @@ export function registerUpload(app: FastifyInstance, opts: { filesDir: string; p
     if (!kind) throw new ValidationError("image must be a PNG, JPEG, GIF, WebP or SVG file");
     const fields = validateFields(raw);
 
-    const id = randomBytes(9).toString("base64url");
-    const imageUrl = `${opts.publicUrl}/files/img/${id}.${kind.ext}`;
-    const uri = `${opts.publicUrl}/files/meta/${id}.json`;
-    if (uri.length > MAX_URI_LEN) {
-      throw new Error(`PUBLIC_URL is too long: metadata URI would be ${uri.length} > ${MAX_URI_LEN} chars`);
-    }
     const extensions: Record<string, string> = {};
     if (fields.twitter) extensions.twitter = fields.twitter;
     if (fields.telegram) extensions.telegram = fields.telegram;
     if (fields.website) extensions.website = fields.website;
-    const metadata = {
+    const metadataFor = (imageUrl: string) => ({
       name: fields.name,
       symbol: fields.symbol,
       description: fields.description ?? "",
       image: imageUrl,
       extensions,
       ...(fields.whitelist ? { whitelist: fields.whitelist } : {}),
-    };
+    });
+
+    if (opts.arweave) {
+      const stored = await opts.arweave.uploadLaunch(image, kind.mime, metadataFor);
+      req.log.info({ ...stored, kind: kind.ext, bytes: image.length, whitelist: fields.whitelist?.length ?? 0 }, "upload stored on arweave");
+      return reply.send(stored);
+    }
+
+    const id = randomBytes(9).toString("base64url");
+    const imageUrl = `${opts.publicUrl}/files/img/${id}.${kind.ext}`;
+    const uri = `${opts.publicUrl}/files/meta/${id}.json`;
+    if (uri.length > MAX_URI_LEN) {
+      throw new Error(`PUBLIC_URL is too long: metadata URI would be ${uri.length} > ${MAX_URI_LEN} chars`);
+    }
+    const metadata = metadataFor(imageUrl);
 
     await fs.writeFile(path.join(opts.filesDir, "img", `${id}.${kind.ext}`), image, { flag: "wx" });
     await fs.writeFile(path.join(opts.filesDir, "meta", `${id}.json`), JSON.stringify(metadata), { flag: "wx" });
@@ -126,6 +138,11 @@ export function registerUpload(app: FastifyInstance, opts: { filesDir: string; p
     if (!image || image.length === 0) throw new ValidationError("image file is required");
     const kind = sniffImage(image);
     if (!kind) throw new ValidationError("image must be a PNG, JPEG, GIF, WebP or SVG file");
+    if (opts.arweave) {
+      const url = await opts.arweave.uploadImage(image, kind.mime);
+      req.log.info({ image: url, kind: kind.ext, bytes: image.length }, "image stored on arweave");
+      return reply.send({ image: url });
+    }
     const id = randomBytes(9).toString("base64url");
     await fs.writeFile(path.join(opts.filesDir, "img", `${id}.${kind.ext}`), image, { flag: "wx" });
     req.log.info({ id, kind: kind.ext, bytes: image.length }, "image stored");

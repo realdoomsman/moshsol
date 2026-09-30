@@ -11,7 +11,7 @@ pub mod state;
 use instructions::*;
 use state::PlatformParams;
 
-declare_id!("C1c2ggJWMy2Ta4ogc297mGWk7Fj617dAxQr91BJKpTSW");
+declare_id!("EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ");
 
 #[program]
 pub mod moshsol {

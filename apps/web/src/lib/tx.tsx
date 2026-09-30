@@ -1,6 +1,6 @@
 "use client";
 
-import { describeError } from "@holdfast/sdk";
+import { IDL, describeError } from "@holdfast/sdk";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { VersionedTransaction, type Keypair, type PublicKey, type TransactionInstruction } from "@solana/web3.js";
@@ -10,6 +10,17 @@ import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { useMoshClient } from "./chain";
 import { explorerTx } from "./explorer";
+
+/**
+ * Public trades can't share a slot with a vault-agent trade (anti-sandwich rule). The collision
+ * clears on the next slot, so it is retried a few times instead of shown to the user.
+ */
+// The JSON IDL spells error names in PascalCase, its generated type in camelCase.
+const SAME_SLOT_MESSAGE = IDL.errors.find((e) => e.name.toLowerCase() === "sameslottrade")!.msg;
+const SAME_SLOT_RETRIES = 5;
+const SLOT_MS = 400;
+// ES2022 lib: no Promise.withResolvers.
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class SimulationError extends Error {
   readonly logs: string[];
@@ -98,13 +109,17 @@ export function useTx() {
           computeUnits: req.computeUnits ?? 300_000,
         });
 
-        const sim = await connection.simulateTransaction(new VersionedTransaction(tx.compileMessage()), {
-          sigVerify: false,
-          replaceRecentBlockhash: true,
-          commitment: "confirmed",
-        });
-        if (sim.value.err) {
-          throw new SimulationError(sim.value.err, sim.value.logs ?? []);
+        const message = new VersionedTransaction(tx.compileMessage());
+        for (let attempt = 0; ; attempt++) {
+          const sim = await connection.simulateTransaction(message, {
+            sigVerify: false,
+            replaceRecentBlockhash: true,
+            commitment: "confirmed",
+          });
+          if (!sim.value.err) break;
+          const error = new SimulationError(sim.value.err, sim.value.logs ?? []);
+          if (attempt >= SAME_SLOT_RETRIES || humanError(error) !== SAME_SLOT_MESSAGE) throw error;
+          await sleep(SLOT_MS);
         }
 
         if (req.signers?.length) tx.partialSign(...req.signers);
@@ -116,7 +131,17 @@ export function useTx() {
           const signed = await signTransaction(tx);
           setStage("sending");
           toast.loading(req.label, { id, description: `${TX_STAGE_LABEL.sending}…` });
-          signature = await connection.sendRawTransaction(signed.serialize(), { preflightCommitment: "confirmed" });
+          const raw = signed.serialize();
+          for (let attempt = 0; ; attempt++) {
+            try {
+              signature = await connection.sendRawTransaction(raw, { preflightCommitment: "confirmed" });
+              break;
+            } catch (err) {
+              // Preflight rejected it, so it never landed: the same signed bytes can be resent.
+              if (attempt >= SAME_SLOT_RETRIES || humanError(err) !== SAME_SLOT_MESSAGE) throw err;
+              await sleep(SLOT_MS);
+            }
+          }
         } else {
           signature = await sendTransaction(tx, connection, { preflightCommitment: "confirmed" });
         }

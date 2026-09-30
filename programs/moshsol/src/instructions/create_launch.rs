@@ -26,6 +26,11 @@ pub struct CreateLaunchArgs {
     pub bundle_supply_bps: u16,
     /// Share of the raise kept as SOL in the vault for agents to buy dips
     pub reserve_bps: u16,
+    /// Terms the creator reviewed; must equal what the platform would freeze into the launch now.
+    pub expected_terms: LaunchTerms,
+    pub expected_virtual_sol: u64,
+    /// Most the creator agreed to pay as the flat create fee.
+    pub max_create_fee_lamports: u64,
 }
 
 #[derive(Accounts)]
@@ -92,9 +97,21 @@ pub fn create_launch(ctx: Context<CreateLaunch>, args: CreateLaunchArgs) -> Resu
         MoshError::InvalidMetadata
     );
     require!(args.uri.len() <= MAX_URI_LEN, MoshError::InvalidMetadata);
-    require!(args.raise_min >= params.min_raise_lamports, MoshError::InvalidParam);
+    // The creator signs for the terms they were shown; a params change in between fails the
+    // transaction instead of silently freezing different terms into the launch.
     require!(
-        args.raise_max >= args.raise_min && args.raise_max <= MAX_RAISE_LAMPORTS,
+        args.expected_terms == LaunchTerms::from(&params)
+            && args.expected_virtual_sol == params.virtual_sol_reserves
+            && params.create_fee_lamports <= args.max_create_fee_lamports,
+        MoshError::TermsChanged
+    );
+    require!(args.raise_min >= params.min_raise_lamports, MoshError::InvalidParam);
+    let raise_cap = match params.max_raise_lamports {
+        0 => MAX_RAISE_LAMPORTS,
+        cap => cap,
+    };
+    require!(
+        args.raise_max >= args.raise_min && args.raise_max <= raise_cap,
         MoshError::InvalidParam
     );
     require!(
@@ -247,6 +264,8 @@ pub fn create_launch(ctx: Context<CreateLaunch>, args: CreateLaunchArgs) -> Resu
         agent_sol_received: 0,
         volume_sol: 0,
         trade_count: 0,
+        last_public_trade_slot: 0,
+        last_agent_trade_slot: 0,
     });
 
     emit!(LaunchCreated {

@@ -140,6 +140,7 @@ async function createRaise(
     whitelistRoot: OPEN_WHITELIST_ROOT,
     bundleSupplyBps: 2_000,
     reserveBps: 3_000,
+    terms: platform.params,
   });
   await send(client, creator, [ix], [mint], 400_000);
   console.log(`created ${meta.symbol} ${mint.publicKey.toBase58()}`);

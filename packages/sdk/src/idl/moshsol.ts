@@ -5,7 +5,7 @@
  * IDL can be found at `target/idl/moshsol.json`.
  */
 export type Moshsol = {
-  "address": "C1c2ggJWMy2Ta4ogc297mGWk7Fj617dAxQr91BJKpTSW",
+  "address": "EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ",
   "metadata": {
     "name": "moshsol",
     "version": "0.1.0",
@@ -926,38 +926,38 @@ export type Moshsol = {
               {
                 "kind": "const",
                 "value": [
-                  163,
-                  152,
-                  41,
-                  228,
                   202,
-                  131,
-                  135,
-                  185,
-                  41,
-                  38,
-                  96,
-                  77,
+                  155,
+                  232,
+                  83,
+                  83,
+                  33,
+                  142,
+                  237,
+                  151,
+                  16,
+                  152,
+                  47,
+                  213,
+                  232,
+                  161,
+                  13,
+                  12,
+                  43,
+                  80,
+                  82,
                   223,
-                  204,
-                  204,
-                  4,
-                  91,
-                  234,
-                  128,
-                  15,
-                  60,
-                  122,
-                  79,
-                  74,
-                  138,
+                  134,
+                  198,
+                  45,
+                  25,
+                  59,
+                  116,
+                  25,
                   238,
-                  227,
-                  81,
-                  228,
-                  159,
-                  200,
-                  7
+                  1,
+                  183,
+                  171
                 ]
               }
             ],
@@ -1863,6 +1863,16 @@ export type Moshsol = {
       "code": 6029,
       "name": "notUpgradeAuthority",
       "msg": "Only the program upgrade authority can initialize the platform"
+    },
+    {
+      "code": 6030,
+      "name": "sameSlotTrade",
+      "msg": "An agent trade and a public trade can't share a slot; retry in the next slot"
+    },
+    {
+      "code": 6031,
+      "name": "termsChanged",
+      "msg": "Platform terms changed since this launch was prepared; review them and retry"
     }
   ],
   "types": [
@@ -1982,6 +1992,28 @@ export type Moshsol = {
               "Share of the raise kept as SOL in the vault for agents to buy dips"
             ],
             "type": "u16"
+          },
+          {
+            "name": "expectedTerms",
+            "docs": [
+              "Terms the creator reviewed; must equal what the platform would freeze into the launch now."
+            ],
+            "type": {
+              "defined": {
+                "name": "launchTerms"
+              }
+            }
+          },
+          {
+            "name": "expectedVirtualSol",
+            "type": "u64"
+          },
+          {
+            "name": "maxCreateFeeLamports",
+            "docs": [
+              "Most the creator agreed to pay as the flat create fee."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -2271,6 +2303,19 @@ export type Moshsol = {
           },
           {
             "name": "tradeCount",
+            "type": "u64"
+          },
+          {
+            "name": "lastPublicTradeSlot",
+            "docs": [
+              "Slot of the last public buy/sell and of the last agent trade. Agents can't trade in a slot",
+              "that already saw a public trade, and public trades can't follow an agent trade in the same",
+              "slot, so nobody can wrap a vault trade atomically (one transaction or one bundle)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "lastAgentTradeSlot",
             "type": "u64"
           }
         ]
@@ -2636,6 +2681,21 @@ export type Moshsol = {
               "Blocks agent trades (circuit breaker). Vault funds stay locked either way."
             ],
             "type": "bool"
+          },
+          {
+            "name": "maxRaiseLamports",
+            "docs": [
+              "Beta cap on a new launch's `raise_max`; 0 = only the hard `MAX_RAISE_LAMPORTS` limit."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "maxWalletDepositLamports",
+            "docs": [
+              "Beta cap on one wallet's total deposit into any raise, on top of the creator's own",
+              "`max_per_wallet`; 0 = no platform cap."
+            ],
+            "type": "u64"
           }
         ]
       }

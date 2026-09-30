@@ -6,7 +6,9 @@
  *
  *   RPC_URL=https://api.devnet.solana.com KEYS_DIR=.devnet PROFILE=production pnpm setup:localnet
  *
- * Optional overrides: MIN_RAISE_SOL (default 1), CREATE_FEE_SOL (default 0.02).
+ * Optional overrides: MIN_RAISE_SOL (default 1), CREATE_FEE_SOL (default 0.02), and the beta caps
+ * MAX_RAISE_SOL (largest raise_max a new launch may set) and MAX_WALLET_SOL (most one wallet may
+ * deposit into any raise); both default to 0 = no cap.
  * On non-local clusters the admin keypair must already be funded (no airdrops).
  */
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -16,15 +18,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { LOCALNET_DIR, RPC_URL, airdrop, clientFor, loadOrCreateKeypair, send } from "./common";
 
+const sol = (name: string, fallback: number) => new BN(Math.round(Number(process.env[name] ?? fallback) * LAMPORTS_PER_SOL));
+
 const LOCALNET_PARAMS: PlatformParams = {
   tradeFeeBps: 100,
   backerFeeShareBps: 5_000,
   creatorFeeShareBps: 3_000,
   launchFeeBps: 100,
-  createFeeLamports: new BN(Math.round(Number(process.env.CREATE_FEE_SOL ?? 0.02) * LAMPORTS_PER_SOL)),
+  createFeeLamports: sol("CREATE_FEE_SOL", 0.02),
   virtualSolReserves: new BN(30 * LAMPORTS_PER_SOL),
   maxBundleSupplyBps: 2_500,
-  minRaiseLamports: new BN(Math.round(Number(process.env.MIN_RAISE_SOL ?? 1) * LAMPORTS_PER_SOL)),
+  minRaiseLamports: sol("MIN_RAISE_SOL", 1),
   agentBuyBpsPerWindow: 1_000,
   agentSellBpsPerWindow: 500,
   agentMaxImpactBps: 300,
@@ -35,6 +39,8 @@ const LOCALNET_PARAMS: PlatformParams = {
   emaPeriodSecs: process.env.PROFILE === "production" ? 1_800 : 600,
   paused: false,
   agentsPaused: false,
+  maxRaiseLamports: sol("MAX_RAISE_SOL", 0),
+  maxWalletDepositLamports: sol("MAX_WALLET_SOL", 0),
 };
 
 async function main() {
@@ -75,7 +81,11 @@ async function main() {
     console.log("platform already initialized (pass --update to push params)");
   }
 
+  const configFile = path.join(LOCALNET_DIR, "config.json");
+  // Merge so fields written by other scripts (e.g. the multisig handoff) survive a re-run.
+  const previous = fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, "utf8")) : {};
   const config = {
+    ...previous,
     rpcUrl: RPC_URL,
     programId: PROGRAM_ID.toBase58(),
     platform: platformPda().toBase58(),
@@ -83,7 +93,7 @@ async function main() {
     agent: agent.publicKey.toBase58(),
     treasury: treasury.publicKey.toBase58(),
   };
-  fs.writeFileSync(path.join(LOCALNET_DIR, "config.json"), JSON.stringify(config, null, 2));
+  fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
   console.log(config);
 }
 

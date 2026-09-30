@@ -5,11 +5,14 @@ anchor_version = "0.31.0"
 resolution = true
 skip-lint = false
 
+[programs.devnet]
+moshsol = "EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ"
+
 [programs.localnet]
 moshsol = "C1c2ggJWMy2Ta4ogc297mGWk7Fj617dAxQr91BJKpTSW"
 
-[programs.devnet]
-moshsol = "C1c2ggJWMy2Ta4ogc297mGWk7Fj617dAxQr91BJKpTSW"
+[registry]
+url = "https://api.apr.dev"
 
 [provider]
 cluster = "localnet"

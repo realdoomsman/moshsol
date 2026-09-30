@@ -56,11 +56,13 @@ Guarantees enforced in code (see `programs/moshsol/src/constants.rs` for hard ca
   EMA band (buy ≤ EMA×(1−band), sell ≥ EMA×(1+band); EMA weight `dt/(dt+period)` so it can never be snapped to a held price),
   cost basis (sell fill ≥ vault average cost×(1+band); buy fill ≤ average cost, or a buy-back funded only by earlier sell proceeds at ≤ average sell price×(1−band)),
   per-window caps (≤20% of vault per window, window ≥5 min) and max impact per trade (≤10%). Admin can pause agents (circuit breaker) but cannot unlock funds.
-- **Frozen terms.** Fee split, trade/launch fee and agent limits are copied into the launch at creation and never change. Trade fee is bounded to 0.3%–2%.
+- **No atomic sandwiches.** An agent trade can't run in a slot that already saw a public trade on that launch, and no public trade can follow it in the same slot, so nobody (including whoever holds the agent key) can wrap a vault trade in one transaction or Jito bundle. What a leaked agent key *can* still do is trade within the rules above — bounded per window, never withdraw — until the admin pauses agents and rotates the key (`set_agent_authority`, admin = multisig on mainnet).
+- **Frozen terms.** Fee split, trade/launch fee and agent limits are copied into the launch at creation and never change. `create_launch` carries the terms the creator reviewed (plus virtual SOL and a max create fee) and fails with `TermsChanged` if the platform changed them in between. Trade fee is bounded to 0.3%–2%.
 - **Fixed supply.** 1,000,000,000 tokens minted to the curve at creation, mint authority revoked in the same instruction, no freeze authority.
 - **Refunds.** Raise below minimum at deadline, or cancelled by the creator → every backer can refund 100% (backer account closed, rent returned). Pausing never blocks refunds, trading or claims.
-- **Accounting.** All launch SOL sits on the launch PDA; `lamports == rent + raise escrow` (raising/refunding) or `rent + curve + vault + unclaimed fees` (live). Tests assert this after every step.
-- **Fees.** 1% on public trades: 50% backers (pro-rata accumulator, claim any time), 30% creator, 20% platform. 1% launch fee on the raise. Flat create fee (anti-spam). All bounded by hard caps.
+- **Accounting.** All launch SOL sits on the launch PDA; `lamports ≥ rent + raise escrow` (raising/refunding) or `rent + curve + vault + unclaimed fees` (live), with equality unless someone donates lamports/tokens directly (donations are never counted and stay stuck). Tests assert equality after every step.
+- **Fees.** 1% on public trades, rounded up so no trade is fee-free: 50% backers (pro-rata accumulator, claim any time), 30% creator, 20% platform. The split can never drop below 25% for backers or 10% for creators. 1% launch fee on the raise. Flat create fee (anti-spam). All bounded by hard caps.
+- **Beta caps.** `max_raise_lamports` bounds a new launch's `raise_max` and `max_wallet_deposit_lamports` bounds any one wallet's deposit on top of the creator's own cap (0 = none; set by `MAX_RAISE_SOL` / `MAX_WALLET_SOL` in setup).
 - **Deployment.** Only the program's upgrade authority can run `initialize_platform` (no front-running after deploy).
 
 ## Run it locally
@@ -132,6 +134,13 @@ Indexer (`apps/indexer`):
 | `SOCIAL_IP_LIMIT_PER_MIN` | `20` | Signed writes (comments, profile updates) per IP per minute (`0` = off) |
 | `ADMIN_TOKEN` | unset | Enables comment moderation (`DELETE /api/comments/:id` with header `x-admin-token`); unset = disabled |
 | `TRUST_PROXY` | off | Behind a reverse proxy, so per-IP limits see the client from `X-Forwarded-For`: a comma list of trusted proxy IPs/CIDRs or `loopback`/`linklocal`/`uniquelocal` (clients can't spoof), or `1` = trust every hop |
+| `STORAGE` | `local` | Where `POST /api/upload` + `/api/upload/image` store files: `local` = `FILES_DIR` served under `PUBLIC_URL/files`; `arweave` = permanent Arweave via [ArDrive Turbo](https://docs.ardrive.io/docs/turbo/), URIs `https://arweave.net/<id>`, paid in SOL. Old `/files` URIs keep being served and indexed either way |
+| `ARWEAVE_KEYPAIR_JSON` / `ARWEAVE_KEYPAIR` | — | `STORAGE=arweave`: Solana secret key (JSON byte array; `_JSON` for Railway secrets, else a file path) paying for uploads. Startup fails without one |
+| `ARWEAVE_NETWORK` | `mainnet` | `dev` = ar.io testnet sandbox paid with devnet SOL (data ephemeral, served from `https://ar-io.dev/<id>`) |
+| `ARWEAVE_RPC_URL` | `RPC_URL` | Solana RPC for the SOL top-up transfers (`dev`: a devnet RPC) |
+| `ARWEAVE_DAILY_BUDGET_SOL` | `0.25` | Hard cap on SOL sent to Turbo per UTC day, kept in the DB (survives restarts). Items ≤105 KiB within the key's Turbo free allowance cost nothing; otherwise credits are bought only when the balance can't cover an upload (deficit + 10%). Over budget → 503 until 00:00 UTC |
+| `RPC_PROXY` | off | `1`: `POST /rpc` (JSON-RPC, single + batch ≤20, 64 KB body, 15 s upstream timeout) → `RPC_URL` and `GET /rpc-ws` (PubSub) → `WS_URL`, so a keyed RPC never reaches browsers. Only the methods the web app uses are forwarded (account/balance reads, blockhash, send/simulate, signature status, `account`/`signature`/`slot` subscriptions); anything else (e.g. `getProgramAccounts`) gets JSON-RPC `-32601`. `/rpc-ws`: ≤10 connections per IP, ≤32 subscriptions per connection |
+| `RPC_PROXY_LIMIT_PER_MIN` | `600` | Per-IP JSON-RPC calls per minute through the proxy (each batch entry and WS request counts; `0` = off). The proxy is exempt from `RATE_LIMIT_PER_MIN` |
 | `LOG_LEVEL` | `info` | `debug` adds poller catch-ups and websocket retry attempts |
 
 Every endpoint, the signed-message scheme for comments/profiles, rate limits and WebSocket messages are documented in
@@ -194,21 +203,57 @@ between transactions), `SIM_TRADERS` (10), `SIM_BACKERS` (6), `SIM_MEDIAN_TRADE_
 - **429 from the indexer.** Raise `RATE_LIMIT_PER_MIN` / `UPLOAD_LIMIT_PER_MIN` (everything on one machine
   shares the 127.0.0.1 budget).
 
-## Live deployment (devnet + Railway)
+## Live deployment (Railway)
+
+Railway project `moshsol` runs two environments of the same three services (`indexer`, `agent`, `web`).
+Program id on every cluster: `EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ` (keypair `target/deploy/moshsol-keypair.json`).
+
+### `mainnet` environment (mainnet-beta, deploys from `master`)
 
 | | |
 |---|---|
-| Site | https://web-production-04955.up.railway.app |
+| Site | https://web-mainnet-80e3.up.railway.app |
+| Indexer API | https://indexer-mainnet-bd1f.up.railway.app (`/api/health`; `/rpc` + `/rpc-ws` proxy the Helius RPC for browsers) |
+| Agent status | https://agent-mainnet.up.railway.app/status |
+| Deployer / initial admin + upgrade authority | `EVN2gPRLh4Yymj7w6yh9u7yLf7CU8dBTfnTgBzNEYJ4G` (`.mainnet/admin.json`), handed to the Squads vault by `pnpm handoff` |
+| Multisig members (2-of-3) | `.mainnet/member-{1,2,3}.json` — rotate them to separate hardware wallets in the Squads app |
+| Agent authority | `FvbdC4n4qXu8JoVLDeb5m8hT8pDSjXFKBCWx322LtWKP` (`.mainnet/agent.json`, Railway `AGENT_KEYPAIR_JSON`) |
+| Arweave uploader | `BCMaXCQ85twN4unAxftvuQQsogmTt7s4s1EG4hYxPTwW` (`.mainnet/uploader.json`, Railway `ARWEAVE_KEYPAIR_JSON`) |
+| Beta params | min raise 1 SOL, max raise 50 SOL, max 5 SOL per wallet per raise, create fee 0.02 SOL, 1% trade fee (50/30/20), 1% launch fee |
+
+Launch runbook (WSL for step 1, any OS after):
+
+```bash
+CLUSTER=mainnet-beta RPC_URL=<helius-url> bash scripts/deploy.sh      # admin needs ~7.6 SOL at peak, ~3.8 SOL stays as program rent
+RPC_URL=<helius-url> KEYS_DIR=.mainnet PROFILE=production MIN_RAISE_SOL=1 CREATE_FEE_SOL=0.02 \
+  MAX_RAISE_SOL=50 MAX_WALLET_SOL=5 pnpm setup:localnet
+RPC_URL=<helius-url> KEYS_DIR=.mainnet THRESHOLD=2 MEMBERS=<member-1>,<member-2>,<member-3> \
+  APPROVER_KEYPAIRS=.mainnet/member-1.json,.mainnet/member-2.json pnpm handoff
+```
+
+After the handoff every admin action (`update_platform`, pausing, key rotation, upgrades) is a Squads proposal.
+
+### `production` environment (devnet, deploys from the `devnet` branch)
+
+| | |
+|---|---|
+| Site | https://holdfast.up.railway.app |
 | Indexer API | https://indexer-production-454b.up.railway.app (`/api/health`) |
 | Agent status | https://agent-production-47e4.up.railway.app/status |
-| Program (devnet) | `C1c2ggJWMy2Ta4ogc297mGWk7Fj617dAxQr91BJKpTSW` |
+| Program (devnet, previous layout) | `C1c2ggJWMy2Ta4ogc297mGWk7Fj617dAxQr91BJKpTSW` (old keypair backed up as `.devnet/program-C1c2….json`) |
 | Platform admin / upgrade authority | `FwYLuQQev8VnGnXySMd7NSJvSYwqhe3tgcdyWzEVpnAs` (`.devnet/admin.json`) |
 | Agent authority | `3qLLfTodvtLMSfUmzLMXLwm7L2uQrRz2MsGjEwWmFj2t` (`.devnet/agent.json`, set on Railway as `AGENT_KEYPAIR_JSON`) |
 | Treasury | `J2zc2wKWtPE7nGHzSwmpZNEz6qSGpCGoDSVwkjKNrKyn` |
 
-`.devnet/*.json` are the only copies of those keys — back them up; they are gitignored.
+The devnet services are pinned to the `devnet` branch because the deployed devnet program predates the
+current account layout. To move devnet to the current program: fund `.devnet/admin.json` with ~7.6 devnet SOL,
+`CLUSTER=devnet bash scripts/deploy.sh`, `RPC_URL=https://api.devnet.solana.com KEYS_DIR=.devnet PROFILE=production
+MIN_RAISE_SOL=0.05 CREATE_FEE_SOL=0.005 pnpm setup:localnet`, then point the `production` services back at `master`
+(the indexer wipes and re-indexes on the program change) and delete the `devnet` branch.
 
-Railway project `holdfast` has three services, each connected to this GitHub repo (`master`) with its
+`.devnet/*.json` and `.mainnet/*.json` are the only copies of those keys — back them up; they are gitignored.
+
+Each service is connected to this GitHub repo with its
 own Dockerfile (`apps/<service>/Dockerfile`, build context = repo root), a healthcheck, restart on
 failure, and watch paths so a push only rebuilds what it touched (`apps/<service>/**`,
 `packages/sdk/**`, lockfile):
@@ -233,11 +278,27 @@ curve, the vault and every wallet that ever traded (exact balances; wallets that
 tokens by transfer aren't listed). The in-app "Get test SOL" falls back to a faucet.solana.com link
 when the public faucet throttles. For real traffic set `RPC_URL`/`WS_URL` on the indexer and agent to a
 dedicated provider (Helius, Triton, QuickNode) — keep keyed URLs server-side only; the web's
-`NEXT_PUBLIC_RPC_URL` is visible to every visitor.
+`NEXT_PUBLIC_RPC_URL` is visible to every visitor. On mainnet set `RPC_PROXY=1` on the indexer and point the
+web at it: `NEXT_PUBLIC_RPC_URL=https://<indexer-domain>/rpc`, `NEXT_PUBLIC_WS_URL=wss://<indexer-domain>/rpc-ws`
+(server-rendered reads from the web service share one IP there — raise `RPC_PROXY_LIMIT_PER_MIN` if it hits 429s).
 
 ## Deploy to another cluster
 
-1. `CLUSTER=devnet bash scripts/deploy.sh` (or `CLUSTER=mainnet-beta`) — creates `.<cluster>/admin.json` on first run; fund it (~3 SOL for the ~530 KB program) and re-run. The admin is the upgrade authority (required to initialize).
+1. `CLUSTER=devnet bash scripts/deploy.sh` (or `CLUSTER=mainnet-beta`) — creates `.<cluster>/admin.json` on first run; fund it (~7.6 SOL at peak for the ~536 KB program: ~3.8 SOL program rent plus a same-size upload buffer that is refunded after the deploy) and re-run. The admin is the upgrade authority (required to initialize).
 2. `RPC_URL=<rpc> KEYS_DIR=.<cluster> PROFILE=production pnpm setup:localnet` (hourly agent windows, 30-min EMA), then fund `.<cluster>/agent.json` for fees.
 3. Create the Railway services as above (or any Docker host) pointing at the cluster.
-4. Before mainnet: external audit, move `admin` to a Squads multisig (`propose_admin` → `accept_admin`), transfer the program upgrade authority to the multisig, keep low `raise_max` caps during beta, use a dedicated RPC, and store uploads on Arweave/IPFS instead of the indexer volume.
+4. Before mainnet: external audit, keep the beta caps (`MAX_RAISE_SOL`, `MAX_WALLET_SOL`) low, use a dedicated RPC behind the indexer's `/rpc` proxy, store uploads on Arweave (`STORAGE=arweave`), and hand the platform admin, the fee recipient and the program upgrade authority to a Squads v4 multisig with `pnpm handoff` ([`scripts/src/handoff.ts`](scripts/src/handoff.ts)):
+   ```bash
+   export RPC_URL=<rpc> KEYS_DIR=.mainnet MEMBERS=<pk1>,<pk2>,<pk3> THRESHOLD=2
+   pnpm handoff --dry-run   # plan + current PASS/FAIL table; sends and writes nothing
+   pnpm handoff             # re-run after every approval round; finished steps are skipped
+   ```
+   | Variable | Default | Purpose |
+   |---|---|---|
+   | `MEMBERS` | — | Comma-separated member pubkeys; every member gets Initiate/Vote/Execute. |
+   | `THRESHOLD` | — | Approvals required (1…members). |
+   | `MULTISIG` | — | Reuse an existing Squads v4 multisig instead of creating one; it must match `MEMBERS`/`THRESHOLD` exactly and have no config authority. |
+   | `PROPOSER_KEYPAIR` | first `APPROVER_KEYPAIRS` entry | Keypair file (relative to the repo root) of one member; lets the script create the step-3 vault transaction + proposal itself. |
+   | `APPROVER_KEYPAIRS` | — | Comma-separated member keypair files (relative to the repo root); each approves the step-3 proposal (skipping ones that already voted) and, once the threshold is met, the first executes it, so one run ends with an all-PASS table. |
+
+   The admin (`$KEYS_DIR/admin.json`) pays for everything. Steps: (1) create the multisig (no config authority, no time lock; create key saved to `$KEYS_DIR/multisig-create-key.json`, `multisig` + `multisigVault` merged into `$KEYS_DIR/config.json`); (2) `propose_admin(vault)`; (3) one vault transaction `[accept_admin, set_fee_recipient(vault)]` plus a proposal — Squads only lets members create these, so either pass `PROPOSER_KEYPAIR`/`APPROVER_KEYPAIRS` or have a member import the printed base58 transaction in the Squads app (TX Builder → *Import a base58 encoded transaction*); with `APPROVER_KEYPAIRS` the script approves and executes it, otherwise members do so at the printed Squads URL; (4) the upgrade authority moves to the vault via the upgradeable loader's `SetAuthority`. The last step prints PASS/FAIL for platform admin, pending admin, fee recipient and upgrade authority (exit 1 until all pass). Authority only ever goes to vault index 0 of a multisig that exists on chain and matches `MEMBERS`/`THRESHOLD`.

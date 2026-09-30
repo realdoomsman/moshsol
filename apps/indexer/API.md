@@ -244,7 +244,7 @@ Returned by the launch list/detail endpoints, `/api/trending` and the `launch` W
 `200` healthy, `503` when the RPC is unreachable or the first sync hasn't finished (same body plus `error`).
 
 ```json
-{ "ok": true, "slot": 504720663, "programId": "C1c2ggJWMy2Ta4ogc297mGWk7Fj617dAxQr91BJKpTSW",
+{ "ok": true, "slot": 504720663, "programId": "EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ",
   "lastIndexedSlot": 504720652, "lagSlots": 11, "wsConnected": true,
   "genesisHash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG" }
 ```
@@ -506,7 +506,7 @@ Creates or replaces the profile (fields left out or `null` are cleared). Body (J
 |---|---|
 | `name` | 2–24 chars of `A-Z a-z 0-9 _ . -`; unique case-insensitively |
 | `bio` | ≤ 160 chars (trimmed, single line) |
-| `avatar` | An image uploaded to this indexer (`POST /api/upload/image` → `image`), or the `image` URL of any indexed launch |
+| `avatar` | An image uploaded to this indexer (`POST /api/upload/image` → `image`, local or Arweave), or the `image` URL of any indexed launch |
 
 `200` →
 
@@ -631,14 +631,36 @@ Launch metadata for `create_launch`. Fields: `image` (file, required), `name` (�
 `whitelist` (JSON array of base58 keys, ≤ 50 000). Images: PNG, JPEG, GIF, WebP or SVG (no scripts), ≤ 4 MB,
 type sniffed from content.
 
-→ `{ "uri": "https://…/files/meta/<id>.json", "image": "https://…/files/img/<id>.png" }` — put `uri` on chain.
+→ `{ "uri": "https://…/files/meta/<id>.json", "image": "https://…/files/img/<id>.png" }` — put `uri` on chain. With
+`STORAGE=arweave` both are Arweave data items instead: `{ "uri": "https://arweave.net/<id>", "image":
+"https://arweave.net/<id>" }` (tagged `Content-Type`; gateways can take up to a minute to serve a fresh item).
 
 ### `POST /api/upload/image` (multipart/form-data)
 
 Just an image (field `image`, same rules), e.g. a profile avatar. → `{ "image": "https://…/files/img/<id>.png" }`
 
-Both uploads share the upload rate limit. `400` for a missing/invalid image or field, `413` above 4 MB.
+Both uploads share the upload rate limit. `400` for a missing/invalid image or field, `413` above 4 MB, `503` when
+`STORAGE=arweave` and the daily SOL budget (`ARWEAVE_DAILY_BUDGET_SOL`) is used up.
 
 ### `GET /files/img/<id>.<ext>`, `GET /files/meta/<id>.json`
 
 Static, immutable (`Cache-Control: max-age=31536000, immutable`, `nosniff`; SVGs get a restrictive CSP).
+
+## RPC proxy (`RPC_PROXY=1`)
+
+### `POST /rpc`
+
+Solana JSON-RPC (single call or batch of ≤ 20, body ≤ 64 KB) forwarded to `RPC_URL`; the upstream status and body
+are relayed. Allowed: `getAccountInfo`, `getMultipleAccounts`, `getBalance`, `getTokenAccountBalance`,
+`getLatestBlockhash`, `isBlockhashValid`, `getBlockHeight`, `getSlot`, `getSignatureStatuses`, `getTransaction`,
+`getRecentPrioritizationFees`, `getFeeForMessage`, `getMinimumBalanceForRentExemption`, `simulateTransaction`,
+`sendTransaction`, `requestAirdrop`, `getGenesisHash`, `getHealth`, `getEpochInfo`, `getVersion`. Any other method →
+`{ "error": { "code": -32601 } }` for that call (the rest of a batch still runs). `429` over
+`RPC_PROXY_LIMIT_PER_MIN` (every batch entry counts), `502` when the upstream is unreachable or slower than 15 s.
+
+### `GET /rpc-ws`
+
+Solana PubSub piped to `WS_URL` (one upstream socket per client; either side closing closes the other). Allowed:
+`accountSubscribe`/`accountUnsubscribe`, `signatureSubscribe`/`signatureUnsubscribe`, `slotSubscribe`/`slotUnsubscribe`
+and web3.js's `ping` notification; others → `-32601`. ≤ 10 connections per IP (more close with `1008`), ≤ 32
+subscriptions per connection (`-32005`); every request counts against `RPC_PROXY_LIMIT_PER_MIN`.

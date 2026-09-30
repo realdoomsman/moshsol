@@ -372,6 +372,7 @@ async function main(): Promise<void> {
       whitelistRoot: whitelist?.root ?? OPEN_WHITELIST_ROOT,
       bundleSupplyBps: plan.bundleSupplyBps,
       reserveBps: plan.reserveBps,
+      terms: platform.params,
     });
     await send(client, creator, [createIx], [mint], 400_000);
     console.log(`created ${plan.symbol.padEnd(5)} ${mint.publicKey.toBase58()} (${plan.kind})`);
