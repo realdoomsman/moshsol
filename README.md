@@ -355,8 +355,9 @@ Program id on every cluster: `EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ` (key
 | Site | https://web-mainnet-80e3.up.railway.app |
 | Indexer API | https://indexer-mainnet-bd1f.up.railway.app (`/api/health`; `/rpc` + `/rpc-ws` proxy the Helius RPC for browsers) |
 | Agent status | https://agent-mainnet.up.railway.app/status |
-| Deployer / initial admin + upgrade authority | `EVN2gPRLh4Yymj7w6yh9u7yLf7CU8dBTfnTgBzNEYJ4G` (`.mainnet/admin.json`), handed to the Squads vault by `pnpm handoff` |
-| Multisig members (2-of-3) | `.mainnet/member-{1,2,3}.json` — rotate them to separate hardware wallets in the Squads app |
+| Platform admin, fee recipient, upgrade authority | Squads vault `6vUgXnEMbho2pVTEnwwGRj9xjcnb2btKGoWGqoMuzBWF` of multisig `29dhkpFcpteUaEZkdooNCFdoGy8z4HBXPpjdAVG3bsT1` (https://app.squads.so/squads/29dhkpFcpteUaEZkdooNCFdoGy8z4HBXPpjdAVG3bsT1) |
+| Multisig members (2-of-3) | `44kYEq…sNVP`, `CZ9eBS…Kan7`, `7Ra5Dh…97Tb` = `.mainnet/member-{1,2,3}.json` — rotate them to separate hardware wallets in the Squads app |
+| Deployer (no remaining authority) | `EVN2gPRLh4Yymj7w6yh9u7yLf7CU8dBTfnTgBzNEYJ4G` (`.mainnet/admin.json`) |
 | Agent authority | `FvbdC4n4qXu8JoVLDeb5m8hT8pDSjXFKBCWx322LtWKP` (`.mainnet/agent.json`, Railway `AGENT_KEYPAIR_JSON`) |
 | Arweave uploader | `BCMaXCQ85twN4unAxftvuQQsogmTt7s4s1EG4hYxPTwW` (`.mainnet/uploader.json`, Railway `ARWEAVE_KEYPAIR_JSON`) |
 | Beta params | min raise 1 SOL, max raise 50 SOL, max 5 SOL per wallet per raise, create fee 0.02 SOL, 1% trade fee (50/30/20), 1% launch fee |
