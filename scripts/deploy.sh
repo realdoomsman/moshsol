@@ -29,7 +29,9 @@ fi
 anchor build
 PROGRAM_ID="$(solana-keygen pubkey target/deploy/moshsol-keypair.json)"
 echo "deploying $PROGRAM_ID to $RPC (upgrade authority $(solana-keygen pubkey "$ADMIN"))"
-solana program deploy --url "$RPC" --keypair "$ADMIN" --with-compute-unit-price 10000 \
+# Priority fee + extra signing rounds so ~1,100 buffer writes land on a congested mainnet; a failed
+# run prints the buffer's recovery phrase so the upload can resume instead of paying twice.
+solana program deploy --url "$RPC" --keypair "$ADMIN" --with-compute-unit-price 100000 --max-sign-attempts 50 \
   --program-id target/deploy/moshsol-keypair.json target/deploy/moshsol.so
 
 echo "deployed. Initialize the platform from the JS workspace (any OS):"

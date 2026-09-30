@@ -301,7 +301,7 @@ between transactions), `SIM_TRADERS` (10), `SIM_BACKERS` (6), `SIM_MEDIAN_TRADE_
 ## Live deployment (Railway)
 
 Railway project `moshsol` runs two environments of the same three services (`indexer`, `agent`, `web`).
-Program id on every cluster: `EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ` (keypair `target/deploy/moshsol-keypair.json`).
+Program id on every cluster: `EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ` (keypair `target/deploy/moshsol-keypair.json`, backed up as `.mainnet/program-EduEw….json`; `target/` is gitignored, so copy it back there before building on a fresh checkout).
 
 ### `mainnet` environment (mainnet-beta, deploys from `master`)
 
@@ -319,7 +319,7 @@ Program id on every cluster: `EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ` (key
 Launch runbook (WSL for step 1, any OS after):
 
 ```bash
-CLUSTER=mainnet-beta RPC_URL=<helius-url> bash scripts/deploy.sh      # admin needs ~7.6 SOL at peak, ~3.8 SOL stays as program rent
+CLUSTER=mainnet-beta KEYS_DIR=.mainnet RPC_URL=<helius-url> bash scripts/deploy.sh   # admin needs ~7.6 SOL at peak, ~3.8 SOL stays as program rent
 RPC_URL=<helius-url> KEYS_DIR=.mainnet PROFILE=production MIN_RAISE_SOL=1 CREATE_FEE_SOL=0.02 \
   MAX_RAISE_SOL=50 MAX_WALLET_SOL=5 pnpm setup:localnet
 RPC_URL=<helius-url> KEYS_DIR=.mainnet THRESHOLD=2 MEMBERS=<member-1>,<member-2>,<member-3> \
