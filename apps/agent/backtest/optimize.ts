@@ -1,50 +1,62 @@
-import { PARAM_KEYS, PARAM_SPACE, type ParamKey, type StrategyParams } from "../src/strategy";
 import { mulberry32, type Rng } from "./sim";
 
 /**
- * Search over `PARAM_SPACE` in a normalized cube [0, 1]^d (log-scaled where the space says so):
- * seeded random search for a broad start, then CMA-ES (Hansen, "The CMA Evolution Strategy: A
- * Tutorial", arXiv:1604.00772) from the best random point. Out-of-cube samples are evaluated at
- * the clipped point minus a distance penalty, so the mean stays inside.
+ * Search over a box of numeric parameters (the policy's `PARAM_SPACE`, or the launch terms) in a
+ * normalized cube [0, 1]^d (log-scaled where the box says so): seeded random search for a broad
+ * start, then CMA-ES (Hansen, "The CMA Evolution Strategy: A Tutorial", arXiv:1604.00772) from the
+ * best random point. Out-of-cube samples are evaluated at the clipped point minus a distance
+ * penalty, so the mean stays inside.
  */
 
-/** The tuned subset of parameters; every other parameter stays at its value in `base`. */
-export class SearchSpace {
+export interface Bounds {
+  lo: number;
+  hi: number;
+  log?: boolean;
+  /** Decoded values are rounded to integers (on-chain terms). */
+  int?: boolean;
+}
+
+/** The tuned subset `keys` of a point; every other field stays at its value in `base`. */
+export class SearchSpace<K extends string, P extends Record<K, number>> {
   constructor(
-    readonly keys: ParamKey[],
-    readonly base: StrategyParams,
+    readonly box: Record<K, Bounds>,
+    readonly keys: K[],
+    readonly base: P,
   ) {}
 
-  static all(base: StrategyParams): SearchSpace {
-    return new SearchSpace(PARAM_KEYS, base);
-  }
-
-  encode(p: StrategyParams): number[] {
+  encode(p: P): number[] {
     return this.keys.map((k) => {
-      const { lo, hi, log } = PARAM_SPACE[k];
+      const { lo, hi, log } = this.box[k];
       return log ? Math.log(p[k] / lo) / Math.log(hi / lo) : (p[k] - lo) / (hi - lo);
     });
   }
 
-  decode(u: number[]): StrategyParams {
+  decode(u: number[]): P {
     const out = { ...this.base };
     this.keys.forEach((k, i) => {
-      const { lo, hi, log } = PARAM_SPACE[k];
+      const { lo, hi, log, int } = this.box[k];
       const v = Math.min(1, Math.max(0, u[i]!));
-      out[k] = log ? lo * (hi / lo) ** v : lo + v * (hi - lo);
+      const x = log ? lo * (hi / lo) ** v : lo + v * (hi - lo);
+      (out as Record<K, number>)[k] = int ? Math.min(hi, Math.max(lo, Math.round(x))) : x;
     });
     return out;
   }
 }
 
-export type Fitness = (batch: StrategyParams[]) => Promise<number[]>;
+export type Fitness<P> = (batch: P[]) => Promise<number[]>;
 
-export interface Trial {
-  params: StrategyParams;
+export interface Trial<P> {
+  params: P;
   score: number;
 }
 
-export async function randomSearch(space: SearchSpace, n: number, seeds: StrategyParams[], fitness: Fitness, rng: Rng): Promise<Trial[]> {
+export async function randomSearch<K extends string, P extends Record<K, number>>(
+  space: SearchSpace<K, P>,
+  n: number,
+  seeds: P[],
+  fitness: Fitness<P>,
+  rng: Rng,
+): Promise<Trial<P>[]> {
   const batch = [...seeds, ...Array.from({ length: n }, () => space.decode(space.keys.map(() => rng())))];
   const scores = await fitness(batch);
   return batch.map((params, i) => ({ params, score: scores[i]! })).sort((a, b) => b.score - a.score);
@@ -90,15 +102,20 @@ function eigen(c: number[][]): { b: number[][]; d: number[] } {
   return { b, d: a.map((r, i) => Math.max(1e-20, r[i]!)) };
 }
 
-export interface CmaOptions {
+export interface CmaOptions<P> {
   sigma: number;
   generations: number;
   seed: number;
-  onGeneration?: (gen: number, best: Trial, sigma: number) => void;
+  onGeneration?: (gen: number, best: Trial<P>, sigma: number) => void;
 }
 
 /** Maximizes `fitness` over `space` from `start`; returns every evaluated trial, best first. */
-export async function cmaes(space: SearchSpace, start: StrategyParams, fitness: Fitness, o: CmaOptions): Promise<Trial[]> {
+export async function cmaes<K extends string, P extends Record<K, number>>(
+  space: SearchSpace<K, P>,
+  start: P,
+  fitness: Fitness<P>,
+  o: CmaOptions<P>,
+): Promise<Trial<P>[]> {
   const rng = mulberry32(o.seed);
   const gauss = () => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(2 * Math.PI * rng());
   const n = space.keys.length;
@@ -120,7 +137,7 @@ export async function cmaes(space: SearchSpace, start: StrategyParams, fitness: 
   let pc = new Array<number>(n).fill(0);
   let ps = new Array<number>(n).fill(0);
   let C: number[][] = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 1 : 0)));
-  const trials: Trial[] = [];
+  const trials: Trial<P>[] = [];
 
   for (let g = 0; g < o.generations; g++) {
     const { b, d } = eigen(C);

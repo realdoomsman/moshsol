@@ -63,11 +63,14 @@ export function hashSeed(s: string): number {
   return h >>> 0;
 }
 
-/** A public trade as executed: buys are gross lamports in, sells are token base units in. */
-export interface PublicTrade {
-  t: number;
-  buy: boolean;
-  amount: bigint;
+/**
+ * Executed public trades (the exogenous-flow recording), column-wise to keep dozens of 72 h
+ * recordings per worker small: times (ms) and signed amounts, + = buy of that many gross lamports,
+ * − = sell of that many token base units (both below 2^53, so exact as doubles).
+ */
+export interface Recording {
+  t: number[];
+  amount: number[];
 }
 
 /** Chain + clock + public-trade bookkeeping shared by the flow models and the agent. */
@@ -81,7 +84,7 @@ export class Market {
   constructor(
     readonly chain: Chain,
     /** When set, every executed public trade is appended (the exogenous-flow recording). */
-    readonly recording: PublicTrade[] | null,
+    readonly recording: Recording | null,
   ) {}
 
   now(): bigint {
@@ -106,7 +109,8 @@ export class Market {
       return 0n;
     }
     this.book(Number(gross - bpsCeil(gross, c.terms.tradeFeeBps)), Number(res.out));
-    this.recording?.push({ t: this.t, buy: true, amount: gross });
+    this.recording?.t.push(this.t);
+    this.recording?.amount.push(Number(gross));
     return res.out;
   }
 
@@ -123,7 +127,8 @@ export class Market {
       return 0n;
     }
     this.book(Number(gross), Number(amount));
-    this.recording?.push({ t: this.t, buy: false, amount });
+    this.recording?.t.push(this.t);
+    this.recording?.amount.push(-Number(amount));
     return amount;
   }
 
@@ -328,7 +333,7 @@ class SimAgent {
 }
 
 /** Runs `scenario` under `policy`; `recording` collects the executed public trades (exogenous replay source). */
-export function simulate(sc: Scenario, policy: Policy, opt: SimOptions = DEFAULT_SIM, recording: PublicTrade[] | null = null): RunResult {
+export function simulate(sc: Scenario, policy: Policy, opt: SimOptions = DEFAULT_SIM, recording: Recording | null = null): RunResult {
   const chain = launch(sc.setup, BigInt(T0));
   const market = new Market(chain, recording);
   const rng = mulberry32(hashSeed(sc.id));

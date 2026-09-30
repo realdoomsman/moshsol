@@ -6,10 +6,14 @@
  *   pnpm --filter @holdfast/agent backtest walkforward  tune on every pool's first 24 h, test on hours 24–72
  *   pnpm --filter @holdfast/agent backtest ablate       tune on a FIT part of TRAIN, switch each feature off on the VALIDATION part
  *   pnpm --filter @holdfast/agent backtest robust       TEST split under other timing / fair-value assumptions
+ *   pnpm --filter @holdfast/agent backtest terms        search the launch terms (policy fixed) on TRAIN and walk-forward,
+ *                                                       Pareto view + picks out of sample, then a reserve-share sweep
  *
  * Flags: --params <JSON object or file> (policy to evaluate/ablate/start from; default DEFAULT_PARAMS),
- * --random <n> (200) and --gens <n> (25) for training, --freeze <feature,…> (train with those features
- * switched off: margins → 25 bps, floor → none), --workers <n> (CPUs − 2).
+ * --random <n> (200) and --gens <n> (25) for training and the terms search, --freeze <feature,…> (train with
+ * those features switched off: margins → 25 bps, floor → none), --terms <JSON object or file> (terms search
+ * baseline; default PRODUCTION_TERMS), --rug-budget <pp> (10: extra rug SOL loss a pick may add, pp of the
+ * starting vault SOL), --reserves <bps,…> (reserve sweep), --workers <n> (CPUs − 2).
  * Every command prints markdown and writes it plus a JSON summary to apps/agent/backtest/results/.
  */
 import fs from "node:fs";
@@ -20,8 +24,27 @@ import { Evaluator, FULL_MIN, HOUR_MIN, SYN_TEST_SEEDS, SYN_TRAIN_SEEDS, poolSpe
 import { mean, type Score } from "./metrics";
 import { SearchSpace, cmaes, randomSearch } from "./optimize";
 import { SimPool } from "./pool";
+import { PRODUCTION_TERMS } from "./program";
 import { DATA_DIR, loadIndex, type PoolEntry, type PoolFile, type ScenarioSpec } from "./scenarios";
 import { mulberry32, type Policy, type RunResult, type SimOptions } from "./sim";
+import {
+  RULE_DOC,
+  RULES,
+  fmt,
+  fmtTerms,
+  measure,
+  parseTerms,
+  pareto,
+  pick,
+  roundTerms,
+  searchTerms,
+  termsPoint,
+  termsTable,
+  vsReserve,
+  worst,
+  type Measured,
+  type TermsPoint,
+} from "./terms";
 
 /** Policy features that can be switched off (for ablation, and frozen out of training with `--freeze`). */
 const FEATURES: Record<string, { off: Partial<StrategyParams>; keys: ParamKey[] }> = {
@@ -116,7 +139,7 @@ async function report(ev: Evaluator, label: string, specs: ScenarioSpec[], param
 
 async function tune(ev: Evaluator, specs: ScenarioSpec[], start: StrategyParams, label: string, frozen: string[]): Promise<StrategyParams> {
   const fitness = ev.fitness(specs);
-  const space = new SearchSpace(tunableKeys(frozen), without(start, frozen));
+  const space = new SearchSpace(PARAM_SPACE, tunableKeys(frozen), without(start, frozen));
   const t0 = Date.now();
   const seeds = [start, DEFAULT_PARAMS, V1_LIKE].map((p) => without(p, frozen));
   const random = await randomSearch(space, intFlag("random", 200), seeds, fitness, mulberry32(7));
@@ -148,10 +171,126 @@ function withCandles(entries: PoolEntry[], fromMin: number, toMin: number, min: 
   });
 }
 
+/** Walk-forward specs: every pool's hours 0–24 (+ synthetic TRAIN) to tune on, hours 24–72 to test on. */
+function walkForward(entries: PoolEntry[]): { wfTrain: ScenarioSpec[]; wfTest: ScenarioSpec[] } {
+  const first = withCandles(entries, 0, 24 * HOUR_MIN, 60);
+  const later = withCandles(entries, 24 * HOUR_MIN, FULL_MIN, 60);
+  say(`walk-forward: tune on hours 0–24 of ${first.length} pools (+ synthetic TRAIN), test on hours 24–72 of ${later.length} pools, each segment replayed as its own launch`);
+  return {
+    wfTrain: [...poolSpecs(first, 0, 24 * HOUR_MIN), ...syntheticSpecs(SYN_TRAIN_SEEDS)],
+    wfTest: poolSpecs(later, 24 * HOUR_MIN, FULL_MIN),
+  };
+}
+
+function termsFlag(): TermsPoint {
+  const base = termsPoint(PRODUCTION_TERMS);
+  const v = flag("terms");
+  if (v === undefined) return base;
+  return parseTerms(base, JSON.parse(fs.existsSync(v) ? fs.readFileSync(v, "utf8") : v) as Record<string, unknown>);
+}
+
+/** Wizard default reserve share (apps/web/src/components/create/validate.ts INITIAL_DRAFT): the reserve sweep's reference. */
+const DEFAULT_RESERVE_BPS = 3_000n;
+
+async function termsCommand(ev: Evaluator, entries: PoolEntry[], trainSpecs: ScenarioSpec[], testSpecs: ScenarioSpec[]) {
+  const baseTerms = termsFlag();
+  const budget = intFlag("rug-budget", 10);
+  const [random, gens] = [intFlag("random", 200), intFlag("gens", 25)];
+  say(`\nbaseline: ${fmtTerms(baseTerms)} (bps, per window); policy fixed at DEFAULT_PARAMS; launch reserve drawn from 20–50% as in every other command.`);
+  say(`every statistic is taken at its worst flow model; ΔV is vault value vs no agent under the same terms (VWAP mark); rug budget: rug SOL lost ≤ baseline + ${budget} pp of the starting vault SOL.`);
+  say(`picks, rounded to 25 bps (band, impact), 50 bps (caps) and 5 min (window, EMA) and measured again:\n`);
+  for (const rule of RULES) say(`- **${rule}**: ${RULE_DOC[rule]}`);
+  const { wfTrain, wfTest } = walkForward(entries);
+  const phases = [
+    { name: "split", tuneLabel: "TRAIN", testLabel: "TEST", tune: trainSpecs, test: testSpecs },
+    { name: "walk-forward", tuneLabel: "WALK-FORWARD TRAIN (hours 0–24)", testLabel: "WALK-FORWARD TEST (hours 24–72)", tune: wfTrain, test: wfTest },
+  ];
+  const results: Record<string, { tune: [string, Measured][]; test: [string, Measured][] }> = {};
+  for (const ph of phases) {
+    const base = (await measure(ev, ph.tune, baseTerms)).measured;
+    const trials = await searchTerms(ev, ph.tune, base, { random, gens, label: ph.name });
+    const front = pareto(trials);
+    say(`\n### ${ph.tuneLabel}: Pareto front (worst-model median ΔV ↑, worst-10% ΔV ↑, drawdown cut ↑, rug loss ↓) of ${trials.length} searched points\n`);
+    const frontRows = front.slice(0, 15).map((m, i): [string, Measured] => [`front ${i + 1}${fmtTerms(m.terms) === fmtTerms(baseTerms) ? " (= baseline)" : ""}`, m]);
+    say(termsTable([["baseline", base], ...frontRows], base));
+    const raw = pick(trials, base, budget);
+    const tune: [string, Measured][] = [["baseline", base]];
+    for (const rule of RULES) {
+      const p = raw[rule];
+      if (p) tune.push([rule, (await measure(ev, ph.tune, roundTerms(p.terms))).measured]);
+      else say(`\n${ph.tuneLabel}: no point qualifies as ${rule}`);
+    }
+    const testBase = (await measure(ev, ph.test, baseTerms)).measured;
+    const test: [string, Measured][] = [["baseline", testBase]];
+    for (const [rule, m] of tune.slice(1)) test.push([rule, (await measure(ev, ph.test, m.terms)).measured]);
+    say(`\n### ${ph.tuneLabel}: baseline and picks\n`);
+    say(termsTable(tune, base));
+    say(`\n### ${ph.testLabel} (out of sample)\n`);
+    say(termsTable(test, testBase));
+    results[ph.name] = { tune, test };
+  }
+
+  const passes = (rows: [string, Measured][], rule: string) => {
+    const m = rows.find(([r]) => r === rule)?.[1];
+    if (!m) return false;
+    const [w, b] = [worst(m), worst(rows[0]![1])];
+    return w.dvMedian > b.dvMedian && w.rugLoss <= b.rugLoss + budget;
+  };
+  const winner = RULES.find((rule) => Object.values(results).every((r) => passes(r.tune, rule) && passes(r.test, rule)));
+  say("\n### Value rule (beats the baseline's worst-model median ΔV out of sample within the rug budget)\n");
+  let chosen = baseTerms;
+  if (!winner) {
+    say("No pick beats the baseline's worst-model median ΔV within the rug budget in both TEST and walk-forward TEST: keep the current terms.");
+  } else {
+    chosen = results.split!.tune.find(([r]) => r === winner)![1].terms;
+    say(`**${winner}** (the TRAIN pick; its walk-forward counterpart also beats the baseline out of sample): ${fmtTerms(chosen)}\n`);
+    for (const [name, r] of Object.entries(results)) {
+      const [w, b] = [worst(r.test.find(([x]) => x === winner)![1]), worst(r.test[0]![1])];
+      say(
+        `- ${name} test vs baseline: median ΔV ${fmt(b.dvMedian)} → ${fmt(w.dvMedian)} %, mean ΔV ${fmt(b.dvMean)} → ${fmt(w.dvMean)} %, worst-10% ΔV ${fmt(b.dvTail)} → ${fmt(w.dvTail)} %, ` +
+          `DD cut ${fmt(b.ddCut, 2)} → ${fmt(w.ddCut, 2)} pp, vol× ${fmt(b.volRatio, 3)} → ${fmt(w.volRatio, 3)}, in-band gain ${fmt(b.inBandGain)} → ${fmt(w.inBandGain)} pp, ` +
+          `rug SOL lost ${fmt(b.rugLoss)} → ${fmt(w.rugLoss)} % (worst 10%: ${fmt(b.rugTail)} → ${fmt(w.rugTail)} %)`,
+      );
+    }
+  }
+
+  // Reserve share: the same launches with a fixed reserve instead of the 20–50% draw, one share at a time
+  // (each share replays its own no-agent recordings; the workers keep one share's worth).
+  const reserves = (flag("reserves") ?? "1000,2000,3000,4000,5000,6000").split(",").map((s) => BigInt(s.trim()));
+  const termSets: [string, TermsPoint][] = winner ? [["baseline", baseTerms], [winner, chosen]] : [["baseline", baseTerms]];
+  const splits: [string, ScenarioSpec[]][] = [["TRAIN", trainSpecs], ["TEST", testSpecs]];
+  const ref: Record<string, RunResult[]> = {};
+  for (const [name, terms] of termSets) for (const [s, specs] of splits) ref[`${name}|${s}`] = (await measure(ev, specs, terms, DEFAULT_RESERVE_BPS)).runs;
+  say(`\n### Reserve share (fixed for every launch; value vs the same terms at the wizard default ${Number(DEFAULT_RESERVE_BPS) / 100}%)\n`);
+  say("The bundle stops at its supply cap and leaves the rest of its budget in the vault, so the share only changes launches whose bundle budget is below the cap's cost (\"launches changed\").\n");
+  say("| terms | split | reserve % | launches changed % | ΔV@VWAP % median vs no agent, min | DD cut pp | vol× | rug SOL lost % mean / worst 10% | vault value vs 30% reserve %, median min (per model) |");
+  say("|---|---|---:|---:|---:|---:|---:|---|---|");
+  const reserveRows: Record<string, unknown>[] = [];
+  for (const r of reserves) {
+    for (const [name, terms] of termSets) {
+      for (const [s, specs] of splits) {
+        const { measured, runs } = await measure(ev, specs, terms, r);
+        const w = worst(measured);
+        const refRuns = ref[`${name}|${s}`]!;
+        const vs = vsReserve(runs, refRuns);
+        const changed = (runs.filter((x, i) => x.sol0 !== refRuns[i]!.sol0).length / runs.length) * 100;
+        say(
+          `| ${name} | ${s} | ${Number(r) / 100} | ${fmt(changed, 0)} | ${fmt(w.dvMedian)} | ${fmt(w.ddCut, 2)} | ${fmt(w.volRatio, 3)} | ${fmt(w.rugLoss)} / ${fmt(w.rugTail)} | ` +
+            `${fmt(Math.min(...Object.values(vs)))} (${Object.entries(vs).map(([m, v]) => `${m} ${fmt(v)}`).join(", ")}) |`,
+        );
+        reserveRows.push({ terms: name, split: s, reserveBps: Number(r), changedPct: changed, worst: w, vsDefaultReserve: vs });
+      }
+    }
+  }
+  save("terms", { baseline: baseTerms, rugBudgetPp: budget, winner: winner ?? null, chosen, results, reserve: reserveRows });
+}
+
 async function main(): Promise<void> {
   const cmd = process.argv[2];
-  if (!cmd || !["eval", "train", "walkforward", "ablate", "robust"].includes(cmd)) {
-    throw new Error("usage: backtest <eval|train|walkforward|ablate|robust> [--params <json|file>] [--random n] [--gens n] [--freeze f,…] [--workers n]");
+  if (!cmd || !["eval", "train", "walkforward", "ablate", "robust", "terms"].includes(cmd)) {
+    throw new Error(
+      "usage: backtest <eval|train|walkforward|ablate|robust|terms> [--params <json|file>] [--terms <json|file>] [--random n] [--gens n] [--freeze f,…] [--rug-budget pp] [--reserves bps,…] [--workers n]",
+    );
   }
   const entries = loadIndex();
   const { train, test } = split(entries);
@@ -176,15 +315,13 @@ async function main(): Promise<void> {
       const te = await report(ev, "TEST", testSpecs, best);
       save("train", { params: best, train: tr, test: te });
     } else if (cmd === "walkforward") {
-      const first = withCandles(entries, 0, 24 * HOUR_MIN, 60);
-      const later = withCandles(entries, 24 * HOUR_MIN, FULL_MIN, 60);
-      say(`walk-forward: tune on hours 0–24 of ${first.length} pools (+ synthetic TRAIN), test on hours 24–72 of ${later.length} pools, each segment replayed as its own launch`);
-      const wfTrain = [...poolSpecs(first, 0, 24 * HOUR_MIN), ...syntheticSpecs(SYN_TRAIN_SEEDS)];
-      const wfTest = poolSpecs(later, 24 * HOUR_MIN, FULL_MIN);
+      const { wfTrain, wfTest } = walkForward(entries);
       const best = await tune(ev, wfTrain, params, "walk-forward", frozen);
       const tr = await report(ev, "WALK-FORWARD TRAIN (hours 0–24)", wfTrain, best);
       const te = await report(ev, "WALK-FORWARD TEST (hours 24–72)", wfTest, best);
       save("walkforward", { params: best, train: tr, test: te });
+    } else if (cmd === "terms") {
+      await termsCommand(ev, entries, trainSpecs, testSpecs);
     } else if (cmd === "robust") {
       const variants: [string, Partial<SimOptions> | undefined, number | undefined][] = [
         ["as trained (10 s polls, 0.4–1.2 s landing, 2 min fair-value half-life)", undefined, undefined],

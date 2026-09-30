@@ -42,7 +42,7 @@ export interface Comparison {
 }
 
 /** SOL + tokens (whole) × mark (lamports per base unit) in SOL. */
-const value = (sol: number, tokens: number, mark: number) => sol + (tokens * mark) / 1_000;
+export const value = (sol: number, tokens: number, mark: number) => sol + (tokens * mark) / 1_000;
 
 export function compare(base: RunResult, run: RunResult): Comparison {
   const ratio = (markRun: number, markBase: number) =>
@@ -135,4 +135,9 @@ export function aggregate(runs: Scored[], ref: Record<string, number>): Score {
 
 export function mean(xs: number[]): number {
   return xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+}
+
+export function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length === 0 ? 0 : s.length % 2 ? s[(s.length - 1) / 2]! : (s[s.length / 2 - 1]! + s[s.length / 2]!) / 2;
 }

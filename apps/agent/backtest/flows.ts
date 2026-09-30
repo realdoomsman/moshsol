@@ -1,5 +1,5 @@
 import { publicBuy } from "./program";
-import { T0, type Market, type PublicFlow, type PublicTrade, type Rng } from "./sim";
+import { T0, type Market, type PublicFlow, type Recording, type Rng } from "./sim";
 
 /**
  * Public order flow models.
@@ -183,8 +183,8 @@ export class ReplayFlow implements PublicFlow {
   private due: number;
   private last = -1;
 
-  constructor(private readonly trades: PublicTrade[]) {
-    this.due = trades[0]?.t ?? Infinity;
+  constructor(private readonly trades: Recording) {
+    this.due = trades.t[0] ?? Infinity;
   }
 
   next(): number {
@@ -196,12 +196,12 @@ export class ReplayFlow implements PublicFlow {
   }
 
   trade(m: Market): void {
-    const tr = this.trades[this.i++]!;
-    if (tr.buy) m.buy(tr.amount);
-    else m.sell(tr.amount);
+    const amount = this.trades.amount[this.i++]!;
+    if (amount > 0) m.buy(BigInt(amount));
+    else m.sell(BigInt(-amount));
     this.last = m.t;
-    const next = this.trades[this.i];
-    this.due = next ? Math.max(next.t, this.last + 1) : Infinity;
+    const next = this.trades.t[this.i];
+    this.due = next === undefined ? Infinity : Math.max(next, this.last + 1);
   }
 }
 

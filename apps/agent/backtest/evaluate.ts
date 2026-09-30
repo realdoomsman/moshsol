@@ -1,5 +1,5 @@
 import type { StrategyParams } from "../src/strategy";
-import { aggregate, compare, mean, modelScores, runObjective, type Comparison, type Score } from "./metrics";
+import { aggregate, compare, mean, median, modelScores, runObjective, type Comparison, type Score } from "./metrics";
 import type { SimPool } from "./pool";
 import { hashSeed, type Policy, type RunResult, type SimOptions } from "./sim";
 import { runKey, type PoolEntry, type ScenarioSpec } from "./scenarios";
@@ -65,6 +65,12 @@ export class Evaluator {
     return runs ?? (policy.kind === "v1" ? v1 : specs.map((s) => this.base(s)));
   }
 
+  /** Runs `policy` on every spec and caches only the no-agent baseline (the terms search has no v1 reference). */
+  async againstNone(specs: ScenarioSpec[], policy: Policy): Promise<RunResult[]> {
+    const [, runs] = await Promise.all([this.cached("none", specs), Promise.all(specs.map((s) => this.pool.run(s, policy, this.sim)))]);
+    return runs;
+  }
+
   base(spec: ScenarioSpec): RunResult {
     return this.cache.none.get(runKey(spec))!;
   }
@@ -94,10 +100,6 @@ export class Evaluator {
 }
 
 const f = (v: number, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : "–");
-const median = (xs: number[]) => {
-  const s = [...xs].sort((a, b) => a - b);
-  return s.length === 0 ? 0 : s.length % 2 ? s[(s.length - 1) / 2]! : (s[s.length / 2 - 1]! + s[s.length / 2]!) / 2;
-};
 
 /** Run indices grouped by flow model and outcome tag, each model followed by its "all" group. */
 function groups(specs: ScenarioSpec[], runs: RunResult[]): { model: string; label: string; idx: number[] }[] {

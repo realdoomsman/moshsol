@@ -102,6 +102,7 @@ pnpm --filter @holdfast/agent backtest eval      # no agent / v1 / tuned (defaul
 pnpm --filter @holdfast/agent backtest walkforward   # tune on each pool's first 24 h, test on hours 24–72
 pnpm --filter @holdfast/agent backtest ablate    # tune on a FIT part of TRAIN, switch features off on VALIDATION
 pnpm --filter @holdfast/agent backtest robust    # TEST under other poll/latency/fair-value assumptions
+pnpm --filter @holdfast/agent backtest terms     # launch terms (policy fixed): Pareto view on TRAIN + walk-forward, reserve sweep
 pnpm --filter @holdfast/agent test               # property + regression tests
 ```
 
@@ -147,6 +148,50 @@ memecoin flows. Limitations: candles don't show intra-minute order flow, so trad
 is optimistic for any agent; fair-value half-life, 12 public trades per minute and the start multiple are
 assumptions (`robust` varies the timing ones); the vault is marked at its own prices, which the exogenous
 model lets the agent move.
+
+**Launch terms** (`backtest terms`, ~15 min on 26 workers). The shipped policy is fixed and the six agent terms
+are searched inside the program's hard limits (band 50–5000 bps, impact and window caps from 10 bps, window
+5 min–24 h, EMA 5 min–7 d): random search + CMA-ES on TRAIN (all 72 h) and, separately, on walk-forward TRAIN
+(hours 0–24), each candidate against the no-agent run under the same terms, scored per flow model like the
+policy objective relative to the current terms and taking the **minimum** over models. Every statistic below is
+at its worst flow model; rug SOL lost = vault SOL spent net of sells on `rug` pools, % of the starting vault
+SOL; picks are rounded to admin-settable values and re-measured. Excerpt (full tables with 15 Pareto points
+per search in `results/terms.md`):
+
+| split | point | band / impact bps | buy / sell bps per window | window / EMA | ΔV@VWAP median % (mean) | worst-10% ΔV % | DD cut pp | vol× | rug SOL lost % (worst 10%) |
+|---|---|---|---|---|---:|---:|---:|---:|---|
+| TRAIN | **current** | 200 / 300 | 1000 / 500 | 1 h / 30 min | 14.9 (13.5) | −57.0 | +0.24 | 0.997 | 33.0 (94.1) |
+| TRAIN | balanced | 375 / 25 | 250 / 1500 | 10 min / 5 min | 35.1 (55.9) | −89.0 | −1.35 | 1.057 | 0.0 (0.0) |
+| TRAIN | conservative | 250 / 25 | 200 / 1300 | 10 min / 5 min | 29.4 (40.9) | −92.1 | −0.43 | 1.050 | 0.0 (0.0) |
+| TRAIN | supportive | 225 / 25 | 450 / 1900 | 15 min / 10 min | 17.1 (54.3) | −91.9 | −0.14 | 1.032 | 21.6 (87.2) |
+| TEST | **current** | 200 / 300 | 1000 / 500 | 1 h / 30 min | 15.0 (14.1) | −47.5 | −0.46 | 0.999 | 37.8 (94.8) |
+| TEST | balanced | 375 / 25 | 250 / 1500 | 10 min / 5 min | 43.9 (48.0) | −72.2 | −0.57 | 1.038 | 0.0 (0.0) |
+| TEST | conservative | 250 / 25 | 200 / 1300 | 10 min / 5 min | 42.7 (41.3) | −76.4 | −2.75 | 1.054 | 0.0 (0.0) |
+| TEST | supportive | 225 / 25 | 450 / 1900 | 15 min / 10 min | 47.6 (47.6) | −75.6 | −3.15 | 1.034 | 17.8 (74.9) |
+| WF TEST (24–72 h) | **current** | 200 / 300 | 1000 / 500 | 1 h / 30 min | 9.8 (11.4) | −21.2 | +1.14 | 0.969 | 20.6 (78.9) |
+| WF TEST | balanced (WF pick) | 50 / 50 | 400 / 250 | 10 min / 10 min | 16.9 (17.2) | −34.6 | +2.55 | 0.968 | 34.5 (97.6) |
+| WF TEST | conservative (WF pick) | 100 / 25 | 150 / 200 | 5 min / 35 min | 20.3 (19.8) | −42.3 | +2.17 | 0.985 | 22.8 (84.1) |
+| WF TEST | supportive (WF pick) | 75 / 25 | 250 / 300 | 5 min / 10 min | 24.8 (20.8) | −46.6 | +2.81 | 0.977 | 29.7 (95.8) |
+
+The frontier is a trade, not a free lunch: every point that raises median vault value does it with tiny
+impact limits, a short EMA and large sell caps, i.e. by selling small slices into every rally and rarely
+buying. That wins on the median memecoin (most fade) and avoids rug losses, but doubles the worst-10% value
+loss (runners sold early), deepens drawdowns on TEST and adds volatility; no searched point improves support
+on both TEST and walk-forward without losing far more reserve SOL on rugs. The "conservative" point passes the
+command's value rule (beats the current median ΔV out of sample in TEST and walk-forward TEST with rug SOL loss
+≤ current + 10 pp, robust to 4 s polls, 1.5–3 s landing and 30 s / 10 min fair-value half-lives), **but the
+production terms stay as they are** (`scripts/src/setup.ts`, `PRODUCTION_TERMS`): the vault is locked forever
+and never pays out, so its mark-to-market value isn't the goal; its job is counter-cyclical support, and a vault
+selling 13% of its tokens per 10 minutes into rallies (vol 1.00 → 1.05, drawdown cut −0.46 → −2.75 pp on TEST)
+would look to holders like the vault dumping into their pump. The wizard's default 30% reserve also stays: the
+bundle stops at its supply cap and leaves the rest of its budget in the vault, so the share changes only
+22–47% of the simulated launches (5–50 SOL raises). With the current terms, fixing it anywhere from 10% to 60%
+left the median vault value vs the 30% default at 0.0% on both history models (synthetic TRAIN: +6% at 10%, −17%
+at 60%; synthetic TEST: 0.0%) and the drawdown cut within ±0.2 pp except TRAIN at 60% (−0.68), while rug SOL lost rose with the share
+(TRAIN 28.5% → 39.7%): no case for a different default. Limitations on top of the ones above: the
+high-frequency points are the ones most exposed to the constructed intra-minute wick path; rug exposure is
+measured on 28 rug pools only (8 in TEST), and "rug SOL lost" counts net SOL out of the vault, not the tokens'
+later value.
 
 ## Run it locally
 
