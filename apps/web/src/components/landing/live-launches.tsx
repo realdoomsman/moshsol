@@ -2,7 +2,7 @@
 
 import { lamportsToSol } from "@holdfast/sdk";
 import Link from "next/link";
-import { fmtSolValue } from "@/lib/format";
+import { fmtSolValue, mcapTicker } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { launchHref } from "@/lib/launch";
 import { useLaunches } from "@/lib/queries";
@@ -108,7 +108,7 @@ function Tile({ launch: l }: { launch: LaunchSummary }) {
         </div>
       ) : (
         <p className="mt-4 flex flex-wrap items-baseline gap-x-2">
-          <NumberTicker value={l.marketCapSol} format={(v) => `${fmtSolValue(v)} SOL`} className="num-l whitespace-nowrap text-ink" />
+          <NumberTicker {...mcapTicker(l)} className="num-l whitespace-nowrap text-ink" />
           {l.change24h === null ? null : (
             <span className={cn("small num whitespace-nowrap", up ? "text-up" : "text-down")}>
               {up ? "▲" : "▼"} {Math.abs(l.change24h).toFixed(Math.abs(l.change24h) >= 100 ? 0 : 1)}% 24h

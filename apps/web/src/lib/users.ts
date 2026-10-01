@@ -48,6 +48,7 @@ export interface UserLaunch {
   backerCount: number;
   priceSol: number;
   marketCapSol: number;
+  marketCapUsd: number | null;
   volume24hSol: number;
   creatorFeesEarnedSol: number;
 }
@@ -144,6 +145,7 @@ export interface LaunchEntry {
   traders: number;
   priceSol: number;
   marketCapSol: number;
+  marketCapUsd: number | null;
   mcapChangePct: number | null;
   holders: number;
 }

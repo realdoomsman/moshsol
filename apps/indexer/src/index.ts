@@ -5,6 +5,7 @@ import { config } from "./config";
 import { Store } from "./db";
 import { Holders } from "./holders";
 import { Hub } from "./hub";
+import { SolPrice } from "./price";
 import { registerRpcProxy } from "./rpc-proxy";
 import { createServer, registerApi } from "./server";
 import { ChainSync } from "./sync";
@@ -26,7 +27,8 @@ const app = await createServer({
   uploadLimitPerMin: config.uploadLimitPerMin,
   trustProxy: config.trustProxy,
 });
-const sync = new ChainSync(store, client, hub, holders, app.log.child({ module: "sync" }), {
+const price = new SolPrice(store, app.log.child({ module: "price" }), { refreshMs: config.priceRefreshMs });
+const sync = new ChainSync(store, client, hub, holders, price, app.log.child({ module: "sync" }), {
   pollMs: config.pollMs,
   fullRefreshMs: config.fullRefreshMs,
   chainCheckMs: config.chainCheckMs,
@@ -35,7 +37,7 @@ const sync = new ChainSync(store, client, hub, holders, app.log.child({ module: 
   ...files,
 });
 const arweave = config.arweave ? new ArweaveStore(config.arweave, store, app.log.child({ module: "arweave" })) : null;
-registerApi(app, { store, client, sync, hub, holders }, {
+registerApi(app, { store, client, sync, hub, holders, price }, {
   ...files,
   adminToken: config.adminToken,
   commentLimitPerMin: config.commentLimitPerMin,
@@ -54,6 +56,7 @@ async function shutdown(signal: string): Promise<void> {
     process.exit(1);
   }, SHUTDOWN_TIMEOUT_MS).unref();
   await sync.stop();
+  price.stop();
   hub.close();
   await app.close();
   store.close();
@@ -84,4 +87,5 @@ app.log.info(
   },
   "indexer listening",
 );
+price.start();
 sync.start();

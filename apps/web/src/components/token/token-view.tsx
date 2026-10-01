@@ -10,6 +10,7 @@ import { useLaunch } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { RefundGlyph } from "../brand/glyphs";
 import { ClampLoader } from "../brand/clamp-lock-animation";
+import { NewHere } from "../onboarding/new-here";
 import { Button, ButtonAnchor, ButtonLink } from "../ui/button";
 import { cn } from "../ui/cn";
 import { Sheet } from "../ui/dialog";
@@ -378,6 +379,7 @@ export function TokenView({ id }: { id: string }) {
   return (
     <div className="grid gap-6 max-lg:pb-16">
       <TokenHeader launch={data} phase={phase} now={now} />
+      <NewHere />
       {phase === "live" || phase === "woundDown" ? (
         <LiveLayout key={launchId(data)} launch={data} justLaunched={firstStatus === "raising"} />
       ) : (

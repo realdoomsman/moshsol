@@ -21,6 +21,7 @@ import type { HolderSet, HolderTarget, Holders } from "./holders";
 import type { Hub } from "./hub";
 import { LogsStream } from "./logs-stream";
 import { UnfetchableUriError, loadMetadata } from "./metadata";
+import type { SolPrice } from "./price";
 import { summaryOf } from "./summaries";
 import type { ActivityEvent } from "./types";
 import { loadVenueStates, type VenueTarget } from "./venue";
@@ -146,6 +147,7 @@ export class ChainSync {
     private readonly client: MoshClient,
     private readonly hub: Hub,
     private readonly holders: Holders,
+    private readonly price: SolPrice,
     private readonly log: FastifyBaseLogger,
     private readonly opts: SyncOptions,
   ) {
@@ -746,7 +748,7 @@ export class ChainSync {
   }
 
   broadcastLaunch(address: string): void {
-    const launch = summaryOf(this.store, this.store.launch(address));
+    const launch = summaryOf(this.store, this.price, this.store.launch(address));
     if (launch) this.hub.broadcast({ type: "launch", launch });
   }
 

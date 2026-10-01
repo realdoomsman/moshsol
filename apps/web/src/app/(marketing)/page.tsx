@@ -1,14 +1,14 @@
 import Link from "next/link";
-import { pctFromBps } from "@/components/band/model";
 import { prefetchHero } from "@/components/band/prefetch-hero";
 import { AgentLive } from "@/components/landing/agent-live";
 import { loadChainFacts } from "@/components/landing/chain-facts";
 import { Creators } from "@/components/landing/creators";
 import { FaqList, faqItems } from "@/components/landing/faq";
-import { FeeSplit } from "@/components/landing/fee-split";
 import { FinalCta } from "@/components/landing/final-cta";
 import { Hero } from "@/components/landing/hero";
 import { HowSteps } from "@/components/landing/how-steps";
+import { HowStrip } from "@/components/landing/how-strip";
+import { MoneyTrio } from "@/components/landing/money-trio";
 import { InstructionList } from "@/components/landing/instruction-list";
 import { instructionRows } from "@/components/landing/instructions";
 import { launchSteps } from "@/components/landing/launch-steps";
@@ -21,7 +21,7 @@ import { SimulatorPanel } from "@/components/landing/simulator-panel";
 import { Hydrate, serverQueryClient } from "@/lib/prefetch";
 import { platformQuery } from "@/lib/query-options";
 
-/** Landing (§4.2): hero with the live Band, launches row, rules, how it works, simulator, proof, fees, creators, agent, FAQ, CTA. */
+/** Landing (§4.2): hero with the live Band, three-step strip, launches row, rules, how it works, simulator, proof, splits, creators, agent, FAQ, CTA. */
 export default async function LandingPage() {
   const client = serverQueryClient();
   const { seed } = await prefetchHero(client);
@@ -37,7 +37,8 @@ export default async function LandingPage() {
           aria-hidden
           className="pointer-events-none absolute inset-y-0 left-1/2 hidden w-full max-w-[1264px] -translate-x-1/2 border-x border-line xl:block"
         />
-        <Hero backerFeeShareBps={p?.backerFeeShareBps ?? null} />
+        <Hero params={p} />
+        <HowStrip params={p} />
 
         <Section label="On Holdfast now" frameClassName="pt-12 md:pb-24 md:pt-16">
           <Reveal>
@@ -99,17 +100,15 @@ export default async function LandingPage() {
 
         <Section id="fees">
           <Reveal>
-            <SectionHeader title="Where the fee goes">
-              {p ? (
-                <p className="body-l text-ink-2">
-                  {pctFromBps(p.backerFeeShareBps)} of every trading fee goes to the backers who funded the first buy, pro-rata to their
-                  deposit, for the life of the launch — and so does 100% of the vault agent&rsquo;s realized profit.
-                </p>
-              ) : null}
+            <SectionHeader title="Where the money goes">
+              <p className="body-l text-ink-2">
+                Every launch freezes its split at creation. Creators take no cut of fees; backers take most of the vault agent&rsquo;s
+                profit; the rest buys and burns the Holdfast token.
+              </p>
             </SectionHeader>
           </Reveal>
           <div className="mt-12">
-            <FeeSplit />
+            <MoneyTrio params={p} />
           </div>
         </Section>
 

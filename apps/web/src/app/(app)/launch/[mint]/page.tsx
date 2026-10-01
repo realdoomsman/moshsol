@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { CHART_TRADES, HOLDERS_LIMIT } from "@/components/token/limits";
 import { TokenView } from "@/components/token/token-view";
-import { fmtSolValue } from "@/lib/format";
+import { fmtMcap, fmtSolValue } from "@/lib/format";
 import { phaseOf } from "@/lib/launch";
 import { Hydrate, prefetch, serverQueryClient } from "@/lib/prefetch";
 import {
@@ -44,7 +44,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
     : `${l.terms.backerFeeShareBps / 100}% of every trading fee and 100% of the vault agent's profit`;
   const description =
     l.status === "live"
-      ? `$${l.symbol}: ${fmtSolValue(l.marketCapSol)} SOL market cap at ${fmtPrice(l.priceSol)} SOL${pump ? " on pump.fun" : ""}. The vault holds ${fmtSolValue(lamportsToSol(l.vaultSol))} SOL, traded only by a rate-limited agent; backers get ${backerEarn}.`
+      ? `$${l.symbol}: ${fmtMcap(l)} market cap${l.marketCapUsd != null ? ` (${fmtSolValue(l.marketCapSol)} SOL)` : ""} at ${fmtPrice(l.priceSol)} SOL${pump ? " on pump.fun" : ""}. The vault holds ${fmtSolValue(lamportsToSol(l.vaultSol))} SOL, traded only by a rate-limited agent; backers get ${backerEarn}.`
       : l.status === "raising"
         ? `Raising ${fmtSolValue(lamportsToSol(l.raised))} of ${fmtSolValue(lamportsToSol(l.raiseMax))} SOL${pump ? " for a pump.fun token" : ""}. Backers make the first buy and earn ${backerEarn}.`
         : l.status === "woundDown"

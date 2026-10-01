@@ -1,5 +1,6 @@
 import { lamportsToSol, type LaunchJson } from "@holdfast/sdk";
 import type { LaunchDbRow, PumpEventAggDbRow, Store, TradeAggDbRow, VaultEventAggDbRow } from "./db";
+import type { SolPrice, SolUsd } from "./price";
 import type { LaunchSummary } from "./types";
 
 function toSummary(
@@ -8,6 +9,7 @@ function toSummary(
   agg: TradeAggDbRow | undefined,
   vault: VaultEventAggDbRow | undefined,
   pump: PumpEventAggDbRow | undefined,
+  solUsd: SolUsd | null,
   now: number,
 ): LaunchSummary {
   const snap = JSON.parse(row.snapshot!) as LaunchJson;
@@ -17,8 +19,11 @@ function toSummary(
     const ref = store.priceAt(row.address, now - 86_400) ?? row.launch_price ?? store.firstTradePrice(row.address);
     if (ref !== null && ref > 0) change24h = ((snap.priceSol - ref) / ref) * 100;
   }
+  const volume24hSol = agg?.v24 ?? 0;
   return {
     ...snap,
+    marketCapUsd: solUsd ? snap.marketCapSol * solUsd.usd : null,
+    priceUsd: solUsd ? snap.priceSol * solUsd.usd : null,
     name: row.meta_name ?? row.onchain_name,
     symbol: row.meta_symbol ?? row.onchain_symbol,
     uri: row.uri,
@@ -29,7 +34,8 @@ function toSummary(
     website: row.website,
     whitelist: row.whitelist ? (JSON.parse(row.whitelist) as string[]) : null,
     change24h,
-    volume24hSol: agg?.v24 ?? 0,
+    volume24hSol,
+    volume24hUsd: solUsd ? volume24hSol * solUsd.usd : null,
     volume1hSol: agg?.v1 ?? 0,
     trades1h: agg?.t1 ?? 0,
     buyers24h: agg?.buyers24 ?? 0,
@@ -64,7 +70,7 @@ function toSummary(
   };
 }
 
-export function summaryOf(store: Store, row: LaunchDbRow | undefined): LaunchSummary | null {
+export function summaryOf(store: Store, price: SolPrice, row: LaunchDbRow | undefined): LaunchSummary | null {
   if (!row?.snapshot) return null;
   const now = Math.floor(Date.now() / 1000);
   return toSummary(
@@ -73,24 +79,27 @@ export function summaryOf(store: Store, row: LaunchDbRow | undefined): LaunchSum
     store.tradeAggregate(row.address, now),
     store.vaultEventAggregate(row.address),
     store.pumpEventAggregate(row.address),
+    price.current,
     now,
   );
 }
 
 /** Every launch with a snapshot, newest first. */
-export function allSummaries(store: Store): LaunchSummary[] {
+export function allSummaries(store: Store, price: SolPrice): LaunchSummary[] {
   const now = Math.floor(Date.now() / 1000);
   const aggs = store.tradeAggregates(now);
   const vault = store.vaultEventAggregates();
   const pump = store.pumpEventAggregates();
+  const solUsd = price.current;
   return store
     .launches()
-    .map((row) => toSummary(store, row, aggs.get(row.address), vault.get(row.address), pump.get(row.address), now));
+    .map((row) => toSummary(store, row, aggs.get(row.address), vault.get(row.address), pump.get(row.address), solUsd, now));
 }
 
 /** Summaries for a subset of launch rows (rows without a snapshot are skipped). */
-export function summariesOf(store: Store, rows: LaunchDbRow[]): LaunchSummary[] {
+export function summariesOf(store: Store, price: SolPrice, rows: LaunchDbRow[]): LaunchSummary[] {
   const now = Math.floor(Date.now() / 1000);
+  const solUsd = price.current;
   return rows.flatMap((row) =>
     row.snapshot
       ? [
@@ -100,6 +109,7 @@ export function summariesOf(store: Store, rows: LaunchDbRow[]): LaunchSummary[] 
             store.tradeAggregate(row.address, now),
             store.vaultEventAggregate(row.address),
             store.pumpEventAggregate(row.address),
+            solUsd,
             now,
           ),
         ]

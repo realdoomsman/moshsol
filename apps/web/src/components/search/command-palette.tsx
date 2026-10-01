@@ -17,7 +17,7 @@ import {
   type ReactNode,
 } from "react";
 import { api } from "@/lib/api";
-import { fmtSolValue } from "@/lib/format";
+import { fmtMcap } from "@/lib/format";
 import { launchHref } from "@/lib/launch";
 import { useDebounced } from "@/lib/hooks";
 import { searchQuery } from "@/lib/query-options";
@@ -255,7 +255,7 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: b
                     <span className="ui text-ink">{item.launch.name}</span>{" "}
                     <span className="ui text-ink-3">${item.launch.symbol}</span>
                   </span>
-                  <span className="small num hidden text-ink-2 sm:inline">{fmtSolValue(item.launch.marketCapSol)} SOL</span>
+                  <span className="small num hidden text-ink-2 sm:inline">{fmtMcap(item.launch)}</span>
                   <StatusChip status={item.launch.status} />
                 </>,
               ),

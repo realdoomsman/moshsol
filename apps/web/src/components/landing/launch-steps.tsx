@@ -1,4 +1,5 @@
 import { CLUSTER_NAME } from "@/lib/env";
+import { pumpSplit } from "@/lib/pump-terms";
 import type { PlatformInfo } from "@/lib/types";
 import { pctFromBps } from "../band/model";
 import { RuleTooltip } from "../ui/tooltip";
@@ -57,17 +58,17 @@ export const DEMO = {
 
 /** The mechanism in four beats (§4.2 §4), rule lines rendered from `/api/platform` params. */
 export function launchSteps(p: Params): HowStep[] {
+  const s = pumpSplit(p);
   return [
     {
       title: "Back the raise",
-      description: "Backers pool SOL before trading opens. Miss the minimum and everyone is refunded in full.",
+      description: "Backers pool SOL before the token exists. Miss the minimum and everyone is refunded in full.",
       rule: "Refund: 100% if min not met or creator cancels",
       frame: DEMO.backARaise,
     },
     {
       title: "The bundle buys first",
-      description:
-        "At launch, the pool buys first, before any public trade can exist, and the tokens go into the vault. Only the vault agent trades them; the platform admin can withdraw, and every withdrawal is public.",
+      description: `At launch the token is created on pump.fun and the pool, minus the ${s.launchFeePct}% launch fee, makes the first buy, before any public trade can exist. The tokens go into the vault. Only the vault agent trades them; the platform admin can withdraw, and every withdrawal is public.`,
       rule: p ? `Bundle: ≤ ${pctFromBps(p.maxBundleSupplyBps)} of supply` : null,
       frame: DEMO.theLock,
     },
@@ -84,10 +85,8 @@ export function launchSteps(p: Params): HowStep[] {
     },
     {
       title: "Backers earn",
-      description: p
-        ? `${pctFromBps(p.backerFeeShareBps)} of every ${pctFromBps(p.tradeFeeBps)} trading fee and 100% of the vault agent's realized profit go to backers, pro-rata. Claim any time.`
-        : "A fixed share of every trading fee and 100% of the vault agent's realized profit go to backers, pro-rata. Claim any time.",
-      rule: p ? `${pctFromBps(p.backerFeeShareBps)} of fees, 100% of agent profit to backers` : null,
+      description: `${s.backerPct}% of the vault agent's realized profit goes to backers, pro-rata to their deposit; ${s.burnPct}% buys and burns the Holdfast token. pump.fun's creator fee flows ${s.backerPct}% into the vault and ${s.burnPct}% to the same buyback pool. Claim any time.`,
+      rule: `${s.backerPct}% of agent profit to backers, ${s.burnPct}% to buyback and burn`,
       frame: DEMO.claim,
     },
   ];

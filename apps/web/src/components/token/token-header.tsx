@@ -6,9 +6,9 @@ import { Download, Ellipsis, Link2, Share2, Star } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
-import { fmtSolValue } from "@/lib/format";
+import { fmtMcap, fmtSolValue, mcapTicker } from "@/lib/format";
 import { SITE_URL } from "@/lib/env";
-import { launchHref, launchId, type Phase } from "@/lib/launch";
+import { launchHref, launchId, phaseExplainer, type Phase } from "@/lib/launch";
 import type { LaunchSummary } from "@/lib/types";
 import { useWatchlist } from "@/lib/watchlist";
 import { Address } from "../ui/address";
@@ -38,7 +38,7 @@ function shareText(l: LaunchSummary): string {
       ? `${100 - l.terms.burnShareBps / 100}% of the vault agent's profit`
       : `${l.terms.backerFeeShareBps / 100}% of every trading fee and 100% of the vault agent's profit`;
   if (l.status === "live") {
-    return `$${l.symbol} on Holdfast: ${fmtSolValue(l.marketCapSol)} SOL mcap${l.venue === "pump" ? " on pump.fun" : ""}. Backers bought first and earn ${earn}.`;
+    return `$${l.symbol} on Holdfast: ${fmtMcap(l)} mcap${l.venue === "pump" ? " on pump.fun" : ""}. Backers bought first and earn ${earn}.`;
   }
   if (l.status === "raising") {
     return `Backing $${l.symbol} on Holdfast: backers make the first buy${l.venue === "pump" ? " on pump.fun" : ""} and earn ${earn}.`;
@@ -183,6 +183,7 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
             <VenueChip launch={l} />
           </span>
         </div>
+        <p className="small mt-1.5 max-w-[60ch] text-ink-2">{phaseExplainer(phase, l.venue)}</p>
         <div className="small mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-ink-3 max-md:hidden">
           {meta}
           {links.length ? (
@@ -209,7 +210,8 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
         {live ? (
           <div className="text-right">
             <div className="label text-ink-3 max-md:hidden">Market cap</div>
-            <NumberTicker value={l.marketCapSol} format={(v) => `${fmtSolValue(v)} SOL`} roll className="num-xl text-ink" />
+            <NumberTicker {...mcapTicker(l)} roll className="num-xl text-ink" />
+            {l.marketCapUsd != null ? <div className="small num text-ink-3">{fmtSolValue(l.marketCapSol)} SOL</div> : null}
             {change !== null && Number.isFinite(change) ? (
               <div className={cn("small num", change > 0 ? "text-up" : change < 0 ? "text-down" : "text-ink-2")}>
                 {change > 0 ? "▲ +" : change < 0 ? "▼ " : ""}

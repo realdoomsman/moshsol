@@ -11,6 +11,7 @@ import {
 import { PublicKey } from "@solana/web3.js";
 import type { FastifyInstance } from "fastify";
 import { DEFAULT_PUBKEY, type LaunchDbRow, type SnapshotLaunchDbRow, type Store, type TradeDbRow } from "./db";
+import type { SolPrice } from "./price";
 import { parsePubkey, ValidationError } from "./sanitize";
 import { allSummaries, summaryOf } from "./summaries";
 import { activityFromRow, holderTarget, type ChainSync } from "./sync";
@@ -22,6 +23,7 @@ export interface RouteDeps {
   store: Store;
   client: MoshClient;
   sync: ChainSync;
+  price: SolPrice;
 }
 
 export type Query = Record<string, string | undefined>;
@@ -150,7 +152,7 @@ export function requireLaunch(store: Store, idRaw: string): SnapshotLaunchDbRow 
   return row as SnapshotLaunchDbRow;
 }
 
-export function registerRoutes(app: FastifyInstance, { store, client, sync }: RouteDeps): void {
+export function registerRoutes(app: FastifyInstance, { store, client, sync, price }: RouteDeps): void {
   const connection = client.connection;
   const launchRow = (idRaw: string) => requireLaunch(store, idRaw);
 
@@ -211,7 +213,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     const limit = intQuery(q, "limit", 50, 200);
     const offset = intQuery(q, "offset", 0, Number.MAX_SAFE_INTEGER);
     const text = (q.q ?? "").trim().toLowerCase();
-    let list = allSummaries(store);
+    let list = allSummaries(store, price);
     if (status !== "all") list = list.filter((s) => s.status === status);
     if (text) {
       list = list.filter(
@@ -226,7 +228,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     return { launches: list.slice(offset, offset + limit), total: list.length };
   });
 
-  app.get<{ Params: { id: string } }>("/api/launches/:id", async (req) => summaryOf(store, launchRow(req.params.id)));
+  app.get<{ Params: { id: string } }>("/api/launches/:id", async (req) => summaryOf(store, price, launchRow(req.params.id)));
 
   app.get<{ Params: { id: string }; Querystring: Query }>("/api/launches/:id/trades", async (req) => {
     const row = launchRow(req.params.id);
@@ -345,7 +347,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
       connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_2022_PROGRAM_ID }, "confirmed"),
       connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_PROGRAM_ID }, "confirmed"),
     ]);
-    const all = allSummaries(store);
+    const all = allSummaries(store, price);
     const byAddress = new Map(all.map((s) => [s.address, s]));
     const byMint = new Map(all.filter((s) => s.mint !== DEFAULT_PUBKEY).map((s) => [s.mint, s]));
     const now = Math.floor(Date.now() / 1000);
@@ -404,9 +406,12 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
   });
 
   app.get("/api/stats", async () => {
-    const all = allSummaries(store);
+    const all = allSummaries(store, price);
     const sum = (f: (l: LaunchSummary) => number) => all.reduce((acc, l) => acc + f(l), 0);
+    const solUsd = price.current;
     return {
+      solUsd: solUsd?.usd ?? null,
+      solUsdAt: solUsd?.at ?? null,
       totalLaunches: all.length,
       liveLaunches: all.filter((l) => l.status === "live").length,
       raisingLaunches: all.filter((l) => l.status === "raising").length,
@@ -428,7 +433,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
   });
 
   app.get("/api/agents", async () => {
-    const all = allSummaries(store);
+    const all = allSummaries(store, price);
     let spent = 0n;
     let received = 0n;
     for (const l of all) {

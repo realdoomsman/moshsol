@@ -106,4 +106,6 @@ export const config = {
   /** Genesis/cursor verification cadence; also runs after every RPC outage or WS reconnect. */
   chainCheckMs: envInt("CHAIN_CHECK_MS", 30_000),
   holdersTtlMs: envInt("HOLDERS_TTL_MS", 30_000),
+  /** SOL/USD refresh cadence (Jupiter, CoinGecko fallback); the last good price is kept through outages. */
+  priceRefreshMs: envInt("PRICE_REFRESH_MS", 60_000, 1_000),
 } as const;

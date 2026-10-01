@@ -6,7 +6,7 @@ import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey } from "@solana/web3.js";
 import { ListFilter, X } from "lucide-react";
 import { useState } from "react";
-import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
+import { fmtLamports, fmtSolValue, fmtTokens, fmtUsd, solUsdOf } from "@/lib/format";
 import { useDebounced } from "@/lib/hooks";
 import { launchId } from "@/lib/launch";
 import { tradeKey, useTradeFeed, type PagedFeed } from "@/lib/queries";
@@ -161,6 +161,8 @@ export function TradesTab({
   const filtered = filters.who !== "all" || filters.side !== "all" || minSol > 0 || filters.maker !== null;
   const set = (patch: Partial<TradeFilters>) => onFilters({ ...filters, ...patch });
   const pickMaker = (wallet: string) => set({ maker: wallet, who: "all" });
+  // Per-trade mcap at today's SOL rate (pump.fun does the same); SOL while the indexer has no price.
+  const solUsd = solUsdOf(l);
   const cols = 8;
 
   return (
@@ -329,7 +331,7 @@ export function TradesTab({
                     {fmtPrice(t.priceSol)}
                   </TD>
                   <TD align="right" className="text-ink-2 max-md:hidden">
-                    {fmtSolValue(t.priceSol * SUPPLY)}
+                    {solUsd === null ? fmtSolValue(t.priceSol * SUPPLY) : fmtUsd(t.priceSol * SUPPLY * solUsd)}
                   </TD>
                   <TD>
                     <MakerCell t={t} roles={roles} onFilter={pickMaker} />

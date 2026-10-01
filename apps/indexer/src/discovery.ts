@@ -1,6 +1,7 @@
 import { ACC_PRECISION, BPS, lamportsToSol, type LaunchJson } from "@holdfast/sdk";
 import type { FastifyInstance } from "fastify";
 import type { LaunchDbRow, Store } from "./db";
+import type { SolPrice } from "./price";
 import { WINDOW_SECS, WINDOWS, intQuery, oneOf, type Query } from "./routes";
 import { ValidationError } from "./sanitize";
 import { allSummaries } from "./summaries";
@@ -130,9 +131,10 @@ function tradersBoard(store: Store, since: number): Entry[] {
   }));
 }
 
-function launchesBoard(store: Store, window: Window, since: number): Entry[] {
+function launchesBoard(store: Store, price: SolPrice, window: Window, since: number): Entry[] {
   const windowAgg = store.launchWindowAggregates(since);
   const out = [];
+  const solUsd = price.current;
   for (const { row, snap } of launchInfos(store).values()) {
     const agg = windowAgg.get(row.address);
     if (snap.status !== "live" || !agg || agg.volume <= 0) continue;
@@ -152,6 +154,7 @@ function launchesBoard(store: Store, window: Window, since: number): Entry[] {
       traders: agg.traders,
       priceSol: snap.priceSol,
       marketCapSol: snap.marketCapSol,
+      marketCapUsd: solUsd ? snap.marketCapSol * solUsd.usd : null,
       mcapChangePct: ref !== null && ref > 0 ? ((snap.priceSol - ref) / ref) * 100 : null,
       holders: row.holders,
     });
@@ -175,7 +178,7 @@ function rankTrending(list: LaunchSummary[]): LaunchSummary[] {
     );
 }
 
-export function registerDiscoveryRoutes(app: FastifyInstance, { store }: { store: Store }): void {
+export function registerDiscoveryRoutes(app: FastifyInstance, { store, price }: { store: Store; price: SolPrice }): void {
   const boards = new Map<string, { at: number; entries: Entry[] }>();
   let king: { address: string; since: number } | null = null;
 
@@ -200,7 +203,7 @@ export function registerDiscoveryRoutes(app: FastifyInstance, { store }: { store
           entries = tradersBoard(store, since);
           break;
         case "launches":
-          entries = launchesBoard(store, window, since);
+          entries = launchesBoard(store, price, window, since);
           break;
       }
       if (kind !== "launches") {
@@ -232,6 +235,7 @@ export function registerDiscoveryRoutes(app: FastifyInstance, { store }: { store
     // Address prefixes are case-sensitive base58; short ones would match almost anything.
     const addrPrefix = raw.length >= 3 && BASE58_RE.test(raw) ? raw : null;
 
+    const solUsd = price.current;
     const launches = store.searchLaunches(text, addrPrefix, SEARCH_MAX).map((row) => {
       const snap = JSON.parse(row.snapshot) as LaunchJson;
       return {
@@ -244,6 +248,7 @@ export function registerDiscoveryRoutes(app: FastifyInstance, { store }: { store
         status: snap.status,
         priceSol: snap.priceSol,
         marketCapSol: snap.marketCapSol,
+        marketCapUsd: solUsd ? snap.marketCapSol * solUsd.usd : null,
         raised: snap.raised,
         holders: row.holders,
         creatorName: row.creator_name,
@@ -262,7 +267,7 @@ export function registerDiscoveryRoutes(app: FastifyInstance, { store }: { store
   });
 
   app.get("/api/trending", async () => {
-    const ranked = rankTrending(allSummaries(store));
+    const ranked = rankTrending(allSummaries(store, price));
     const top = ranked[0];
     const nowSecs = Math.floor(Date.now() / 1000);
     if (top && top.trades1h > 0) {

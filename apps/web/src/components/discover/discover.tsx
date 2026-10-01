@@ -3,6 +3,7 @@
 import { Check, ListFilter, MoreHorizontal, Star } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useState } from "react";
+import { NewHere } from "@/components/onboarding/new-here";
 import { Button, IconButton } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { Sheet } from "@/components/ui/dialog";
@@ -341,6 +342,7 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
       </header>
 
       <div className="flex flex-col gap-8">
+        <NewHere />
         {launches.data ? <Spotlight launches={all} now={now} /> : null}
         {body}
       </div>

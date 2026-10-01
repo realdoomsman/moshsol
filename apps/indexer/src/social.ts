@@ -6,6 +6,7 @@ import { SIGNATURE_MAX_SKEW_SECS, safeEqual, sha256Hex, verifySignedMessage } fr
 import type { CommentDbRow, LaunchDbRow, Store } from "./db";
 import type { Holders } from "./holders";
 import type { Hub } from "./hub";
+import type { SolPrice } from "./price";
 import { Limiter } from "./ratelimit";
 import { NotFoundError, intQuery, pubkeyParam, requireLaunch, type Query } from "./routes";
 import { HttpError, ValidationError, cleanText, isRecord } from "./sanitize";
@@ -17,6 +18,7 @@ export interface SocialDeps {
   store: Store;
   hub: Hub;
   holders: Holders;
+  price: SolPrice;
   filesDir: string;
   publicUrl: string;
   adminToken: string | null;
@@ -58,7 +60,7 @@ function tooMany(reply: FastifyReply, over: { wait: number }, what: string): Fas
 }
 
 export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): void {
-  const { store, hub, holders } = deps;
+  const { store, hub, holders, price } = deps;
   const ipLimiter = deps.socialIpLimitPerMin > 0 ? new Limiter(deps.socialIpLimitPerMin) : null;
   const commentLimiter = deps.commentLimitPerMin > 0 ? new Limiter(deps.commentLimitPerMin) : null;
   const profileLimiter = new Limiter(PROFILE_LIMIT_PER_MIN);
@@ -290,7 +292,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
     const wallet = pubkeyParam(req.params.wallet, "wallet").toBase58();
     const profile = store.profile(wallet);
 
-    const created = summariesOf(store, store.walletLaunches(wallet));
+    const created = summariesOf(store, price, store.walletLaunches(wallet));
     let raised = 0n;
     let creatorClaimed = 0n;
     let creatorUnclaimed = 0n;
@@ -389,6 +391,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
         backerCount: l.backerCount,
         priceSol: l.priceSol,
         marketCapSol: l.marketCapSol,
+        marketCapUsd: l.marketCapUsd,
         volume24hSol: l.volume24hSol,
         creatorFeesEarnedSol: lamportsToSol(BigInt(l.creatorFeesClaimed) + BigInt(l.creatorFeesUnclaimed)),
       })),

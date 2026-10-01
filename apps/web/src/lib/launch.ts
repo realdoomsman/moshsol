@@ -1,4 +1,4 @@
-import type { LaunchJson } from "@holdfast/sdk";
+import type { LaunchJson, LaunchVenue } from "@holdfast/sdk";
 
 /**
  * What identifies a launch in URLs, API paths and query keys: its address on pump launches (no mint
@@ -57,3 +57,22 @@ export const PHASE_LABEL: Record<Phase, string> = {
   refunding: "Refunding",
   woundDown: "Wound down",
 };
+
+/** One line under the status chip: what a visitor can do on this launch right now. */
+export function phaseExplainer(phase: Phase, venue: LaunchVenue): string {
+  const where = venue === "pump" ? "on pump.fun" : "here, on the Holdfast curve";
+  switch (phase) {
+    case "raising":
+      return "Raising: you can put SOL in now. If the minimum isn't met by the deadline, you get 100% back.";
+    case "ready":
+      return `Minimum met and the raise is closed to new deposits. Anyone can launch it ${venue === "pump" ? "on pump.fun " : ""}now; the backers' SOL then makes the first buy.`;
+    case "failed":
+      return "The raise missed its minimum. Every backer gets 100% of their deposit back from this page.";
+    case "refunding":
+      return "Refunding: this raise was cancelled or missed its minimum. Every backer gets 100% of their deposit back from this page.";
+    case "live":
+      return `Live: buy or sell ${where}. The vault agent trades the backers' bundle; their share of its profit accrues here.`;
+    case "woundDown":
+      return "Wound down: trading is over. Backers claim their share of the vault's SOL from this page.";
+  }
+}

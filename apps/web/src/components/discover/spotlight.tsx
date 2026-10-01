@@ -12,7 +12,7 @@ import { NumberTicker } from "@/components/ui/number-ticker";
 import { ProgressBar } from "@/components/ui/progress";
 import { Sparkline } from "@/components/ui/sparkline";
 import { TokenAvatar } from "@/components/ui/token-avatar";
-import { fmtSolValue } from "@/lib/format";
+import { fmtSolValue, mcapTicker } from "@/lib/format";
 import { launchHref, launchId, phaseOf } from "@/lib/launch";
 import { useFallbackInterval, useLiveEvents } from "@/lib/live";
 import type { LaunchSummary } from "@/lib/types";
@@ -75,7 +75,7 @@ function TrendingPanel({ launch: l, kingSince, now }: { launch: LaunchSummary; k
       <Head
         l={l}
         href={launchHref(l)}
-        value={<NumberTicker value={l.marketCapSol} format={(v) => `${fmtSolValue(v)} SOL`} />}
+        value={<NumberTicker {...mcapTicker(l)} />}
         sub={
           <>
             mcap · <Change value={l.change24h} /> 24h

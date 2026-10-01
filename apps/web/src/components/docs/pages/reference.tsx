@@ -1,7 +1,9 @@
 import { IDL, PROGRAM_ID } from "@holdfast/sdk";
 import Link from "next/link";
 import { CLUSTER, CLUSTER_LABEL, CLUSTER_NAME, INDEXER_URL, IS_TEST_CLUSTER } from "@/lib/env";
+import { pumpSplit } from "@/lib/pump-terms";
 import { pctFromBps } from "../../band/model";
+import { glossaryRule } from "../../glossary";
 import { Lockup } from "../../brand/lockup";
 import { Mark } from "../../brand/mark";
 import { faqItems } from "../../landing/faq";
@@ -37,7 +39,7 @@ export const overview: DocPage = {
   nav: "Overview",
   title: "Holdfast docs",
   description:
-    "Holdfast is the Solana launchpad where backers buy first and share the profit. Backers' SOL buys the first slice of supply, which sits in an on-chain vault traded only by a rate-limited agent — backers get 100% of the agent's realized profit and a share of every trading fee.",
+    "Holdfast is the Solana launchpad where backers buy first and share the profit. Backers' SOL makes a pump.fun token's first buy, which sits in an on-chain vault traded only by a rate-limited agent; backers get most of the agent's realized profit and the rest buys and burns the Holdfast token.",
   sections: ({ p }) => [
     {
       id: "start",
@@ -46,8 +48,8 @@ export const overview: DocPage = {
         <Table
           head={["If you want to…", "Read"]}
           rows={[
-            ["Understand the mechanism", <A key="h" href="/docs/how-it-works">How a launch works</A>],
-            ["Back a raise and earn fees", <A key="b" href="/docs/for-backers">For backers</A>],
+            ["Understand the mechanism in two minutes", <A key="h" href="/docs/how-it-works">How it works (2 min)</A>],
+            ["Back a raise and earn", <A key="b" href="/docs/for-backers">For backers</A>],
             ["Launch a token", <A key="c" href="/docs/for-creators">For creators</A>],
             ["Trade", <A key="t" href="/docs/for-traders">For traders</A>],
             ["Check the claims", <A key="v" href="/docs/verify">Verify on-chain</A>],
@@ -61,13 +63,13 @@ export const overview: DocPage = {
       title: "The numbers",
       body: (
         <Ul>
-          <li>Fixed supply of 1,000,000,000 per launch; mint authority revoked at creation; no freeze authority.</li>
+          <li>Fixed supply of 1,000,000,000 per launch; the bundle buys at most the creator&rsquo;s cap of it.</li>
           {p ? (
             <>
               <li>
-                {pctFromBps(p.tradeFeeBps)} fee per public trade: {pctFromBps(p.backerFeeShareBps)} to backers,{" "}
-                {pctFromBps(p.creatorFeeShareBps)} to the creator, {pctFromBps(10_000 - p.backerFeeShareBps - p.creatorFeeShareBps)} to
-                the platform.
+                {pumpSplit(p).backerPct}% of the vault agent&rsquo;s realized sell profit to backers, {pumpSplit(p).burnPct}% to buy back
+                and burn the Holdfast token; the same split on pump.fun&rsquo;s creator fee (vault / buyback pool). Creators earn 0% of
+                fees; Holdfast earns the {pctFromBps(p.launchFeeBps)} launch fee and the create fee.
               </li>
               <li>
                 Agent band {pctFromBps(p.agentBandBps)} around the EMA; buys ≤ {pctFromBps(p.agentBuyBpsPerWindow)} of vault SOL and sells ≤{" "}
@@ -75,7 +77,7 @@ export const overview: DocPage = {
               </li>
             </>
           ) : null}
-          <li>100% of the vault agent&rsquo;s realized sell profit to backers.</li>
+          <li>100% refund if a raise misses its minimum; the vault&rsquo;s SOL back to backers when a dead launch is wound down.</li>
           <li>
             Vault withdrawals only by the platform admin (<C>admin_withdraw_vault</C>), each one shown on the launch page.
           </li>
@@ -187,7 +189,7 @@ export const api: DocPage = {
           rows={[
             ["GET /api/health", "Sync status, slot, lag"],
             ["GET /api/platform", "Platform account and default params"],
-            ["GET /api/stats", "Launch counts, volume, vault SOL, profit shared, vault withdrawals"],
+            ["GET /api/stats", "SOL/USD price, launch counts, volume, vault SOL, profit shared, vault withdrawals"],
             ["GET /api/launches?status=&sort=&q=&limit=&offset=", "Launch summaries (sort: new, trending, volume, mcap, raised)"],
             ["GET /api/launches/:mint", "One launch: on-chain snapshot + indexer fields"],
             ["GET /api/launches/:mint/trades?before=&limit=&agent=1", "Trades, newest first; agent=1 for vault-agent trades"],
@@ -340,9 +342,9 @@ export const glossary: DocPage = {
         <dl className="border-t border-line">
           {[
             ["Raise", "The pre-launch period where backers deposit SOL toward a min and max."],
-            ["Backer", "A wallet that deposited into a raise; it earns the backers' share of trade fees and of vault-agent profit pro-rata to its deposit."],
-            ["Bundle", "The first buy on the curve, made with the raise at launch before any public trade."],
-            ["Vault", "The program-owned account per launch that holds the bundle tokens and the SOL reserve; the platform admin can withdraw from it."],
+            ["Backer", "A wallet that deposited into a raise; it earns the backers' share of vault-agent profit pro-rata to its deposit."],
+            ["Bundle", glossaryRule("bundle", pumpSplit(p))],
+            ["Vault", glossaryRule("vault", pumpSplit(p))],
             ["Reserve", "The share of the raise kept as SOL in the vault for the agent to buy dips with."],
             ["Curve", "The launch's constant-product market (x · y = k) with virtual SOL reserves; it never migrates."],
             ["EMA", `Exponential moving average of price, updated at every trade${p ? ` over ${Math.round(p.emaPeriodSecs / 60)} minutes` : ""}.`],
@@ -351,9 +353,10 @@ export const glossary: DocPage = {
             ["Window", "The period over which the agent's buy and sell budgets reset."],
             ["Impact", "How far a trade moves the spot price, in percent."],
             ["Terms", "The fee split and agent limits frozen into a launch at creation."],
-            ["Vault agent", "The rate-limited signer allowed to call agent_buy and agent_sell."],
-            ["Profit share", "The vault agent's realized sell profit over average cost, paid 100% to backers."],
-            ["Wind-down", `Ending a quiet launch (${WIND_DOWN_RULE}): its SOL goes to backers and trading stops.`],
+            ["Vault agent", glossaryRule("vaultAgent", pumpSplit(p))],
+            ["Backer earnings", glossaryRule("backerEarnings", pumpSplit(p))],
+            ["Buyback pool", glossaryRule("buybackPool", pumpSplit(p))],
+            ["Wind-down", glossaryRule("windDown", pumpSplit(p))],
           ].map(([t, d]) => (
             <div key={t} className="grid gap-1 border-b border-line py-3 sm:grid-cols-[180px_1fr] sm:gap-4">
               <dt className="ui text-ink">{t}</dt>

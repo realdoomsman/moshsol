@@ -17,7 +17,7 @@ interface TickState {
  * eases back to its colour over 600 ms — never on first render. `roll` also rolls the changed
  * digits (325 ms, Stripe) — for hero/stat numbers only, not table cells. Reduced motion: instant.
  *
- *   <NumberTicker value={mcap} format={(v) => `${fmtSolValue(v)} SOL`} roll className="num-xl" />
+ *   <NumberTicker {...mcapTicker(launch)} roll className="num-xl" />
  */
 export function NumberTicker({
   value,

@@ -12,8 +12,12 @@ export interface LaunchSummary extends LaunchJson {
   telegram: string | null;
   website: string | null;
   whitelist: string[] | null;
+  /** `marketCapSol` / `priceSol` / `volume24hSol` in USD at the indexer's SOL price (`PlatformStats.solUsd`); null until it has one. */
+  marketCapUsd: number | null;
+  priceUsd: number | null;
   change24h: number | null;
   volume24hSol: number;
+  volume24hUsd: number | null;
   volume1hSol: number;
   /** Trades in the last hour (agent trades included). */
   trades1h: number;
@@ -200,6 +204,9 @@ export interface ActivityEvent {
 }
 
 export interface PlatformStats {
+  /** SOL/USD from the indexer's price feed (Jupiter, CoinGecko fallback; last good value kept through outages) and when it was fetched; null before the first fetch. */
+  solUsd: number | null;
+  solUsdAt: number | null;
   totalLaunches: number;
   liveLaunches: number;
   raisingLaunches: number;
@@ -368,6 +375,7 @@ export interface SearchLaunch {
   status: LaunchStatus;
   priceSol: number;
   marketCapSol: number;
+  marketCapUsd: number | null;
   raised: string;
   holders: number;
   creatorName: string | null;

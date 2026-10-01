@@ -12,8 +12,12 @@ export interface LaunchSummary extends LaunchJson {
   telegram: string | null;
   website: string | null;
   whitelist: string[] | null;
+  /** `marketCapSol` / `priceSol` / `volume24hSol` × the SOL/USD price (`/api/stats` → `solUsd`); null until a price was fetched. */
+  marketCapUsd: number | null;
+  priceUsd: number | null;
   change24h: number | null;
   volume24hSol: number;
+  volume24hUsd: number | null;
   /** SOL traded in the last hour (agent trades included). */
   volume1hSol: number;
   /** Trades in the last hour (agent trades included). */

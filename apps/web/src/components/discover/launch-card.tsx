@@ -14,15 +14,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Sparkline } from "@/components/ui/sparkline";
 import { TokenAvatar } from "@/components/ui/token-avatar";
 import { WalletLink } from "@/components/wallet-peek/wallet-peek";
-import { fmtSolValue } from "@/lib/format";
+import { fmtSolValue, mcapTicker } from "@/lib/format";
 import { launchHref, launchId, phaseOf } from "@/lib/launch";
 import { candlesQuery } from "@/lib/query-options";
 import { SPARKLINE_MIN_POINTS } from "@/lib/thresholds";
 import type { LaunchSummary } from "@/lib/types";
 import type { Flash } from "./live";
 import { chipStatus, vaultOf } from "./model";
-
-const fmtSol = (v: number) => `${fmtSolValue(v)} SOL`;
 
 /** 24h price change: ▲/▼ in the direction colour, "—" when there's no reference price. */
 export function Change({ value, className }: { value: number | null | undefined; className?: string }) {
@@ -50,9 +48,9 @@ export function useDaySpark(id: string, enabled: boolean, now: number): number[]
   return values.length >= SPARKLINE_MIN_POINTS ? values : null;
 }
 
-/** "Mcap 31.43 SOL". */
+/** "Mcap $4.2K" (SOL while the indexer has no SOL price). */
 function Mcap({ l, className }: { l: LaunchSummary; className?: string }) {
-  return <NumberTicker value={l.marketCapSol} format={fmtSol} className={className} />;
+  return <NumberTicker {...mcapTicker(l)} className={className} />;
 }
 
 function Byline({ l, now }: { l: LaunchSummary; now: number }) {

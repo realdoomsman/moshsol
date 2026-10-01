@@ -7,7 +7,7 @@ import { StatusChip } from "@/components/ui/chip";
 import { Sparkline } from "@/components/ui/sparkline";
 import { Table, TD, TH, THead, TR } from "@/components/ui/table";
 import { TokenAvatar } from "@/components/ui/token-avatar";
-import { fmtSolValue } from "@/lib/format";
+import { fmtMcap, fmtSolValue } from "@/lib/format";
 import { launchHref, launchId } from "@/lib/launch";
 import type { LaunchSummary } from "@/lib/types";
 import { Change, useDaySpark } from "./launch-card";
@@ -88,7 +88,16 @@ export function LaunchTable({
                 <TD>
                   <StatusChip status={chipStatus(l, now)} />
                 </TD>
-                <TD align="right">{live ? `${fmtSolValue(l.marketCapSol)} SOL` : <span className="text-ink-3">—</span>}</TD>
+                <TD align="right">
+                  {live ? (
+                    <>
+                      {fmtMcap(l)}
+                      {l.marketCapUsd != null ? <span className="text-ink-3"> {fmtSolValue(l.marketCapSol)} SOL</span> : null}
+                    </>
+                  ) : (
+                    <span className="text-ink-3">—</span>
+                  )}
+                </TD>
                 <TD align="right">
                   <Change value={live ? l.change24h : null} />
                 </TD>

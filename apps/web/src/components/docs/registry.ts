@@ -3,10 +3,10 @@ import { agents, fees, theVault, verify } from "./pages/protocol";
 import { api, brand, faq, glossary, overview, program, risks } from "./pages/reference";
 import type { DocPage } from "./types";
 
-/** Docs pages in nav order (§4.11). */
+/** Docs pages in nav order (§4.11): the 2-minute explainer first, then the overview. */
 export const DOCS: DocPage[] = [
-  overview,
   howItWorks,
+  overview,
   forBackers,
   forCreators,
   forTraders,

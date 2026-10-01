@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
-import { DOCS } from "@/components/docs/registry";
+import { overview } from "@/components/docs/pages/reference";
 import { renderDoc } from "@/components/docs/render-doc";
-
-const overview = DOCS[0];
 
 export const metadata: Metadata = { title: "Docs", description: overview.description };
 

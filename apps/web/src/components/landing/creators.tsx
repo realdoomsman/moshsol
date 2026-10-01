@@ -3,6 +3,7 @@
 import { LIMITS, previewBundle, solToLamports } from "@holdfast/sdk";
 import { useState } from "react";
 import { fmtSolValue, fmtTokens } from "@/lib/format";
+import { pumpSplit } from "@/lib/pump-terms";
 import { usePlatform } from "@/lib/queries";
 import { INITIAL_DRAFT } from "../create/validate";
 import { pctFromBps } from "../band/model";
@@ -33,11 +34,11 @@ export function Creators() {
   const [bundle, setBundle] = useState(String(INITIAL_DRAFT.bundlePct));
   const reservePct = INITIAL_DRAFT.reservePct;
 
-  const creatorPct = p ? pctFromBps((p.tradeFeeBps * p.creatorFeeShareBps) / 10_000) : null;
+  const s = pumpSplit(p);
   const facts = [
     "Fixed 1B supply, mint authority revoked",
     "Your backers can’t dump on your community",
-    ...(creatorPct ? [`${creatorPct} of every trade to you, for the life of the launch`] : []),
+    `0% of fees to you: pump.fun’s creator fee goes ${s.backerPct}% into your vault, ${s.burnPct}% to the buyback pool`,
   ];
 
   const lo = lamportsOf(min);

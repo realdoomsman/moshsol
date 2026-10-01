@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { fmtChange, fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
+import { fmtChange, fmtLamports, fmtSolValue, fmtTokens, mcapTicker, pctOf } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { launchHref, launchId } from "@/lib/launch";
 import { useAgentStatus, useCandles, useLaunch, useTrades } from "@/lib/queries";
@@ -112,7 +112,7 @@ function Instrument({ id, initial, chart, nowSec }: { id: string; initial: Launc
           </p>
         </div>
         <div className="shrink-0 text-right">
-          <NumberTicker value={l.marketCapSol} format={(v) => `${fmtSolValue(v)} SOL`} roll className="num-l text-ink" />
+          <NumberTicker {...mcapTicker(l)} roll className="num-l text-ink" />
           <p className="micro num text-ink-3">
             {l.change24h === null ? null : (
               <span className={up ? "text-up" : "text-down"}>{fmtChange(l.change24h)} </span>

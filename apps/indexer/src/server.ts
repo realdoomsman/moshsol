@@ -100,7 +100,7 @@ export function registerApi(
 ): void {
   app.get("/ws", { websocket: true }, (socket) => deps.hub.add(socket));
   registerRoutes(app, deps);
-  registerSocialRoutes(app, { ...opts, store: deps.store, hub: deps.hub, holders: deps.holders });
-  registerDiscoveryRoutes(app, { store: deps.store });
+  registerSocialRoutes(app, { ...opts, store: deps.store, hub: deps.hub, holders: deps.holders, price: deps.price });
+  registerDiscoveryRoutes(app, { store: deps.store, price: deps.price });
   registerUpload(app, opts);
 }

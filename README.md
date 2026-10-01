@@ -583,6 +583,7 @@ Indexer (`apps/indexer`):
 | `LOG_LEVEL` | `info` | `debug` adds poller catch-ups and websocket retry attempts |
 | `POLL_MS`, `FULL_REFRESH_MS` | `4000`, `15000` | Signature poller cadence; full `getProgramAccounts` refresh (launch snapshots, platform, metadata retries, holder counts) |
 | `CHAIN_CHECK_MS`, `HOLDERS_TTL_MS` | `30000`, `30000` | Genesis/cursor verification cadence (also after every RPC outage); holder snapshot cache per launch |
+| `PRICE_REFRESH_MS` | `60000` | SOL/USD refresh (Jupiter `lite-api.jup.ag/price/v3`, CoinGecko fallback; no API key). Served as `solUsd` on `/api/stats` and as the `…Usd` fields of launch summaries; the last good price is kept in memory and SQLite through a feed outage or restart |
 
 Every endpoint, the signed-message scheme for comments/profiles, rate limits and WebSocket messages are documented in
 [`apps/indexer/API.md`](apps/indexer/API.md). `GET /api/health` → `{ ok, slot, lastIndexedSlot, lagSlots, wsConnected,

@@ -19,7 +19,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { TokenAvatar } from "@/components/ui/token-avatar";
 import { fmtJoined } from "@/components/wallet-peek/wallet-peek";
 import { explorerAddress, explorerTx } from "@/lib/explorer";
-import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
+import { fmtLamports, fmtMcap, fmtSolValue, fmtTokens } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { launchHref, launchId, type LaunchRef } from "@/lib/launch";
 import { useFallbackInterval, useLiveEvents } from "@/lib/live";
@@ -220,7 +220,7 @@ function Holdings({ wallet }: { wallet: string }) {
               </TD>
               <TD align="right">{fmtTokens(h.amount)}</TD>
               <TD align="right">{sol(h.valueSol)}</TD>
-              <TD align="right">{sol(h.launch.marketCapSol)}</TD>
+              <TD align="right">{fmtMcap(h.launch)}</TD>
               <TD align="right">
                 <Change value={h.launch.change24h} />
               </TD>

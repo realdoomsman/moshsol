@@ -1,6 +1,6 @@
 import { countdown, fmtPrice, lamportsToSol } from "@holdfast/sdk";
 import { ImageResponse } from "next/og";
-import { fmtSolValue, fmtTokens } from "@/lib/format";
+import { fmtMcap, fmtSolValue, fmtTokens } from "@/lib/format";
 import { phaseOf } from "@/lib/launch";
 import { OG as C, OgLockup } from "@/lib/og-brand";
 import { ogFonts } from "@/lib/og-fonts";
@@ -67,7 +67,7 @@ function LiveFooter({ l }: { l: LaunchSummary }) {
   const change = l.change24h;
   return (
     <div style={{ display: "flex", gap: 72 }}>
-      <Figure label="Market cap" value={`${fmtSolValue(l.marketCapSol)} SOL`} />
+      <Figure label="Market cap" value={fmtMcap(l)} />
       {change !== null && Number.isFinite(change) ? (
         <Figure
           label="24h"

@@ -8,7 +8,8 @@ over HTTP plus one WebSocket (`/ws`). CORS is open (`*`; methods `GET POST PUT D
 - **Addresses** are canonical base58 public keys. A non-canonical/invalid key in a path or query → `400`.
 - **Amounts.** Strings are raw integers: lamports for SOL (`"50000000"` = 0.05 SOL) and token base units
   (6 decimals; supply `1000000000000000`). Numbers whose name ends in `Sol` are SOL as floats
-  (`volume24hSol: 0.0447`). `priceSol` / `emaSol` are SOL per whole token.
+  (`volume24hSol: 0.0447`). `priceSol` / `emaSol` are SOL per whole token. Numbers ending in `Usd` are the same
+  figure × the indexer's SOL/USD price (`GET /api/stats` → `solUsd`), `null` until it fetched one.
 - **Time** is unix seconds.
 - **Errors** are `{ "error": "<human readable message>" }` with the status code:
 
@@ -174,8 +175,10 @@ Between the curve completing and `graduate_pump` recording the pool there is not
   "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g",
   "description": "Live-site test launch.", "twitter": "https://x.com/moshsol", "telegram": null,
   "website": null, "whitelist": null,
+  "marketCapUsd": 3597.8, "priceUsd": 3.5978e-6,
   "change24h": 0.0998,
   "volume24hSol": 0.044708745,
+  "volume24hUsd": 5.3437,
   "volume1hSol": 0,
   "trades1h": 0,
   "buyers24h": 1,
@@ -197,6 +200,7 @@ Between the curve completing and `graduate_pump` recording the pool there is not
 | Indexer field | Meaning |
 |---|---|
 | `name`, `symbol`, `image`, `description`, `twitter`, `telegram`, `website`, `whitelist` | From the metadata JSON at `uri` (on-chain name/symbol until it loads; pump launches carry name/symbol/uri on the launch account, Holdfast launches on the mint) |
+| `marketCapUsd`, `priceUsd`, `volume24hUsd` | `marketCapSol` / `priceSol` / `volume24hSol` × `solUsd` from `GET /api/stats`; `null` until the indexer has a SOL price. Sort and compare on the SOL figures |
 | `change24h` | % price change vs the last trade ≥24 h ago (vs the launch price for younger launches); `null` unless live. On pump launches only agent trades are indexed, so the reference is usually the launch price |
 | `volume24hSol`, `volume1hSol` | SOL traded in the window through this program (agent trades included; public pump.fun trades are not indexed) |
 | `trades1h` | Trades in the last hour (agent trades included) |
@@ -311,18 +315,22 @@ burns (the default pubkey `11111111111111111111111111111111` while unset: pools 
 ### `GET /api/stats`
 
 ```json
-{ "totalLaunches": 4, "liveLaunches": 2, "raisingLaunches": 1, "woundDownLaunches": 0, "pumpLaunches": 2,
+{ "solUsd": 119.53, "solUsdAt": 1790835350,
+  "totalLaunches": 4, "liveLaunches": 2, "raisingLaunches": 1, "woundDownLaunches": 0, "pumpLaunches": 2,
   "totalRaisedSol": 1.08, "totalVolumeSol": 0.817, "volume24hSol": 0.089, "backerFeesAccruedSol": 0.000449,
   "profitSharedSol": 0, "agentTrades": 0, "vaultSol": 0.312, "vaultTokensValueSol": 0.744, "vaultWithdrawnSol": 0,
   "buybackPoolSol": 0.05, "burnedSol": 0.12, "creatorFeesCollectedSol": 0.68 }
 ```
 
-`backerFeesAccruedSol` is everything credited to backers (fee share + vault profit share + wind-down payouts);
-`profitSharedSol` is the vault-profit part. `vaultSol` / `vaultTokensValueSol` are what the vaults hold now (tokens at
-spot / venue price); `vaultWithdrawnSol` is the SOL the platform admin has withdrawn from vaults with
-`admin_withdraw_vault`. `pumpLaunches` counts launches with `venue: "pump"`; `buybackPoolSol` (SOL waiting for
-`buyback_burn`), `burnedSol` (SOL already spent on buybacks) and `creatorFeesCollectedSol` (pump.fun / PumpSwap creator
-fees swept in) are sums over the launch snapshots.
+`solUsd` / `solUsdAt` are the canonical SOL/USD price every `…Usd` field is computed with and the unix time it was
+fetched: polled every `PRICE_REFRESH_MS` (60 s) from Jupiter (`lite-api.jup.ag/price/v3`, keyless) with CoinGecko as
+fallback; the last good value is kept in memory and in SQLite through a feed outage or restart, so prices never drop
+to zero, and both are `null` only until the first successful fetch ever. `backerFeesAccruedSol` is everything
+credited to backers (fee share + vault profit share + wind-down payouts); `profitSharedSol` is the vault-profit part.
+`vaultSol` / `vaultTokensValueSol` are what the vaults hold now (tokens at spot / venue price); `vaultWithdrawnSol` is
+the SOL the platform admin has withdrawn from vaults with `admin_withdraw_vault`. `pumpLaunches` counts launches with
+`venue: "pump"`; `buybackPoolSol` (SOL waiting for `buyback_burn`), `burnedSol` (SOL already spent on buybacks) and
+`creatorFeesCollectedSol` (pump.fun / PumpSwap creator fees swept in) are sums over the launch snapshots.
 
 ---
 
@@ -522,11 +530,11 @@ Profile + stats, all from indexed data (no RPC call). Works for any valid wallet
     { "address": "HNCt4NhXq1cD7Yk2jv5sUw9bTq3aG8nR6pL2mZ4eF7vK", "venue": "holdfast", "mint": "A824aq2CUztjDr1oDsCg8ZRWYrJ8jb5yeRdTkj2bcE5n", "name": "Lily Frog", "symbol": "FROG",
       "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g", "status": "raising",
       "createdAt": 1790425994, "raised": "30000000", "raisedSol": 0.03, "raiseMin": "200000000", "raiseMax": "1000000000",
-      "backerCount": 1, "priceSol": 2.9999e-8, "marketCapSol": 29.999, "volume24hSol": 0, "creatorFeesEarnedSol": 0 },
+      "backerCount": 1, "priceSol": 2.9999e-8, "marketCapSol": 29.999, "marketCapUsd": 3585.8, "volume24hSol": 0, "creatorFeesEarnedSol": 0 },
     { "address": "62dtus18U6vSSDB6srjyU5peibfYMQKTHDcATx6Rn3Wg", "venue": "holdfast", "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1", "name": "Moshpit", "symbol": "MOSH",
       "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g", "status": "live",
       "createdAt": 1790412385, "raised": "1000000000", "raisedSol": 1, "raiseMin": "1000000000", "raiseMax": "1000000000",
-      "backerCount": 1, "priceSol": 3.1432e-8, "marketCapSol": 31.432, "volume24hSol": 0.044708593,
+      "backerCount": 1, "priceSol": 3.1432e-8, "marketCapSol": 31.432, "marketCapUsd": 3757.1, "volume24hSol": 0.044708593,
       "creatorFeesEarnedSol": 0.000134571 }
   ],
   "backed": [
@@ -627,7 +635,7 @@ Entry shapes per kind:
 - `backers`: `rank, wallet, name, avatar, feesEarnedSol, depositedSol, launchesBacked`
 - `creators`: `rank, wallet, name, avatar, score, volumeSol, raisedSol, creatorFeesSol` (fees earned in the window; `all` = claimed + unclaimed), `launches`, `liveLaunches`
 - `traders`: `rank, wallet, name, avatar, volumeSol, trades, buys, sells, buyVolumeSol, sellVolumeSol, netSol, launchesTraded, lastTradeAt`
-- `launches`: `rank, address, venue, mint, name, symbol, image, creator, creatorName, volumeSol, trades, traders, priceSol, marketCapSol, mcapChangePct (null if no reference price), holders`
+- `launches`: `rank, address, venue, mint, name, symbol, image, creator, creatorName, volumeSol, trades, traders, priceSol, marketCapSol, marketCapUsd (null without a SOL price), mcapChangePct (null if no reference price), holders`
 
 `400` on an invalid `kind`/`window`/`limit`.
 
@@ -643,7 +651,7 @@ Entry shapes per kind:
 ```json
 { "query": "VOLT",
   "launches": [ { "address": "62dt…", "venue": "holdfast", "mint": "DRoH…", "name": "Volt Runner", "symbol": "VOLT", "image": "https://…", "status": "live",
-    "priceSol": 3.0099e-8, "marketCapSol": 30.099, "raised": "50000000", "holders": 1, "creatorName": null } ],
+    "priceSol": 3.0099e-8, "marketCapSol": 30.099, "marketCapUsd": 3597.8, "raised": "50000000", "holders": 1, "creatorName": null } ],
   "users": [ { "wallet": "FwYL…", "name": "holdfast_dev", "avatar": null } ] }
 ```
 
