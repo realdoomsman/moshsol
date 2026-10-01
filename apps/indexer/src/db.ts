@@ -143,6 +143,8 @@ export type VaultEventAggDbRow = {
   wound_down_sol: string | null;
   wound_down_tokens: string | null;
   wound_down_sig: string | null;
+  payouts: number;
+  last_payout_ts: number | null;
 };
 
 /** Per-launch pump.fun crank history from events (`collect_pump_fees`, `buyback_burn`, `graduate_pump`). */
@@ -467,8 +469,10 @@ const VAULT_EVENT_AGG = `
     MAX(CASE WHEN type = 'wound_down' THEN timestamp END) AS wound_down_ts,
     MAX(CASE WHEN type = 'wound_down' THEN sol_amount END) AS wound_down_sol,
     MAX(CASE WHEN type = 'wound_down' THEN token_amount END) AS wound_down_tokens,
-    MAX(CASE WHEN type = 'wound_down' THEN signature END) AS wound_down_sig
-  FROM events WHERE type IN ('profit_shared', 'vault_withdrawn', 'wound_down')`;
+    MAX(CASE WHEN type = 'wound_down' THEN signature END) AS wound_down_sig,
+    COUNT(CASE WHEN type = 'backers_paid' THEN 1 END) AS payouts,
+    MAX(CASE WHEN type = 'backers_paid' THEN timestamp END) AS last_payout_ts
+  FROM events WHERE type IN ('profit_shared', 'vault_withdrawn', 'wound_down', 'backers_paid')`;
 const PUMP_EVENT_AGG = `
   SELECT launch,
     COUNT(CASE WHEN type = 'creator_fees_collected' THEN 1 END) AS fee_collections,
@@ -643,6 +647,10 @@ const SQL = {
       COUNT(DISTINCT CASE WHEN is_agent = 0 THEN trader END) AS traders
     FROM trades WHERE timestamp >= ? GROUP BY launch`,
   depositsByBacker: "SELECT backer, launch, SUM(CAST(amount AS INTEGER)) AS amount FROM deposits GROUP BY backer, launch",
+  launchBackers: "SELECT backer, SUM(CAST(amount AS INTEGER)) AS amount FROM deposits WHERE launch = ? GROUP BY backer",
+  launchBackerEvents: `
+    SELECT actor, type, SUM(CAST(sol_amount AS INTEGER)) AS amount FROM events
+    WHERE launch = ? AND type IN ('refund', 'backer_claim') GROUP BY actor, type`,
   searchLaunches: `${LAUNCH_SELECT}
     WHERE l.snapshot IS NOT NULL AND (
       lower(${LAUNCH_NAME}) LIKE :contains ESCAPE '\\' OR lower(${LAUNCH_SYMBOL}) LIKE :contains ESCAPE '\\'
@@ -1083,6 +1091,16 @@ export class Store {
   /** Lamports deposited per (backer, launch). */
   depositsByBacker(): { backer: string; launch: string; amount: number }[] {
     return rows(this.stmts.depositsByBacker);
+  }
+
+  /** Lamports deposited per backer of one launch. */
+  launchBackers(launch: string): { backer: string; amount: number }[] {
+    return rows(this.stmts.launchBackers, [launch]);
+  }
+
+  /** Lamports refunded / claimed per backer of one launch. */
+  launchBackerEvents(launch: string): { actor: string; type: "refund" | "backer_claim"; amount: number }[] {
+    return rows(this.stmts.launchBackerEvents, [launch]);
   }
 
   /** Launches by name/symbol substring or mint/address prefix (`keyPrefix` null skips the key match). */

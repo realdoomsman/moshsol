@@ -2,7 +2,7 @@
 
 import type { LaunchSummary } from "@/lib/types";
 import { Tabs, type TabItem } from "../ui/tabs";
-import { AgentTab } from "./agent-tab";
+import { AgentActivity } from "./agent-activity";
 import { BackersTab } from "./backers-tab";
 import { DepositsTab } from "./deposits-tab";
 import { HoldersTab } from "./holders-tab";
@@ -74,7 +74,7 @@ export function Activity({
         ) : current === "traders" ? (
           <TradersTab launch={l} roles={roles} onFilterMaker={onFilterMaker} />
         ) : current === "agent" ? (
-          <AgentTab launch={l} now={now} />
+          <AgentActivity launch={l} now={now} />
         ) : (
           <DepositsTab launch={l} now={now} />
         )}

@@ -7,8 +7,8 @@ import { useNow } from "@/lib/hooks";
 import { launchHref } from "@/lib/launch";
 import { useAgentStatus } from "@/lib/queries";
 import { AGENT_STALE_SECS } from "@/lib/status";
-import { ActionTag } from "../band/agent-simulator";
-import { decisionDeviation, decisionLabel, fmtDeviation } from "../band/model";
+import { ActionChip } from "../agents/decision-log";
+import { decisionDeviation, fmtDeviation } from "../band/model";
 import { Address } from "../ui/address";
 import { StatusDot } from "../ui/chip";
 import { cn } from "../ui/cn";
@@ -90,7 +90,7 @@ export function AgentLive() {
                     ${d.symbol ?? d.mint.slice(0, 4)}
                   </Link>
                   <span>
-                    <ActionTag action={d.action === "skip" ? "hold" : d.action} label={decisionLabel(d)} />
+                    <ActionChip d={d} />
                   </span>
                   <span className="small col-span-3 text-ink-2 first-letter:uppercase md:col-span-1" title={d.reason}>
                     {d.error && (d.action === "buy" || d.action === "sell") ? `Failed: ${d.error}` : d.reason}

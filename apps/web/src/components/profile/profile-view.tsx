@@ -95,7 +95,7 @@ function Stats({ user }: { user: UserProfile }) {
       />
       <Stat
         label="Backer earnings"
-        rule="Claimed plus claimable backer earnings (fee share, vault agent profit, wind-down payouts), pro-rata to this wallet's deposits."
+        rule="Claimed plus claimable backer earnings (the backers' cut of venue fees, backer payback, wind-down payouts), pro-rata to this wallet's deposits."
         value={quiet(s.backerFeesEarnedSol, sol(s.backerFeesEarnedSol))}
         tone={s.backerFeesEarnedSol > 0 ? "accent" : undefined}
       />
@@ -164,7 +164,7 @@ function Backed({ user }: { user: UserProfile }) {
           <TH>Status</TH>
           <TH align="right">Deposited</TH>
           <TH align="right">Share</TH>
-          <TH align="right">Fees earned</TH>
+          <TH align="right">Earned</TH>
           <TH align="right">Claimable</TH>
           <TH align="right">Backed</TH>
         </THead>
@@ -277,7 +277,9 @@ function describe(e: ActivityEvent): string {
     case "creator_claim":
       return `Claimed ${amount} in creator fees from ${tick}`;
     case "profit_shared":
-      return `${tick} vault agent shared ${amount} of profit with backers`;
+      return `${tick} shared ${amount} with backers under the old profit split`;
+    case "backers_paid":
+      return `${tick} paid backers ${amount} (${e.ref === "principal" ? "principal" : "dividend"})`;
     case "wound_down":
       return `${tick} wound down: ${amount} credited to backers`;
     case "vault_withdrawn":

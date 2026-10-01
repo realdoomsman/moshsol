@@ -49,14 +49,15 @@ pub mod moshsol {
         platform::accept_admin(ctx)
     }
 
-    /// One-time after the pump upgrade: grows the platform account to the current layout.
+    /// One-time after the payback upgrade: grows the platform account to the current layout.
     pub fn migrate_platform(ctx: Context<MigratePlatform>) -> Result<()> {
         migrate::migrate_platform(ctx)
     }
 
-    /// One-time per pre-pump launch after the upgrade: grows it to the current layout.
-    pub fn migrate_launch(ctx: Context<MigrateLaunch>) -> Result<()> {
-        migrate::migrate_launch(ctx)
+    /// One-time per pre-payback launch after the upgrade: grows it to the current layout and
+    /// backfills `initial_vault_sol` (see `LaunchV2::upgrade`).
+    pub fn migrate_launch(ctx: Context<MigrateLaunch>, initial_vault_sol: u64) -> Result<()> {
+        migrate::migrate_launch(ctx, initial_vault_sol)
     }
 
     // ---------------- launch lifecycle ----------------
@@ -167,5 +168,9 @@ pub mod moshsol {
 
     pub fn admin_withdraw_vault(ctx: Context<AdminWithdrawVault>, sol: u64, tokens: u64) -> Result<()> {
         vault::admin_withdraw_vault(ctx, sol, tokens)
+    }
+
+    pub fn payout_backers(ctx: Context<PayoutBackers>) -> Result<()> {
+        vault::payout_backers(ctx)
     }
 }

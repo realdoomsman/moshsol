@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { fmtMcap, fmtSolValue, mcapTicker } from "@/lib/format";
 import { SITE_URL } from "@/lib/env";
 import { launchHref, launchId, phaseExplainer, type Phase } from "@/lib/launch";
+import { fmtMult, pumpSplit } from "@/lib/pump-terms";
 import type { LaunchSummary } from "@/lib/types";
 import { useWatchlist } from "@/lib/watchlist";
 import { Address } from "../ui/address";
@@ -33,15 +34,17 @@ function PhaseChips({ launch: l, phase }: { launch: LaunchSummary; phase: Phase 
 }
 
 function shareText(l: LaunchSummary): string {
+  const split = pumpSplit(l.terms);
   const earn =
     l.venue === "pump"
-      ? `${100 - l.terms.burnShareBps / 100}% of the vault agent's profit`
-      : `${l.terms.backerFeeShareBps / 100}% of every trading fee and 100% of the vault agent's profit`;
+      ? `${split.backerPct}% of its pump.fun creator fees`
+      : `${l.terms.backerFeeShareBps / 100}% of every trading fee`;
+  const payback = `a vault agent holds the bundle and may pay them back once it's ${fmtMult(split.payoutMult)}`;
   if (l.status === "live") {
-    return `$${l.symbol} on Holdfast: ${fmtMcap(l)} mcap${l.venue === "pump" ? " on pump.fun" : ""}. Backers bought first and earn ${earn}.`;
+    return `$${l.symbol} on Holdfast: ${fmtMcap(l)} mcap${l.venue === "pump" ? " on pump.fun" : ""}. Backers bought first and earn ${earn}; ${payback}.`;
   }
   if (l.status === "raising") {
-    return `Backing $${l.symbol} on Holdfast: backers make the first buy${l.venue === "pump" ? " on pump.fun" : ""} and earn ${earn}.`;
+    return `Backing $${l.symbol} on Holdfast: backers make the first buy${l.venue === "pump" ? " on pump.fun" : ""} and earn ${earn}; ${payback}.`;
   }
   return `$${l.symbol} on Holdfast`;
 }

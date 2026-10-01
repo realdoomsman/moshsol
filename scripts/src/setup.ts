@@ -11,12 +11,15 @@
  * deposit into any raise); both default to 0 = no cap. HOLDFAST_CURVE=0/1 decides whether
  * `create_launch` (the in-program curve) stays open — off with PROFILE=production, where new
  * launches are pump.fun tokens — and BUYBACK_MINT sets the token `buyback_burn` buys and burns
- * (unset by default: push it with `--update` once the Holdfast token exists).
+ * (unset by default: push it with `--update` once the Holdfast token exists). The vault model
+ * (creator fees 75% vault / 15% burn pool / 10% backers; backer payback at 5× initial vault SOL,
+ * 15% of the vault per 4 h after the principal; dead launch at ≤ 5% outside holders; 0.1 SOL vault
+ * floor) is `PAYBACK_DEFAULTS`, overridable with MIN_VAULT_SOL (SOL) and PAYOUT_MULT (e.g. 5).
  * On non-local clusters the admin keypair must already be funded (no airdrops).
  */
 import { Connection, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
-import { PROGRAM_ID, platformPda, type PlatformParams } from "@holdfast/sdk";
+import { PAYBACK_DEFAULTS, PROGRAM_ID, platformPda, type PlatformParams } from "@holdfast/sdk";
 import fs from "node:fs";
 import path from "node:path";
 import { LOCALNET_DIR, RPC_URL, airdrop, clientFor, loadOrCreateKeypair, send } from "./common";
@@ -46,8 +49,14 @@ const LOCALNET_PARAMS: PlatformParams = {
   maxRaiseLamports: sol("MAX_RAISE_SOL", 0),
   maxWalletDepositLamports: sol("MAX_WALLET_SOL", 0),
   holdfastCurveEnabled: process.env.HOLDFAST_CURVE ? process.env.HOLDFAST_CURVE === "1" : !PRODUCTION,
-  burnShareBps: 2_500,
+  burnShareBps: PAYBACK_DEFAULTS.burnShareBps,
   buybackMint: process.env.BUYBACK_MINT ? new PublicKey(process.env.BUYBACK_MINT) : PublicKey.default,
+  creatorFeeVaultBps: PAYBACK_DEFAULTS.creatorFeeVaultBps,
+  payoutMultBps: process.env.PAYOUT_MULT ? Math.round(Number(process.env.PAYOUT_MULT) * 10_000) : PAYBACK_DEFAULTS.payoutMultBps,
+  payoutShareBps: PAYBACK_DEFAULTS.payoutShareBps,
+  payoutIntervalSecs: PAYBACK_DEFAULTS.payoutIntervalSecs,
+  deadHoldersBps: PAYBACK_DEFAULTS.deadHoldersBps,
+  minVaultSol: process.env.MIN_VAULT_SOL ? sol("MIN_VAULT_SOL", 0.1) : new BN(PAYBACK_DEFAULTS.minVaultSol.toString()),
 };
 
 async function main() {

@@ -1,3 +1,5 @@
+import { fmtMult } from "./pump-terms";
+
 /**
  * Anti-emptiness rule (design brief §5.3). A number is a *headline* stat (hero, strips, spotlights)
  * only once it clears its threshold; below it the slot shows an invariant instead, or is omitted.
@@ -22,8 +24,12 @@ export interface Invariant {
 
 /** Platform facts some invariants are rendered from (never typed into copy). */
 export interface InvariantContext {
-  /** `/api/platform` → `params.backerFeeShareBps`. */
+  /** `/api/platform` → `params.backerFeeShareBps` (Holdfast-curve trade fees). */
   backerFeeShareBps?: number;
+  /** `pumpSplit(params).backerPct`: the backers' share of pump.fun creator fees, preferred over the curve share. */
+  backerCreatorFeePct?: number;
+  /** `/api/platform` → `params.payoutMultBps`: vault SOL ÷ what went in at launch that unlocks backer payback. */
+  payoutMultBps?: number;
 }
 
 /**
@@ -33,8 +39,9 @@ export interface InvariantContext {
 export function invariantFor(stat: HeadlineStat, ctx: InvariantContext = {}): Invariant | null {
   switch (stat) {
     case "vaultSol":
-      return { label: "Backer share of agent profit", value: "100%" };
+      return ctx.payoutMultBps === undefined ? null : { label: "Backers paid back at", value: fmtMult(ctx.payoutMultBps / 10_000) };
     case "backerFeesSol":
+      if (ctx.backerCreatorFeePct !== undefined) return { label: "Backer share of creator fees", value: `${ctx.backerCreatorFeePct}%` };
       return ctx.backerFeeShareBps === undefined
         ? null
         : { label: "Backer share of fees", value: `${ctx.backerFeeShareBps / 100}%` };

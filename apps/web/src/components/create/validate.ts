@@ -24,7 +24,6 @@ export interface CreateDraft {
   image: TokenImage | null;
   twitter: string;
   telegram: string;
-  website: string;
   raiseMin: string;
   raiseMax: string;
   perWallet: string;
@@ -45,7 +44,6 @@ export const INITIAL_DRAFT: CreateDraft = {
   image: null,
   twitter: "",
   telegram: "",
-  website: "",
   raiseMin: "5",
   raiseMax: "20",
   perWallet: "",
@@ -65,7 +63,6 @@ export type DraftField =
   | "image"
   | "twitter"
   | "telegram"
-  | "website"
   | "raiseMin"
   | "raiseMax"
   | "perWallet"
@@ -76,7 +73,7 @@ export type DraftField =
 
 /** The wizard's steps and the fields each one validates before Continue. */
 export const STEPS = [
-  { id: "token", label: "Token", fields: ["image", "name", "symbol", "description", "twitter", "telegram", "website"] },
+  { id: "token", label: "Token", fields: ["image", "name", "symbol", "description", "twitter", "telegram"] },
   { id: "raise", label: "Raise", fields: ["raiseMin", "raiseMax", "perWallet", "duration"] },
   { id: "vault", label: "Vault & access", fields: ["bundlePct", "reservePct", "whitelist"] },
   { id: "review", label: "Review", fields: [] },
@@ -95,7 +92,6 @@ export interface ParsedDraft {
   image: File;
   twitter?: string;
   telegram?: string;
-  website?: string;
   raiseMin: bigint;
   raiseMax: bigint;
   maxPerWallet: bigint;
@@ -222,16 +218,6 @@ export function validateDraft(d: CreateDraft, p: DraftLimits): Validation {
   if (twitter === null) errors.twitter = "Enter an X handle or x.com link";
   const telegram = normalizeHandleUrl(d.telegram, "t.me", /(^|\.)(t\.me|telegram\.me)$/i, /^[A-Za-z0-9_]{4,32}$/);
   if (telegram === null) errors.telegram = "Enter a Telegram handle or t.me link";
-  let website = "";
-  if (d.website.trim()) {
-    try {
-      const url = new URL(/^https?:\/\//i.test(d.website.trim()) ? d.website.trim() : `https://${d.website.trim()}`);
-      if (!url.hostname.includes(".")) throw new Error("host");
-      website = url.toString();
-    } catch {
-      errors.website = "Enter a valid URL";
-    }
-  }
 
   const raiseMin = parseSol(d.raiseMin);
   const raiseMax = parseSol(d.raiseMax);
@@ -313,7 +299,6 @@ export function validateDraft(d: CreateDraft, p: DraftLimits): Validation {
           image: d.image!.file,
           twitter: twitter || undefined,
           telegram: telegram || undefined,
-          website: website || undefined,
           raiseMin: raiseMin!,
           raiseMax: raiseMax!,
           maxPerWallet,

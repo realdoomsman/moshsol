@@ -1,6 +1,6 @@
 "use client";
 
-import { LIMITS, previewBundle, solToLamports } from "@holdfast/sdk";
+import { LIMITS, previewBundle, previewPumpBundle, solToLamports } from "@holdfast/sdk";
 import { useState } from "react";
 import { fmtSolValue, fmtTokens } from "@/lib/format";
 import { pumpSplit } from "@/lib/pump-terms";
@@ -23,7 +23,8 @@ function lamportsOf(v: string): bigint | null {
 
 /**
  * §8 For creators: three facts and a bundle preview mini-form — min raise, max raise, bundle % —
- * computed with the SDK's `previewBundle` (the exact `launch` instruction maths) at both ends of the
+ * computed with the SDK's `previewPumpBundle` (the exact `launch_pump` maths; `previewBundle` while
+ * the platform still allows the Holdfast curve, as the create wizard does) at both ends of the
  * raise. The CTA opens the create wizard prefilled with the same numbers.
  */
 export function Creators() {
@@ -36,9 +37,9 @@ export function Creators() {
 
   const s = pumpSplit(p);
   const facts = [
-    "Fixed 1B supply, mint authority revoked",
-    "Your backers can’t dump on your community",
-    `0% of fees to you: pump.fun’s creator fee goes ${s.backerPct}% into your vault, ${s.burnPct}% to the buyback pool`,
+    "Fixed 1B supply on pump.fun, mint authority revoked",
+    "Your backers' bundle is the first buy; only the vault agent can sell it, slowly, into strength",
+    `0% of fees to you: pump.fun’s creator fee goes ${s.vaultPct}% into your vault, ${s.burnPct}% to the buyback pool, ${s.backerPct}% to your backers`,
   ];
 
   const lo = lamportsOf(min);
@@ -65,14 +66,10 @@ export function Creators() {
         : null,
   };
   const valid = p && lo !== null && hi !== null && !errors.min && !errors.max && !errors.bundle;
-  const run = (raised: bigint) =>
-    previewBundle({
-      raised,
-      virtualSol: BigInt(p!.virtualSolReserves),
-      launchFeeBps: p!.launchFeeBps,
-      reserveBps: reservePct * 100,
-      bundleSupplyBps: bundleBps,
-    });
+  const run = (raised: bigint) => {
+    const terms = { raised, launchFeeBps: p!.launchFeeBps, reserveBps: reservePct * 100, bundleSupplyBps: bundleBps };
+    return p!.holdfastCurveEnabled ? previewBundle({ ...terms, virtualSol: BigInt(p!.virtualSolReserves) }) : previewPumpBundle(terms);
+  };
   const atMin = valid ? run(lo!) : null;
   const atMax = valid ? run(hi!) : null;
   const href = `/create?${new URLSearchParams({ min, max, bundle, reserve: String(reservePct) })}`;
@@ -151,7 +148,8 @@ export function Creators() {
                 </tbody>
               </table>
               <p className="micro mt-3 text-ink-3">
-                With a {reservePct}% SOL reserve (adjustable in the wizard) and the {pctFromBps(p.launchFeeBps)} launch fee.
+                With a {reservePct}% SOL reserve (adjustable in the wizard), the {pctFromBps(p.launchFeeBps)} launch fee
+                {p.holdfastCurveEnabled ? "" : " and pump.fun's create cost"}. The reserve plus the bundle is what went in at launch.
               </p>
               <div className="mt-6">
                 <ButtonLink href={href} variant="accent" arrow>

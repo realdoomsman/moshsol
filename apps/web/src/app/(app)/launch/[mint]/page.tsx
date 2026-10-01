@@ -5,6 +5,7 @@ import { CHART_TRADES, HOLDERS_LIMIT } from "@/components/token/limits";
 import { TokenView } from "@/components/token/token-view";
 import { fmtMcap, fmtSolValue } from "@/lib/format";
 import { phaseOf } from "@/lib/launch";
+import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { Hydrate, prefetch, serverQueryClient } from "@/lib/prefetch";
 import {
   agentStatusQuery,
@@ -24,7 +25,7 @@ import { launchOnChain, loadLaunch, parseMint } from "@/lib/server";
 
 /** Agent status is optional decoration; don't let a slow agent service hold up the page. */
 const AGENT_STATUS_DEADLINE_MS = 800;
-/** Backers are read live from chain (one RPC call); the rail's role chips can fill in client-side. */
+/** Backers come from the indexer's deposit ledger; the rail's role chips can fill in client-side if the prefetch is slow. */
 const BACKERS_DEADLINE_MS = 900;
 
 /** The route is `/launch/[mint]` historically; the param is a launch id: the mint (Holdfast launches) or the launch address (pump launches). */
@@ -39,16 +40,18 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const l = r.launch;
   const title = `${l.name} ($${l.symbol})`;
   const pump = l.venue === "pump";
+  const s = pumpSplit(l.terms);
+  const payback = `When the vault is ${fmtMult(s.payoutMult)} its start and the chart is strong, the vault agent may pay backers back (principal first, then ${s.payoutSharePct}% of the vault every ${fmtInterval(s.payoutIntervalHours)}).`;
   const backerEarn = pump
-    ? `${100 - l.terms.burnShareBps / 100}% of the vault agent's profit (the rest buys and burns the Holdfast token)`
-    : `${l.terms.backerFeeShareBps / 100}% of every trading fee and 100% of the vault agent's profit`;
+    ? `${s.backerPct}% of pump.fun's creator fees. ${payback}`
+    : `${l.terms.backerFeeShareBps / 100}% of every trading fee. ${payback}`;
   const description =
     l.status === "live"
-      ? `$${l.symbol}: ${fmtMcap(l)} market cap${l.marketCapUsd != null ? ` (${fmtSolValue(l.marketCapSol)} SOL)` : ""} at ${fmtPrice(l.priceSol)} SOL${pump ? " on pump.fun" : ""}. The vault holds ${fmtSolValue(lamportsToSol(l.vaultSol))} SOL, traded only by a rate-limited agent; backers get ${backerEarn}.`
+      ? `$${l.symbol}: ${fmtMcap(l)} market cap${l.marketCapUsd != null ? ` (${fmtSolValue(l.marketCapSol)} SOL)` : ""} at ${fmtPrice(l.priceSol)} SOL${pump ? " on pump.fun" : ""}. The vault holds ${fmtSolValue(lamportsToSol(l.vaultSol))} SOL, traded only by the rate-limited vault agent; its sell proceeds stay in the vault. Backers earn ${backerEarn}`
       : l.status === "raising"
-        ? `Raising ${fmtSolValue(lamportsToSol(l.raised))} of ${fmtSolValue(lamportsToSol(l.raiseMax))} SOL${pump ? " for a pump.fun token" : ""}. Backers make the first buy and earn ${backerEarn}.`
+        ? `Raising ${fmtSolValue(lamportsToSol(l.raised))} of ${fmtSolValue(lamportsToSol(l.raiseMax))} SOL${pump ? " for a pump.fun token" : ""}. Backers' SOL makes the first buy ${pump ? "in the same instruction that creates the token" : "the moment it launches"}; they earn ${backerEarn}`
         : l.status === "woundDown"
-          ? `$${l.symbol} wound down: the vault ${pump ? "was sold into the venue and its SOL was" : "and curve SOL were"} credited to its backers.`
+          ? `$${l.symbol} wound down: the vault ${pump ? "sold what it held and all vault SOL was" : "and curve SOL were"} credited to its backers.`
           : `The $${l.symbol} raise closed without launching. Every backer can refund 100%.`;
   return {
     title,

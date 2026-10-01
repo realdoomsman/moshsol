@@ -56,8 +56,11 @@ import { fileURLToPath } from "node:url";
 
 const WSOL = "So11111111111111111111111111111111111111112";
 const WINDOW_S = 72 * 3600;
-const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "data");
-const CACHE_DIR = path.join(DATA_DIR, ".cache");
+export const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "data");
+/** Response cache of the running fetch (under its data dir); set by `fetchDataset`. */
+let cacheDir = path.join(DATA_DIR, ".cache");
+/** Progress lines of the running fetch (stdout for the CLI; the research child sends them to stderr). */
+let say: (line: string) => void = console.log;
 
 const num = (key: string, dflt: number) => {
   const v = process.env[key];
@@ -70,7 +73,7 @@ const TARGET = num("TARGET", 80);
 const MIN_CANDLES = num("MIN_CANDLES", 1500);
 const MIN_RUG_CANDLES = num("MIN_RUG_CANDLES", 300);
 const MAX_SPARSE = num("MAX_SPARSE", 12);
-const TAG_CAP = Math.ceil(TARGET * num("TAG_SHARE", 0.35));
+const TAG_SHARE = num("TAG_SHARE", 0.35);
 const MAX_AGE_S = num("MAX_AGE_DAYS", 150) * 86_400;
 
 const DEXES = ["pumpswap", "raydium", "pump-fun"] as const; // preference order for one pool per token
@@ -156,7 +159,7 @@ const DEXSCREENER: Api = { base: "https://api.dexscreener.com", headers: {}, int
 /** GET an API path; responses (including 404 as `null`) are cached on disk forever. */
 async function get<T>(api: Api, p: string): Promise<T | null> {
   const url = api.base + p;
-  const file = path.join(CACHE_DIR, url.replace(/^https:\/\//, "").replace(/[^A-Za-z0-9._-]+/g, "_") + ".json");
+  const file = path.join(cacheDir, url.replace(/^https:\/\//, "").replace(/[^A-Za-z0-9._-]+/g, "_") + ".json");
   if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf8")) as T | null;
   for (let attempt = 0; ; attempt++) {
     const wait = api.nextAt - Date.now();
@@ -238,7 +241,7 @@ async function discover(asOf: number): Promise<Candidate[]> {
   for (let page = 1; page <= 5; page++) lists.push(`/networks/solana/trending_pools?page=${page}&duration=24h`);
   for (const term of SEARCH_TERMS) lists.push(`/search/pools?query=${term}&network=solana&page=1`);
   for (const [i, src] of lists.entries()) {
-    if (i % 20 === 0) console.log(`  GeckoTerminal lists ${i + 1}/${lists.length} (${byToken.size} eligible tokens so far)`);
+    if (i % 20 === 0) say(`  GeckoTerminal lists ${i + 1}/${lists.length} (${byToken.size} eligible tokens so far)`);
     for (const p of (await get<{ data: GtPool[] }>(GECKO, src))?.data ?? []) {
       const created = p.attributes.pool_created_at ? Date.parse(p.attributes.pool_created_at) : NaN;
       const r = p.relationships;
@@ -258,7 +261,7 @@ async function discover(asOf: number): Promise<Candidate[]> {
       }
     }
   }
-  console.log(`discovery: ${listed} pools listed, ${byToken.size} eligible tokens`);
+  say(`discovery: ${listed} pools listed, ${byToken.size} eligible tokens`);
 
   // Stable order that interleaves the sources, so no single list dominates the first picks.
   const bySource = new Map<string, Candidate[]>();
@@ -316,13 +319,27 @@ function maxGapMinutes(candles: Candle[], from: number) {
 
 // ---------- main ----------
 
-async function main() {
+export interface FetchOptions {
+  /** Where `index.json`, the pool files and `.cache/` go (default: `backtest/data`). */
+  dataDir?: string;
+  /** Pools to stop at (default: env TARGET, 80). */
+  target?: number;
+  log?: (line: string) => void;
+}
+
+/** Builds (or, with the response cache present, reproduces) the dataset; resolves with the number of pools kept. */
+export async function fetchDataset(opts: FetchOptions = {}): Promise<number> {
+  const dataDir = opts.dataDir ?? DATA_DIR;
+  const target = opts.target ?? TARGET;
+  const tagCap = Math.ceil(target * TAG_SHARE);
+  cacheDir = path.join(dataDir, ".cache");
+  say = opts.log ?? console.log;
   const started = Date.now();
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
-  const asOfFile = path.join(CACHE_DIR, "asof.json");
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const asOfFile = path.join(cacheDir, "asof.json");
   if (!fs.existsSync(asOfFile)) fs.writeFileSync(asOfFile, JSON.stringify({ asOf: Math.floor(Date.now() / 1000) }));
   const { asOf } = JSON.parse(fs.readFileSync(asOfFile, "utf8")) as { asOf: number };
-  console.log(`asOf ${new Date(asOf * 1000).toISOString()} (pinned in ${path.relative(process.cwd(), asOfFile)})`);
+  say(`asOf ${new Date(asOf * 1000).toISOString()} (pinned in ${path.relative(process.cwd(), asOfFile)})`);
 
   const candidates = await discover(asOf);
 
@@ -333,7 +350,7 @@ async function main() {
 
   const writeIndex = () =>
     fs.writeFileSync(
-      path.join(DATA_DIR, "index.json"),
+      path.join(dataDir, "index.json"),
       JSON.stringify(
         {
           asOf,
@@ -355,14 +372,14 @@ async function main() {
     );
 
   for (const c of candidates) {
-    if (kept.length >= TARGET) break;
+    if (kept.length >= target) break;
     // Hourly screen (one request): hours with trades x 60 bounds the minute candle count, and the
     // hourly tag predicts the minute one, so full tags and hopeless pools skip the minute pages.
     screened++;
     const hours = await hourCandles(c);
     if (hours.length * 60 < Math.min(MIN_CANDLES, MIN_RUG_CANDLES)) continue;
     const pre = classify(hours.map((k) => k[4])).tag;
-    if (tagCount[pre] >= TAG_CAP) continue;
+    if (tagCount[pre] >= tagCap) continue;
     if (hours.length * 60 < MIN_CANDLES && (pre !== "rug" || sparse >= MAX_SPARSE)) continue;
     const got = await minuteCandles(c);
     if (!got || got.candles.length < Math.min(MIN_CANDLES, MIN_RUG_CANDLES)) continue;
@@ -370,12 +387,12 @@ async function main() {
     const o = classify(candles.map((k) => k[4]));
     const dense = candles.length >= MIN_CANDLES;
     if (!dense && (o.tag !== "rug" || sparse >= MAX_SPARSE)) continue;
-    if (tagCount[o.tag] >= TAG_CAP) continue;
+    if (tagCount[o.tag] >= tagCap) continue;
     if (!dense) sparse++;
     tagCount[o.tag]++;
     const file = `${c.pool}.json`;
     const pool = { pool: c.pool, baseToken: c.baseToken, symbol, dex: c.dex, createdAt: c.createdAt, timeframe: "minute", candles };
-    fs.writeFileSync(path.join(DATA_DIR, file), JSON.stringify(pool));
+    fs.writeFileSync(path.join(dataDir, file), JSON.stringify(pool));
     const round = (x: number) => Math.round(x * 1e4) / 1e4;
     kept.push({
       file,
@@ -395,8 +412,8 @@ async function main() {
       rangeMult: round(o.rangeMult),
     });
     writeIndex();
-    console.log(
-      `  [${kept.length}/${TARGET}, screened ${screened}/${candidates.length}] ${symbol.padEnd(12)} ${c.dex.padEnd(8)} ${o.tag.padEnd(8)} ${String(candles.length).padStart(4)} candles` +
+    say(
+      `  [${kept.length}/${target}, screened ${screened}/${candidates.length}] ${symbol.padEnd(12)} ${c.dex.padEnd(8)} ${o.tag.padEnd(8)} ${String(candles.length).padStart(4)} candles` +
         `  end ${o.endMult.toFixed(2)}x peak ${o.peakMult.toFixed(2)}x dd ${(o.maxDrawdown * 100).toFixed(0)}%`,
     );
   }
@@ -404,21 +421,32 @@ async function main() {
 
   // Drop pool files a previous run kept but this one didn't.
   const keep = new Set(kept.map((k) => k.file));
-  for (const f of fs.readdirSync(DATA_DIR)) {
-    if (f.endsWith(".json") && f !== "index.json" && !keep.has(f)) fs.rmSync(path.join(DATA_DIR, f));
+  for (const f of fs.readdirSync(dataDir)) {
+    if (f.endsWith(".json") && f !== "index.json" && !keep.has(f)) fs.rmSync(path.join(dataDir, f));
   }
 
   const total = kept.reduce((s, k) => s + k.candles, 0);
-  const bytes = [...keep].reduce((s, f) => s + fs.statSync(path.join(DATA_DIR, f)).size, 0);
-  console.log(
+  const bytes = [...keep].reduce((s, f) => s + fs.statSync(path.join(dataDir, f)).size, 0);
+  say(
     `done: ${kept.length} pools (${TAGS.map((t) => `${t} ${tagCount[t]}`).join(", ")}) from ${screened} screened, ` +
       `${kept.filter((k) => k.candles >= MIN_CANDLES).length} with >= ${MIN_CANDLES} candles, ` +
       `${total} candles, ${(bytes / 1e6).toFixed(1)} MB, ${GECKO.requests} GeckoTerminal + ${DEXSCREENER.requests} DexScreener requests, ${((Date.now() - started) / 60_000).toFixed(1)} min`,
   );
-  if (kept.length < TARGET) console.warn(`only ${kept.length}/${TARGET} pools qualified; widen discovery`);
+  if (kept.length < target) console.warn(`only ${kept.length}/${target} pools qualified; widen discovery`);
+  return kept.length;
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+/** True when this file is the process entry (`tsx backtest/fetch.ts`, also via `pnpm backtest:fetch`); Windows paths compare case-insensitively. */
+function isEntry(): boolean {
+  if (!process.argv[1]) return false;
+  const [a, b] = [path.resolve(process.argv[1]), fileURLToPath(import.meta.url)].map((p) => (process.platform === "win32" ? p.toLowerCase() : p));
+  return a === b;
+}
+
+// Importing the module (research loop) runs nothing.
+if (isEntry()) {
+  fetchDataset().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

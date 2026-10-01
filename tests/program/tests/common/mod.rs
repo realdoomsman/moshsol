@@ -51,6 +51,12 @@ pub fn test_params() -> PlatformParams {
         holdfast_curve_enabled: true,
         burn_share_bps: DEFAULT_BURN_SHARE_BPS,
         buyback_mint: Pubkey::default(),
+        creator_fee_vault_bps: DEFAULT_CREATOR_FEE_VAULT_BPS,
+        payout_mult_bps: DEFAULT_PAYOUT_MULT_BPS,
+        payout_share_bps: DEFAULT_PAYOUT_SHARE_BPS,
+        payout_interval_secs: DEFAULT_PAYOUT_INTERVAL_SECS,
+        dead_holders_bps: DEFAULT_DEAD_HOLDERS_BPS,
+        min_vault_sol: DEFAULT_MIN_VAULT_SOL,
     }
 }
 

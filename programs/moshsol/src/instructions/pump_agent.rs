@@ -5,7 +5,7 @@ use anchor_spl::token::Token;
 use super::pump_venue::{venue_view, VenueTrade, VenueView};
 use crate::constants::*;
 use crate::errors::MoshError;
-use crate::events::{Trade, VaultProfitShared};
+use crate::events::Trade;
 use crate::math;
 use crate::state::{Launch, LaunchStatus, Platform, Venue};
 
@@ -104,8 +104,9 @@ impl<'info> Infos<'info> {
 }
 
 /// Buy with vault SOL — only on dips (venue price at least `band` under the EMA) and only at
-/// or below the vault's average cost, or as a buy-back of earlier sell proceeds below the
-/// average sell price. `min_tokens_out` is forwarded to the venue and checked on the fill.
+/// or below the vault's average cost, or as a buy-back below the average agent sell price;
+/// never below the vault's SOL floor. `min_tokens_out` is forwarded to the venue and checked
+/// on the fill.
 pub fn agent_buy_pump<'info>(
     ctx: Context<'_, '_, 'info, 'info, AgentTradePump<'info>>,
     sol_in: u64,
@@ -126,6 +127,7 @@ pub fn agent_buy_pump<'info>(
     launch.update_ema_with(now, view.price_q64)?;
     require!(sol_in > 0, MoshError::ZeroAmount);
     require!(sol_in <= launch.vault_sol, MoshError::InsufficientVault);
+    require!(launch.vault_sol - sol_in >= terms.min_vault_sol, MoshError::VaultFloor);
     require!(
         launch.window_sol_spent + sol_in <= launch.window_buy_cap,
         MoshError::AgentWindowLimit
@@ -143,18 +145,12 @@ pub fn agent_buy_pump<'info>(
     // Same two ways in as on the Holdfast curve, on the measured fill.
     let (cost_sol, cost_tokens) = launch.cost_basis();
     let below_cost = (spent as u128) * (cost_tokens as u128) <= (tokens as u128) * (cost_sol as u128);
-    if !below_cost {
-        let below_avg_sell = launch.agent_tokens_sold > 0
-            && (spent as u128) * (launch.agent_tokens_sold as u128) * BPS as u128
-                <= (tokens as u128)
-                    * (launch.agent_sol_received as u128)
-                    * (BPS - terms.agent_band_bps as u64) as u128;
-        require!(
-            below_avg_sell && spent <= launch.buyback_sol,
-            MoshError::AgentAboveCostBasis
-        );
-        launch.buyback_sol -= spent;
-    }
+    let below_avg_sell = launch.agent_tokens_sold > 0
+        && (spent as u128) * (launch.agent_tokens_sold as u128) * BPS as u128
+            <= (tokens as u128)
+                * (launch.agent_sol_received as u128)
+                * (BPS - terms.agent_band_bps as u64) as u128;
+    require!(below_cost || below_avg_sell, MoshError::AgentAboveCostBasis);
 
     launch.vault_sol = launch.vault_sol - spent + venue.donated.get();
     launch.vault_tokens += tokens;
@@ -191,10 +187,9 @@ pub fn agent_buy_pump<'info>(
 }
 
 /// Sell vault tokens — only into rallies (venue price at least `band` over the EMA) and only
-/// at a fill above the vault's average cost plus band. The realized profit goes
-/// `burn_share` to the buyback pool and the rest to backers; the cost part returns to the
-/// vault and the buy-back budget. `min_sol_out` is forwarded to the venue and checked on the
-/// fill.
+/// at a fill above the vault's average cost plus band. The whole fill stays in the vault as
+/// liquid SOL; the sold tokens' average cost leaves the cost basis. `min_sol_out` is
+/// forwarded to the venue and checked on the fill.
 pub fn agent_sell_pump<'info>(
     ctx: Context<'_, '_, 'info, 'info, AgentTradePump<'info>>,
     tokens_in: u64,
@@ -235,13 +230,9 @@ pub fn agent_sell_pump<'info>(
     require!(lhs >= rhs, MoshError::AgentBelowCostBasis);
 
     let cost = launch.vault_cost_of(tokens_in);
-    let profit = sol.saturating_sub(cost);
-    let kept = sol - profit;
     launch.vault_cost_sol -= cost;
     launch.vault_tokens -= tokens_in;
-    launch.vault_sol += kept + venue.donated.get();
-    let (to_pool, to_backers) = launch.credit_buyback_pool(profit)?;
-    launch.credit_backers(to_backers)?;
+    launch.vault_sol += sol + venue.donated.get();
     let after = venue_view(launch, ctx.remaining_accounts)?;
     require!(
         math::move_bps(before, after.price_q64) <= terms.agent_max_impact_bps as u64,
@@ -252,7 +243,6 @@ pub fn agent_sell_pump<'info>(
     launch.agent_sells = launch.agent_sells.saturating_add(1);
     launch.agent_sol_received = launch.agent_sol_received.saturating_add(sol);
     launch.agent_tokens_sold = launch.agent_tokens_sold.saturating_add(tokens_in);
-    launch.buyback_sol = launch.buyback_sol.saturating_add(kept);
     launch.record_volume(sol);
 
     let mint_key = ctx.accounts.mint.key();
@@ -273,14 +263,5 @@ pub fn agent_sell_pump<'info>(
         vault_tokens: launch.vault_tokens,
         timestamp: now,
     });
-    if profit > 0 {
-        emit!(VaultProfitShared {
-            launch: launch_key,
-            mint: mint_key,
-            amount: profit,
-            to_buyback_pool: to_pool,
-            timestamp: now,
-        });
-    }
     Ok(())
 }

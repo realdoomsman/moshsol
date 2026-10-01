@@ -1,5 +1,5 @@
 import { CLUSTER_NAME } from "@/lib/env";
-import { pumpSplit } from "@/lib/pump-terms";
+import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import type { PlatformInfo } from "@/lib/types";
 import { pctFromBps } from "../band/model";
 import { RuleTooltip } from "../ui/tooltip";
@@ -30,10 +30,10 @@ export const DEMO = {
       fallbackCaption={`Live from ${CLUSTER_NAME} · the open raise closing soonest`}
     />
   ),
-  theLock: (
+  theBundle: (
     <VideoSlot
-      name="the-lock"
-      label="The raise fills, the launch runs and the bundle lands in the vault."
+      name="the-bundle"
+      label="Launch now: the token is created on pump.fun, the bundle is its first buy and lands in the vault."
       fallback={<LockFallback />}
       fallbackCaption={`Live from ${CLUSTER_NAME} · a launch's vault`}
     />
@@ -41,7 +41,7 @@ export const DEMO = {
   agentDefends: (
     <VideoSlot
       name="agent-defends"
-      label="A dump pushes price under the band and the vault agent buys."
+      label="A dump pushes price under the band and the vault agent buys back at a discount to its last sells."
       fallback={<AgentFallback />}
       fallbackCaption={`Live from ${CLUSTER_NAME} · the vault agent's latest call`}
     />
@@ -49,9 +49,9 @@ export const DEMO = {
   claim: (
     <VideoSlot
       name="claim"
-      label="Claimable backer fees tick up and are claimed with one transaction."
+      label="A backer claims their share of the launch's creator fees and payback with one transaction."
       fallback={<ClaimFallback />}
-      fallbackCaption={`Live from ${CLUSTER_NAME} · backer fee ledger`}
+      fallbackCaption={`Live from ${CLUSTER_NAME} · backer ledger`}
     />
   ),
 };
@@ -68,25 +68,26 @@ export function launchSteps(p: Params): HowStep[] {
     },
     {
       title: "The bundle buys first",
-      description: `At launch the token is created on pump.fun and the pool, minus the ${s.launchFeePct}% launch fee, makes the first buy, before any public trade can exist. The tokens go into the vault. Only the vault agent trades them; the platform admin can withdraw, and every withdrawal is public.`,
+      description: `At launch the token is created on pump.fun and the pool, minus the ${s.launchFeePct}% launch fee and the create fee, makes the first buy in the same instruction, before any public trade can exist. The tokens and the SOL reserve go into the vault. Only the vault agent trades them; the platform admin can withdraw, and every withdrawal is public.`,
       rule: p ? `Bundle: ≤ ${pctFromBps(p.maxBundleSupplyBps)} of supply` : null,
-      frame: DEMO.theLock,
+      frame: DEMO.theBundle,
     },
     {
-      title: "The agent defends",
+      title: "The agent holds it",
       description: (
         <>
-          It buys dips at least {p ? pctFromBps(p.agentBandBps) : "the band"} under the <EmaTerm p={p} /> and at or below the
-          vault&rsquo;s cost, and sells rallies above both. Rate-limited, on-chain.
+          It sells slowly when the chart is strong, sized so it doesn&rsquo;t hurt the chart, and buys back dips at least{" "}
+          {p ? pctFromBps(p.agentBandBps) : "the band"} under the <EmaTerm p={p} /> with what it sold. Every sale stays in the vault as
+          SOL. Rate-limited, on-chain.
         </>
       ),
       rule: p ? `Per window: ≤ ${pctFromBps(p.agentBuyBpsPerWindow)} of vault SOL` : null,
       frame: DEMO.agentDefends,
     },
     {
-      title: "Backers earn",
-      description: `${s.backerPct}% of the vault agent's realized profit goes to backers, pro-rata to their deposit; ${s.burnPct}% buys and burns the Holdfast token. pump.fun's creator fee flows ${s.backerPct}% into the vault and ${s.burnPct}% to the same buyback pool. Claim any time.`,
-      rule: `${s.backerPct}% of agent profit to backers, ${s.burnPct}% to buyback and burn`,
+      title: "Backers get paid back",
+      description: `When the vault's SOL is ${fmtMult(s.payoutMult)} what went in at launch and the chart is strong, the agent may pay backers: principal first, then ${s.payoutSharePct}% of the vault every ${fmtInterval(s.payoutIntervalHours)}. Buying back dips always comes first. On top, ${s.backerPct}% of pump.fun's creator fee goes to backers pro-rata; ${s.vaultPct}% to the vault, ${s.burnPct}% buys and burns the Holdfast token. Claim any time.`,
+      rule: `Payback: ${fmtMult(s.payoutMult)} the start, then ${s.payoutSharePct}% per ${fmtInterval(s.payoutIntervalHours)}`,
       frame: DEMO.claim,
     },
   ];

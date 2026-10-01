@@ -36,9 +36,10 @@ over HTTP plus one WebSocket (`/ws`). CORS is open (`*`; methods `GET POST PUT D
 | Signed writes (`POST …/comments`, `PUT /api/users/:wallet`) | 20/min | `SOCIAL_IP_LIMIT_PER_MIN` | per IP, every attempt counts |
 | Comments | 5/min | `COMMENT_LIMIT_PER_MIN` | per wallet, counted after the signature verified |
 | Profile updates | 10/min | — | per wallet, counted after the signature verified |
+| `GET /api/portfolio/:wallet` | 60/min | — | per IP (on top of the global limit); token balances are cached 10 s per wallet |
 
-`0` disables an env-configurable limit. Behind a proxy set `TRUST_PROXY` (trusted proxy list such as `uniquelocal`,
-or `1`) so the client IP comes from `X-Forwarded-For`. Fixed one-minute windows; the `429` body says how long to wait.
+`0` disables an env-configurable limit. Behind a proxy set `TRUST_PROXY` to the proxy's addresses (e.g. `uniquelocal,100.64.0.0/10`
+on Railway) so the client IP comes from `X-Forwarded-For`. Fixed one-minute windows; the `429` body says how long to wait.
 
 ---
 
@@ -154,7 +155,9 @@ Between the curve completing and `graduate_pump` recording the pool there is not
   "index": 1, "status": "live", "createdAt": 1790425547, "launchedAt": 1790425741,
   "terms": { "tradeFeeBps": 100, "backerFeeShareBps": 5000, "creatorFeeShareBps": 3000, "launchFeeBps": 100,
     "agentBuyBpsPerWindow": 1000, "agentSellBpsPerWindow": 500, "agentMaxImpactBps": 300, "agentBandBps": 200,
-    "agentWindowSecs": 3600, "emaPeriodSecs": 1800 },
+    "agentWindowSecs": 3600, "emaPeriodSecs": 1800, "burnShareBps": 1500, "creatorFeeVaultBps": 7500,
+    "payoutMultBps": 50000, "payoutShareBps": 1500, "payoutIntervalSecs": 14400, "deadHoldersBps": 500,
+    "minVaultSol": "100000000" },
   "raiseMin": "50000000", "raiseMax": "100000000", "maxPerWallet": "0", "raiseDeadline": 1790426147,
   "raised": "50000000", "refunded": "0", "backerCount": 1, "whitelisted": false,
   "whitelistRoot": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -167,7 +170,8 @@ Between the curve completing and `graduate_pump` recording the pool there is not
   "windowStart": 1790425741, "windowBuyCap": "1485000", "windowSolSpent": "0", "windowSellCap": "57683375701",
   "windowTokensSold": "0", "emaPriceQ64": "554685671522617", "lastTradeTs": 1790425767,
   "agentBuys": 0, "agentSells": 0, "agentSolSpent": "0", "agentSolReceived": "0", "agentTokensSold": "0",
-  "buybackSol": "0", "volumeSol": "79507318", "tradeCount": 3,
+  "volumeSol": "79507318", "tradeCount": 3,
+  "initialVaultSol": "49500000", "backersRepaid": "0", "backerPayouts": "0", "lastPayoutTs": 1790425741,
   "priceSol": 3.0099e-8, "emaSol": 3.0069e-8, "marketCapSol": 30.099, "vaultAvgCostSol": 3.0035e-8, "agentAvgSellSol": null,
 
   "name": "Volt Runner", "symbol": "VOLT",
@@ -189,6 +193,11 @@ Between the curve completing and `graduate_pump` recording the pool there is not
   "comments": 0,
   "creatorName": null,
   "profitSharedSol": 0,
+  "backersRepaidSol": 0, "backerPayoutsSol": 0, "payoutTargetSol": 0.2475, "payoutMultiple": 0.3,
+  "payoutShareBps": 1500, "payoutIntervalSecs": 14400, "creatorFeeVaultBps": 7500, "burnShareBps": 1500,
+  "backerCreatorFeeBps": 1000, "minVaultSol": "100000000",
+  "creatorFeeSplit": { "vaultSol": 0, "burnSol": 0, "backersSol": 0 },
+  "payouts": { "count": 0, "lastAt": null },
   "vaultWithdrawnSol": 0,
   "vaultWithdrawnTokens": "0",
   "woundDown": null,
@@ -210,7 +219,12 @@ Between the curve completing and `graduate_pump` recording the pool there is not
 | `topHolderPct` | Largest holder's % of total supply, venue and vault excluded; `null` until holders were first loaded |
 | `comments` | Visible comments |
 | `creatorName` | The creator's profile name, `null` if unset |
-| `profitSharedSol` | SOL of the vault agent's realized profit shared out (sum of `VaultProfitShared` events; 100% to backers on Holdfast launches, 75% backers / 25% buyback pool on pump launches) |
+| `profitSharedSol` | SOL paid to backers under the profit split that existed before the October 2026 vault model (sum of historical `VaultProfitShared` events); 0 on every launch since. Agent sell proceeds now stay in the vault |
+| `backersRepaidSol`, `backerPayoutsSol` | Backer payback by `payout_backers` (agent authority only): principal repaid so far (≤ `initialVaultSol`) and dividends paid on top, in SOL (snapshot `backersRepaid` / `backerPayouts`) |
+| `payoutTargetSol`, `payoutMultiple` | `initialVaultSol × terms.payoutMultBps / 10000` in SOL — the liquid vault SOL at which backers become payable — and `vaultSol / initialVaultSol` now (0 before launch). On-chain: a payout needs `vaultSol ≥ target`, at most one per `payoutIntervalSecs` (the principal payout starts the clock), never below `minVaultSol`; the agent only cranks it in a strong market |
+| `payoutShareBps`, `payoutIntervalSecs`, `creatorFeeVaultBps`, `burnShareBps`, `backerCreatorFeeBps`, `minVaultSol` | The launch's frozen terms repeated: dividend share of vault SOL per payout, payout interval, creator-fee split (`creatorFeeVaultBps` to vault SOL, `burnShareBps` to the buyback-and-burn pool, `backerCreatorFeeBps = 10000 − both` to backers) and the vault floor in lamports |
+| `creatorFeeSplit` | How `creatorFeesCollected` was split by `collect_pump_fees`, in SOL: `{ vaultSol, burnSol, backersSol }` |
+| `payouts` | `{ count, lastAt }` of the indexed `BackersPaid` events (`GET /api/launches/:id/activity?type=backers_paid` lists them) |
 | `vaultWithdrawnSol`, `vaultWithdrawnTokens` | Vault SOL / tokens (base units) the platform admin withdrew with `admin_withdraw_vault` (sum of `VaultWithdrawn`); each withdrawal is listed by `GET /api/launches/:id/activity?type=vault_withdrawn` |
 | `woundDown` | `{ timestamp, solToBackers, tokensReturned, signature }` from the `WoundDown` event (`solToBackers` in SOL, `tokensReturned` base units); `null` if not wound down (or the event predates the indexed history) |
 | `graduation` | Pump launches: `{ timestamp, signature, pool }` from the `PumpGraduated` event (`graduate_pump` recorded the PumpSwap pool); `null` before (and always on Holdfast launches) |
@@ -219,9 +233,10 @@ Between the curve completing and `graduate_pump` recording the pool there is not
 `status` is `raising` (raise open or awaiting launch), `live` (trading), `refunding` (cancelled/failed raise) or
 `woundDown` (permissionless `wind_down` ran: trading stopped for good, curve + vault SOL were credited to backers).
 
-`backerFeesAccrued` and `accFeePerShare` include every backer credit: the backer fee share, 100% of the vault agent's
-realized profit and the wind-down payout. A backer's claimable amount (`/backers`, `/portfolio`, `/users`) is
-`deposited × accFeePerShare − feesClaimed`, so it covers all three; `claim_backer_fees` pays them in one claim.
+`backerFeesAccrued` and `accFeePerShare` include every backer credit: the backer fee share (Holdfast curve), the backers'
+share of pump.fun creator fees, every `payout_backers` payout, the wind-down payout (and the historical profit split). A
+backer's claimable amount (`/backers`, `/portfolio`, `/users`) is `deposited × accFeePerShare − feesClaimed`, so it covers
+all of them; `claim_backer_fees` pays them in one claim.
 
 ### TradeRow
 
@@ -247,17 +262,20 @@ realized profit and the wind-down payout. A backer's claimable amount (`/backers
 
 `launch` is the launch address (the stable key; `mint` is the default pubkey on a pump launch that hasn't launched).
 `type`: `trade`, `deposit`, `launch_created`, `launched`, `refund`, `cancelled`, `backer_claim`, `creator_claim`,
-`profit_shared`, `wound_down`, `vault_withdrawn`, and on pump launches `creator_fees_collected` (`collect_pump_fees`
-swept pump.fun / PumpSwap creator fees into the launch), `buyback_burned` (`buyback_burn` bought and burned the
-platform's buyback token), `graduated` (`graduate_pump` recorded the PumpSwap pool) and `migrated` (the admin's one-time
-layout migration after the program upgrade).
-`actor` is the trader/backer/creator (the launch creator for the launch-level `launched`/`cancelled`/`profit_shared`/
-`wound_down`/`creator_fees_collected`/`buyback_burned`/`graduated`/`migrated`; the platform fee recipient for
-`vault_withdrawn`). Optional: `isAgent`, `isBuy` (trades), `solAmount` (lamports: trade/deposit/claim amounts, the
-profit credited for `profit_shared`, curve + vault SOL credited to backers for `wound_down`, vault SOL withdrawn for
-`vault_withdrawn`, creator fees collected for `creator_fees_collected`, SOL spent for `buyback_burned`), `tokenAmount`
-(trades, `launched`; tokens returned to the curve for `wound_down`; vault tokens withdrawn for `vault_withdrawn`; tokens
-burned for `buyback_burned`), `ref` (the PumpSwap pool for `graduated`; the mint burned for `buyback_burned`).
+`backers_paid` (`payout_backers` credited backers: `ref` is `principal` or `dividend`), `profit_shared` (historical: the
+profit split that existed before the vault model), `wound_down`, `vault_withdrawn`, and on pump launches
+`creator_fees_collected` (`collect_pump_fees` swept pump.fun / PumpSwap creator fees into the launch and split them
+per the launch's terms), `buyback_burned` (`buyback_burn` bought and burned the platform's buyback token), `graduated`
+(`graduate_pump` recorded the PumpSwap pool) and `migrated` (the admin's one-time layout migration after the program
+upgrade).
+`actor` is the trader/backer/creator (the launch creator for the launch-level `launched`/`cancelled`/`backers_paid`/
+`profit_shared`/`wound_down`/`creator_fees_collected`/`buyback_burned`/`graduated`/`migrated`; the platform fee
+recipient for `vault_withdrawn`). Optional: `isAgent`, `isBuy` (trades), `solAmount` (lamports: trade/deposit/claim
+amounts, the SOL credited to backers for `backers_paid` / `profit_shared`, curve + vault SOL credited to backers for
+`wound_down`, vault SOL withdrawn for `vault_withdrawn`, creator fees collected for `creator_fees_collected`, SOL spent
+for `buyback_burned`), `tokenAmount` (trades, `launched`; tokens returned to the curve for `wound_down`; vault tokens
+withdrawn for `vault_withdrawn`; tokens burned for `buyback_burned`), `ref` (`principal` / `dividend` for
+`backers_paid`; the PumpSwap pool for `graduated`; the mint burned for `buyback_burned`).
 
 ### Comment
 
@@ -297,9 +315,13 @@ burned for `buyback_burned`), `ref` (the PumpSwap pool for `graduated`; the mint
 
 Global platform account (`404` if not initialized). Use a launch's `terms`, not these params, for quotes.
 `holdfastCurveEnabled` says whether `create_launch` (Holdfast curve) is still open — false on mainnet, where new
-launches are pump.fun tokens (`create_launch_pump`); `burnShareBps` is the share of a pump launch's creator fees and of
-the agent's realized profit that goes to its buyback-and-burn pool; `buybackMint` is the token `buyback_burn` buys and
-burns (the default pubkey `11111111111111111111111111111111` while unset: pools accrue, the crank refuses).
+launches are pump.fun tokens (`create_launch_pump`). Pump.fun creator fees swept into a launch split
+`creatorFeeVaultBps` to vault SOL, `burnShareBps` to its buyback-and-burn pool and the rest to backers; backer payback
+(`payout_backers`, agent authority) needs liquid vault SOL ≥ `initialVaultSol × payoutMultBps / 10000`, pays the
+principal first and then `payoutShareBps` of the vault, at most once per `payoutIntervalSecs`, never below
+`minVaultSol` lamports; `deadHoldersBps` is the share of supply outside the vault and venue below which a launch counts
+as dead for `wind_down_pump`; `buybackMint` is the token `buyback_burn` buys and burns (the default pubkey
+`11111111111111111111111111111111` while unset: pools accrue, the crank refuses).
 
 ```json
 { "address": "675WZQsKXyFfCXD2a2iQdhFdYFdgz8HWiCJwrcCBuUgs", "admin": "FwYL…", "feeRecipient": "J2zc…",
@@ -309,7 +331,9 @@ burns (the default pubkey `11111111111111111111111111111111` while unset: pools 
     "minRaiseLamports": "50000000", "agentBuyBpsPerWindow": 1000, "agentSellBpsPerWindow": 500,
     "agentMaxImpactBps": 300, "agentBandBps": 200, "agentWindowSecs": 3600, "emaPeriodSecs": 1800,
     "paused": false, "agentsPaused": false, "maxRaiseLamports": "0", "maxWalletDepositLamports": "0",
-    "holdfastCurveEnabled": false, "burnShareBps": 2500, "buybackMint": "11111111111111111111111111111111" } }
+    "holdfastCurveEnabled": false, "burnShareBps": 1500, "creatorFeeVaultBps": 7500, "payoutMultBps": 50000,
+    "payoutShareBps": 1500, "payoutIntervalSecs": 14400, "deadHoldersBps": 500, "minVaultSol": "100000000",
+    "buybackMint": "11111111111111111111111111111111" } }
 ```
 
 ### `GET /api/stats`
@@ -318,7 +342,8 @@ burns (the default pubkey `11111111111111111111111111111111` while unset: pools 
 { "solUsd": 119.53, "solUsdAt": 1790835350,
   "totalLaunches": 4, "liveLaunches": 2, "raisingLaunches": 1, "woundDownLaunches": 0, "pumpLaunches": 2,
   "totalRaisedSol": 1.08, "totalVolumeSol": 0.817, "volume24hSol": 0.089, "backerFeesAccruedSol": 0.000449,
-  "profitSharedSol": 0, "agentTrades": 0, "vaultSol": 0.312, "vaultTokensValueSol": 0.744, "vaultWithdrawnSol": 0,
+  "profitSharedSol": 0, "backersRepaidSol": 0, "backerPayoutsSol": 0, "agentTrades": 0, "vaultSol": 0.312,
+  "vaultTokensValueSol": 0.744, "vaultWithdrawnSol": 0,
   "buybackPoolSol": 0.05, "burnedSol": 0.12, "creatorFeesCollectedSol": 0.68 }
 ```
 
@@ -326,7 +351,8 @@ burns (the default pubkey `11111111111111111111111111111111` while unset: pools 
 fetched: polled every `PRICE_REFRESH_MS` (60 s) from Jupiter (`lite-api.jup.ag/price/v3`, keyless) with CoinGecko as
 fallback; the last good value is kept in memory and in SQLite through a feed outage or restart, so prices never drop
 to zero, and both are `null` only until the first successful fetch ever. `backerFeesAccruedSol` is everything
-credited to backers (fee share + vault profit share + wind-down payouts); `profitSharedSol` is the vault-profit part.
+credited to backers (fee share + backer payouts + wind-down payouts + the historical profit split); `backersRepaidSol`
+/ `backerPayoutsSol` are the principal and dividends `payout_backers` has paid; `profitSharedSol` is the historical part.
 `vaultSol` / `vaultTokensValueSol` are what the vaults hold now (tokens at spot / venue price); `vaultWithdrawnSol` is
 the SOL the platform admin has withdrawn from vaults with `admin_withdraw_vault`. `pumpLaunches` counts launches with
 `venue: "pump"`; `buybackPoolSol` (SOL waiting for `buyback_burn`), `burnedSol` (SOL already spent on buybacks) and
@@ -410,7 +436,7 @@ the previous close.
 
 ### `GET /api/launches/:id/backers`
 
-Live from chain (one RPC call). Sorted by deposit.
+From the indexed deposit, refund and claim ledger (no RPC call); refunded backers are omitted. Sorted by deposit.
 
 ```json
 { "backers": [ { "owner": "Ckbc…", "deposited": "50000000", "feesClaimed": "224286", "claimable": "0", "shareBps": 10000 } ] }
@@ -674,8 +700,9 @@ same ranking.
 
 ### `GET /api/portfolio/:wallet`
 
-Live from chain (backer accounts + Token-2022 and SPL Token balances; three RPC calls). `holdings` matches token
-balances to launches by mint, so it covers both venues.
+`backed` comes from the indexed deposit, refund and claim ledger (refunded positions are omitted); `holdings` are the
+wallet's Token-2022 and SPL Token balances read from chain (two RPC calls, cached 10 s per wallet) matched to launches
+by mint, so it covers both venues.
 
 ```json
 { "backed": [ { "launch": LaunchSummary, "deposited": "50000000", "feesClaimed": "224286", "claimable": "0",
@@ -707,10 +734,11 @@ Vault-agent overview: totals, per-live-launch window budgets and EMA band, 50 la
 
 ### `POST /api/upload` (multipart/form-data)
 
-Launch metadata for `create_launch`. Fields: `image` (file, required), `name` (≤ 32 bytes, required), `symbol`
-(≤ 10 bytes, required), `description` (≤ 1000 chars), `twitter`, `telegram`, `website` (http(s) URL or handle),
-`whitelist` (JSON array of base58 keys, ≤ 50 000). Images: PNG, JPEG, GIF, WebP or SVG (no scripts), ≤ 4 MB,
-type sniffed from content.
+Launch metadata for `create_launch` / `create_launch_pump`. Fields: `image` (file, required), `name` (≤ 32 bytes,
+required), `symbol` (≤ 10 bytes, required), `launch` (the base58 launch address the metadata is for; the web wizard
+derives it from the create key before creating — the JSON's `extensions.website` becomes `SITE_URL/launch/<launch>`,
+a creator-supplied `website` is ignored), `description` (≤ 1000 chars), `twitter`, `telegram`, `whitelist` (JSON array
+of base58 keys, ≤ 50 000). Images: PNG, JPEG, GIF, WebP or SVG (no scripts), ≤ 4 MB, type sniffed from content.
 
 → `{ "uri": "https://…/files/meta/<id>.json", "image": "https://…/files/img/<id>.png" }` — put `uri` on chain. With
 `STORAGE=arweave` both are Arweave data items instead: `{ "uri": "https://arweave.net/<id>", "image":

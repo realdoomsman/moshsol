@@ -146,8 +146,8 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
     <div className="grid gap-3">
       {woundDown ? (
         <div role="status" className="body rounded-md bg-raised px-4 py-3 text-ink">
-          This launch wound down. {pump ? "The vault was sold into the venue and its SOL" : "Trading has ended for good; the curve and vault SOL"} credited
-          to the backers, who claim it under Your position.
+          This launch wound down. {pump ? "The vault sold what it held and all vault SOL was" : "Trading has ended for good; the curve and vault SOL were"}{" "}
+          credited to the backers, who claim it under Your position.
         </div>
       ) : null}
       <SectionTabs value={section} onChange={setSection} />

@@ -5,6 +5,7 @@ import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import { pumpTradeUrl, VENUE_LABEL, venueKindOf } from "@/lib/launch";
+import { pumpSplit } from "@/lib/pump-terms";
 import type { LaunchSummary } from "@/lib/types";
 import { ButtonAnchor } from "../ui/button";
 import { Chip } from "../ui/chip";
@@ -37,15 +38,16 @@ export function VenueChip({ launch: l, className }: { launch: LaunchSummary; cla
 export function TradeOnPumpPanel({ launch: l, bare, className }: { launch: LaunchSummary; bare?: boolean; className?: string }) {
   const venue = VENUE_LABEL[venueKindOf(l)];
   const woundDown = l.status === "woundDown";
+  const split = pumpSplit(l.terms);
   return (
     <Panel title={bare ? undefined : `Trade on ${venue}`} className={className}>
       <div className="grid gap-4 px-4 pb-4">
         {bare ? <h2 className="h3 text-ink">Trade on {venue}</h2> : null}
         <p className="small text-ink-2">
           ${l.symbol} is a pump.fun token: buys and sells happen on {venue}, with its {PUMP_VENUE_FEE_BPS / 100}% venue fee.
-          pump.fun pays this launch the creator share of every trade; {l.terms.burnShareBps / 100}% of it buys and burns the Holdfast
-          token, {100 - l.terms.burnShareBps / 100}% goes to the vault. The vault agent trades the vault on the same venue under the
-          same rules as every Holdfast launch.
+          pump.fun pays this launch the creator share of every trade: {split.vaultPct}% goes to the vault, {split.burnPct}% buys and
+          burns the Holdfast token, {split.backerPct}% goes to backers. The creator takes 0%. The vault agent trades the vault on the
+          same venue; everything it sells stays in the vault.
         </p>
         <ButtonAnchor
           href={pumpTradeUrl(l)}
@@ -70,7 +72,7 @@ export function TradeOnPumpPanel({ launch: l, bare, className }: { launch: Launc
  * (`collect_pump_fees`, `buyback_burn`, `graduate_pump`) the indexer counts for us.
  */
 export function BuybackCard({ launch: l, now, className }: { launch: LaunchSummary; now: number; className?: string }) {
-  const burn = l.terms.burnShareBps / 100;
+  const split = pumpSplit(l.terms);
   const graduated = l.pump.graduated;
   return (
     <Panel title="Buyback & burn" aside={<VenueChip launch={l} />} className={className}>
@@ -79,7 +81,7 @@ export function BuybackCard({ launch: l, now, className }: { launch: LaunchSumma
           <div className="num-l text-ink">{fmtLamports(l.buybackPoolSol)} SOL</div>
           <div className="small mt-0.5 text-ink-3">
             <RuleTooltip
-              rule={`${burn}% of the pump.fun creator fees this launch collects and ${burn}% of the vault agent's realized profit. Any wallet can spend it on the Holdfast token and burn what it buys (buyback_burn), at most once a minute and 5% of the token's venue liquidity per crank.`}
+              rule={`${split.burnPct}% of the pump.fun creator fees this launch collects. Any wallet can spend it on the Holdfast token and burn what it buys (buyback_burn), at most once a minute and 5% of the token's venue liquidity per crank.`}
             >
               in the buyback pool
             </RuleTooltip>
@@ -98,7 +100,7 @@ export function BuybackCard({ launch: l, now, className }: { launch: LaunchSumma
           <Row
             label={
               <RuleTooltip
-                rule={`pump.fun pays the token's creator a share of every trade; this launch is the creator. Any wallet can collect it (collect_pump_fees): ${burn}% to the buyback pool, ${100 - burn}% to the vault SOL (to backers once wound down). The creator wallet earns nothing from trades on pump launches.`}
+                rule={`pump.fun pays the token's creator a share of every trade; this launch is the creator. Any wallet can collect it (collect_pump_fees): ${split.vaultPct}% to the vault SOL, ${split.burnPct}% to the buyback pool, ${split.backerPct}% to backers (claimable). The creator wallet earns nothing from trades on pump launches.`}
               >
                 Creator fees collected
               </RuleTooltip>

@@ -53,9 +53,10 @@ pub struct CollectPumpFees<'info> {
 
 /// Permissionless: sweeps the creator fees pump.fun (and PumpSwap, once graduated — then the
 /// `collect_pool` accounts follow as remaining accounts) accrued to the launch, which is the
-/// token's creator, and splits them `burn_share` to the buyback pool / rest to vault SOL (to
-/// backers once the launch is wound down). Being permissionless it never samples the EMA
-/// (see `Launch::update_ema_with`).
+/// token's creator, and splits them by the launch's terms: `creator_fee_vault_bps` to vault
+/// SOL (to backers once the launch is wound down), `burn_share_bps` to the buyback pool, the
+/// rest to backers. Being permissionless it never samples the EMA (see
+/// `Launch::update_ema_with`).
 pub fn collect_pump_fees<'info>(ctx: Context<'_, '_, 'info, 'info, CollectPumpFees<'info>>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let launch_key = ctx.accounts.launch.key();
@@ -175,8 +176,7 @@ pub fn collect_pump_fees<'info>(ctx: Context<'_, '_, 'info, 'info, CollectPumpFe
     let amount = launch_info.lamports() - before;
     require!(amount > 0, MoshError::NothingToClaim);
     let launch = &mut ctx.accounts.launch;
-    let (to_pool, rest) = launch.credit_buyback_pool(amount)?;
-    let (to_vault, to_backers) = launch.credit_vault(rest)?;
+    let (to_pool, to_vault, to_backers) = launch.credit_creator_fees(amount)?;
     launch.creator_fees_collected = launch.creator_fees_collected.saturating_add(amount);
     emit!(CreatorFeesCollected {
         launch: launch_key,
@@ -229,15 +229,15 @@ pub struct BuybackBurn<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// Agent-authority crank: spends up to `max_sol` of the launch's buyback pool on the Holdfast
-/// token — on its pump.fun curve while that is open, on its PumpSwap pool after (the venue
-/// accounts follow as remaining accounts in the matching layout) — and burns what it bought.
-/// Guards: platform must have a buyback mint; at least `MIN_BUYBACK_LAMPORTS`; at most
-/// `BUYBACK_MAX_VENUE_BPS` of the venue's quote reserves per call; one call per
-/// `BUYBACK_MIN_INTERVAL_SECS` per launch; the fill must reach both `min_tokens_out` (the
-/// caller's floor, priced off a reference nobody can move inside this transaction — the venue's
-/// own reserves can be, which is why the crank is not permissionless) and
-/// `BUYBACK_MIN_FILL_BPS` of the fee-free quote from the reserves as they are.
+/// Agent-authority crank (paused with the agent by `agents_paused`): spends up to `max_sol` of
+/// the launch's buyback pool on the Holdfast token — on its pump.fun curve while that is open,
+/// on its PumpSwap pool after (the venue accounts follow as remaining accounts in the matching
+/// layout) — and burns what it bought. Guards: platform must have a buyback mint; at least
+/// `MIN_BUYBACK_LAMPORTS`; at most `BUYBACK_MAX_VENUE_BPS` of the venue's quote reserves per
+/// call; one call per `BUYBACK_MIN_INTERVAL_SECS` per launch; the fill must reach both
+/// `min_tokens_out` (the caller's floor, priced off a reference nobody can move inside this
+/// transaction — the venue's own reserves can be, which is why the crank is not permissionless)
+/// and `BUYBACK_MIN_FILL_BPS` of the fee-free quote from the reserves as they are.
 pub fn buyback_burn<'info>(
     ctx: Context<'_, '_, 'info, 'info, BuybackBurn<'info>>,
     max_sol: u64,
@@ -246,6 +246,7 @@ pub fn buyback_burn<'info>(
     let now = Clock::get()?.unix_timestamp;
     let launch_key = ctx.accounts.launch.key();
     let r = ctx.remaining_accounts;
+    require!(!ctx.accounts.platform.params.agents_paused, MoshError::AgentsPaused);
     require_keys_neq!(ctx.accounts.buyback_mint.key(), Pubkey::default(), MoshError::BuybackMintUnset);
     require!(
         now >= ctx.accounts.launch.last_buyback_ts.saturating_add(BUYBACK_MIN_INTERVAL_SECS),

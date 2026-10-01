@@ -58,8 +58,7 @@ export function agentZones(l: LaunchJson, nowSec: number): AgentZones {
   const bandLow = ema * (1 - band);
   const bandHigh = ema * (1 + band);
   const avgCost = l.vaultAvgCostSol;
-  const buybackCeiling =
-    BigInt(l.buybackSol) > 0n && l.agentAvgSellSol !== null ? l.agentAvgSellSol * (1 - band) : null;
+  const buybackCeiling = l.agentAvgSellSol !== null ? l.agentAvgSellSol * (1 - band) : null;
   return {
     ema,
     bandLow,

@@ -1,8 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { StrategyParams } from "../src/strategy";
-import { OBJECTIVE, aggregate, compare, endSol, mean, median, modelScores, runObjective, type Comparison, type Score } from "./metrics";
+import { OBJECTIVE, aggregate, compare, mean, median, modelScores, runObjective, type Comparison, type Score } from "./metrics";
 import type { SimPool } from "./pool";
 import { hashSeed, type Policy, type RunResult, type SimOptions } from "./sim";
-import { runKey, type PoolEntry, type ScenarioSpec } from "./scenarios";
+import { DATA_DIR, runKey, type PoolEntry, type PoolFile, type ScenarioSpec } from "./scenarios";
 
 /** Dataset splits, scenario lists, batched evaluation against cached no-agent baselines, and report tables. */
 
@@ -35,6 +37,26 @@ export function poolSpecs(entries: PoolEntry[], fromMin: number, toMin: number):
 
 export function syntheticSpecs(seeds: number[], hours = SYN_HOURS): ScenarioSpec[] {
   return seeds.map((seed) => ({ kind: "synthetic" as const, seed, hours }));
+}
+
+/** Pools with at least `min` candles inside [fromMin, toMin). */
+function withCandles(entries: PoolEntry[], fromMin: number, toMin: number, min: number): PoolEntry[] {
+  return entries.filter((e) => {
+    const pool = JSON.parse(fs.readFileSync(path.join(DATA_DIR, e.file), "utf8")) as PoolFile;
+    const origin = Math.floor(pool.createdAt / 60) * 60;
+    return pool.candles.filter((c) => c[0] >= origin + fromMin * 60 && c[0] < origin + toMin * 60).length >= min;
+  });
+}
+
+/** Walk-forward specs: every pool's hours 0–24 (+ synthetic TRAIN) to tune on, hours 24–72 to test on; `say` gets the one-line description. */
+export function walkForward(entries: PoolEntry[], say: (line: string) => void = () => {}): { wfTrain: ScenarioSpec[]; wfTest: ScenarioSpec[] } {
+  const first = withCandles(entries, 0, 24 * HOUR_MIN, 60);
+  const later = withCandles(entries, 24 * HOUR_MIN, FULL_MIN, 60);
+  say(`walk-forward: tune on hours 0–24 of ${first.length} pools (+ synthetic TRAIN), test on hours 24–72 of ${later.length} pools, each segment replayed as its own launch`);
+  return {
+    wfTrain: [...poolSpecs(first, 0, 24 * HOUR_MIN), ...syntheticSpecs(SYN_TRAIN_SEEDS)],
+    wfTest: poolSpecs(later, 24 * HOUR_MIN, FULL_MIN),
+  };
 }
 
 /** Runs policies on scenario lists; no-agent and v1 runs are computed once per scenario and cached. */
@@ -135,7 +157,7 @@ export function modelStats(ev: Evaluator, specs: ScenarioSpec[], runs: RunResult
   for (const model of Object.keys(s)) {
     const rs = rows.filter(({ r }) => r.model === model);
     const dv = rs.map(({ c }) => c.dvVwap);
-    const rugLoss = rs.filter(({ r }) => r.tag === "rug").map(({ r }) => (r.sol0 > 0 ? (Math.max(0, r.sol0 - endSol(r)) / r.sol0) * 100 : 0));
+    const rugLoss = rs.filter(({ r }) => r.tag === "rug").map(({ r }) => (r.sol0 > 0 ? (Math.max(0, r.sol0 - r.sol1) / r.sol0) * 100 : 0));
     byModel[model] = {
       n: rs.length,
       dvMedian: median(dv),
@@ -201,8 +223,8 @@ function groups(specs: ScenarioSpec[], runs: RunResult[]): { model: string; labe
 /** Markdown table: one row per (flow model, outcome tag, policy) with means over the group's runs. */
 export function table(ev: Evaluator, specs: ScenarioSpec[], byPolicy: Record<string, RunResult[]>): string {
   const rows: string[] = [
-    "| model | tag | n | policy | ΔV@final % | ΔV@VWAP % (median) | vault tokens Δ% | round-trip tokens % | vault SOL Δ | profit shared SOL | SOL spent | buys/sells | max DD % | DD cut pp | vol× | in band % | planned rej | landed rej (same-slot) |",
-    "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    "| model | tag | n | policy | ΔV@final % | ΔV@VWAP % (median) | vault tokens Δ% | round-trip tokens % | vault SOL Δ | SOL spent | buys/sells | max DD % | DD cut pp | vol× | in band % | planned rej | landed rej (same-slot) |",
+    "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
   ];
   for (const { model, label, idx } of groups(specs, Object.values(byPolicy)[0]!)) {
     for (const [policy, runs] of Object.entries(byPolicy)) {
@@ -211,7 +233,7 @@ export function table(ev: Evaluator, specs: ScenarioSpec[], byPolicy: Record<str
       const trades = policy === "none" ? "–" : `${f(m((c) => c.buys), 0)}/${f(m((c) => c.sells), 0)}`;
       rows.push(
         `| ${model} | ${label} | ${idx.length} | ${policy} | ${f(m((c) => c.dvFinal))} | ${f(m((c) => c.dvVwap))} (${f(median(cs.map((c) => c.dvVwap)))}) | ` +
-          `${f(m((c) => c.dTokensPct))} | ${f(m((c) => c.rtTokensPct))} | ${f(m((c) => c.dSol), 2)} | ${f(m((c) => c.profitShared), 2)} | ${f(m((c) => c.solSpent), 2)} | ${trades} | ${f(m((c) => c.maxDrawdown))} | ` +
+          `${f(m((c) => c.dTokensPct))} | ${f(m((c) => c.rtTokensPct))} | ${f(m((c) => c.dSol), 2)} | ${f(m((c) => c.solSpent), 2)} | ${trades} | ${f(m((c) => c.maxDrawdown))} | ` +
           `${f(m((c) => c.ddCut))} | ${f(m((c) => c.volRatio), 3)} | ${f(m((c) => c.inBand))} | ${cs.reduce((s, c) => s + c.plannedRejects, 0)} | ` +
           `${cs.reduce((s, c) => s + c.landedRejects, 0)} (${cs.reduce((s, c) => s + c.sameSlot, 0)}) |`,
       );

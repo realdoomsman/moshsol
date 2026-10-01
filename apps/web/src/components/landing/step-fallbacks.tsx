@@ -4,13 +4,13 @@ import { agentZones, fmtPrice, lamportsToSol, previewBundle, previewPumpBundle, 
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
+import { fmtMult } from "@/lib/pump-terms";
 import { useNow } from "@/lib/hooks";
 import { launchHref, launchId } from "@/lib/launch";
 import { useAgentStatus, useBackers, useLaunches } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { Mark } from "../brand/mark";
 import { decisionDeviation, decisionHeadline, fmtDeviation } from "../band/model";
-import { useHeroPick } from "../band/use-hero-pick";
 import { BandMeter } from "../token/band-meter";
 import { Address } from "../ui/address";
 import { formatCountdown } from "../ui/countdown";
@@ -18,6 +18,7 @@ import { EmptyState } from "../ui/empty-state";
 import { ProgressBar } from "../ui/progress";
 import { Skeleton } from "../ui/skeleton";
 import { TokenAvatar } from "../ui/token-avatar";
+import { useFeatured } from "./use-featured";
 
 /**
  * Live stand-ins for the four product-loop recordings (§3.9) until the files exist: each shows the
@@ -107,7 +108,7 @@ export function RaiseFallback() {
 
 /** 02 The bundle buys first: a live launch's vault, with what has left it. */
 export function LockFallback() {
-  const { seed, loading } = useHeroPick();
+  const { seed, loading } = useFeatured();
   if (!seed) return loading ? <Loading /> : <EmptyState>No launch has bought its bundle yet.</EmptyState>;
   const l = seed;
   return (
@@ -124,9 +125,14 @@ export function LockFallback() {
       </div>
       <div className="px-5 pb-4 pt-4">
         <Row k="Vault tokens">{fmtTokens(l.vaultTokens)}</Row>
-        <Row k="Vault SOL">{fmtLamports(l.vaultSol)} SOL</Row>
+        <Row k="Vault SOL">
+          {fmtLamports(l.vaultSol)} SOL{l.payoutMultiple > 0 ? ` · ${fmtMult(l.payoutMultiple)} its start` : ""}
+        </Row>
         <Row k="Bundle bought at">{fmtPrice(lamportsToSol(l.bundleSol) / (Number(BigInt(l.bundleTokens)) / 1e6))} SOL</Row>
-        <Row k="Agent profit to backers">{fmtSolValue(l.profitSharedSol)} SOL</Row>
+        <Row k="Backers repaid">
+          {fmtSolValue(l.backersRepaidSol)} SOL{l.backerPayoutsSol > 0 ? ` + ${fmtSolValue(l.backerPayoutsSol)} SOL on top` : ""}
+        </Row>
+        {l.profitSharedSol > 0 ? <Row k="Profit shared (old model)">{fmtSolValue(l.profitSharedSol)} SOL</Row> : null}
       </div>
     </div>
   );
@@ -134,7 +140,7 @@ export function LockFallback() {
 
 /** 03 The agent defends: the vault agent's latest call on the featured launch, on its band. */
 export function AgentFallback() {
-  const { seed, loading, nowSec } = useHeroPick();
+  const { seed, loading, nowSec } = useFeatured();
   const status = useAgentStatus();
   if (!seed) return loading ? <Loading /> : <EmptyState>No live launch for the vault agent to trade yet.</EmptyState>;
   const d = status.data?.decisions.find((x) => x.mint === seed.mint);
@@ -172,9 +178,9 @@ export function AgentFallback() {
   );
 }
 
-/** 04 Backers earn: the featured launch's fee ledger — accrued, claimed, claimable per backer. */
+/** 04 Backers get paid: the featured launch's backer ledger — creator-fee share and payback claimed and claimable per backer. */
 export function ClaimFallback() {
-  const { seed, loading } = useHeroPick();
+  const { seed, loading } = useFeatured();
   if (!seed) return loading ? <Loading /> : <EmptyState>No live launch paying backer fees yet.</EmptyState>;
   return <BackerLedger seed={seed} />;
 }

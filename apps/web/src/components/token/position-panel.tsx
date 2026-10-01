@@ -8,6 +8,7 @@ import { useBackerAccount, useMoshClient, useTokenBalance } from "@/lib/chain";
 import { fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
 import { launchId } from "@/lib/launch";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
+import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import type { LaunchSummary } from "@/lib/types";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
@@ -23,8 +24,8 @@ function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
 }
 
 /**
- * Your position (§4.5): holdings, backer share + claimable earnings (fee share, the backers' share of
- * vault agent profit, wind-down payout — one accumulator, one claim), creator fees if you created it
+ * Your position (§4.5): holdings, backer share + claimable earnings (the backers' cut of venue fees,
+ * backer payback, wind-down payout — one accumulator, one claim), creator fees if you created it
  * (Holdfast launches only: pump launches have no creator share). Hidden while disconnected — no
  * "connect to see" wall.
  */
@@ -43,6 +44,10 @@ export function PositionPanel({ launch: l, className }: { launch: LaunchSummary;
   const creatorFees = BigInt(l.creatorFeesUnclaimed);
   const seedKey = seedKeyOf(l);
   const pump = l.venue === "pump";
+  const split = pumpSplit(l.terms);
+  // Payback so far, pro rata; the fields are absent from an indexer that predates the payback model.
+  const repaid = ((l.backersRepaidSol ?? 0) * share) / 100;
+  const dividends = ((l.backerPayoutsSol ?? 0) * share) / 100;
   const held = tokens.data ?? 0n;
   const busy = (label: string) => tx.pending === label;
   const claim = (label: string, amount: bigint, build: (payer: PublicKey) => Promise<TransactionInstruction>) =>
@@ -77,12 +82,21 @@ export function PositionPanel({ launch: l, className }: { launch: LaunchSummary;
               <Row label="Your vault slice">
                 {fmtSolValue((lamportsToSol(l.vaultSol) * share) / 100)} SOL + {fmtTokens((BigInt(l.vaultTokens) * BigInt(Math.round(share * 10_000))) / 1_000_000n)}
               </Row>
+              {repaid > 0 || dividends > 0 ? (
+                <>
+                  <Row label="Principal repaid">{fmtSolValue(repaid)} SOL</Row>
+                  <Row label="Dividends">{fmtSolValue(dividends)} SOL</Row>
+                </>
+              ) : null}
               <Row label="Claimed">{fmtLamports(backer.data?.feesClaimed ?? 0n)} SOL</Row>
             </dl>
             <p className="small text-ink-3">
               {pump
-                ? `${100 - l.terms.burnShareBps / 100}% of the vault agent's realized profit and any wind-down payout add up here (the rest buys and burns the Holdfast token). One claim collects all of it.`
-                : "Your fee share, your share of the vault agent's profit and any wind-down payout add up here. One claim collects all of it."}
+                ? `Your share of ${split.backerPct}% of the creator fees pump.fun pays this launch, of any backer payback and of any wind-down payout adds up here. `
+                : "Your fee share, any backer payback and any wind-down payout add up here. "}
+              When the vault is {fmtMult(split.payoutMult)} its start and the chart is strong, the vault agent may pay backers back (principal
+              first, then {split.payoutSharePct}% of the vault every {fmtInterval(split.payoutIntervalHours)}); buying back dips always comes
+              first. One claim collects all of it.
             </p>
             <Button
               variant="accent"

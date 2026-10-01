@@ -27,6 +27,9 @@ const app = await createServer({
   uploadLimitPerMin: config.uploadLimitPerMin,
   trustProxy: config.trustProxy,
 });
+if (config.trustProxy === true) {
+  app.log.warn("TRUST_PROXY trusts every hop: clients can spoof X-Forwarded-For and escape per-IP limits; list the proxy addresses instead");
+}
 const price = new SolPrice(store, app.log.child({ module: "price" }), { refreshMs: config.priceRefreshMs });
 const sync = new ChainSync(store, client, hub, holders, price, app.log.child({ module: "sync" }), {
   pollMs: config.pollMs,
@@ -39,6 +42,7 @@ const sync = new ChainSync(store, client, hub, holders, price, app.log.child({ m
 const arweave = config.arweave ? new ArweaveStore(config.arweave, store, app.log.child({ module: "arweave" })) : null;
 registerApi(app, { store, client, sync, hub, holders, price }, {
   ...files,
+  siteUrl: config.siteUrl,
   adminToken: config.adminToken,
   commentLimitPerMin: config.commentLimitPerMin,
   socialIpLimitPerMin: config.socialIpLimitPerMin,

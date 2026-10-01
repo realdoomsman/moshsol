@@ -574,12 +574,16 @@ export class ChainSync {
       case "platformFeesSwept":
         // Not part of the public activity feed; the launch snapshot refresh reflects it.
         return { launch, inserted: false };
-      case "vaultProfitShared":
-        // Emitted right after the agent sell's `trade` event: the realized profit (pump launches: `toBuybackPool`
-        // of it went to the buyback pool instead of backers; the snapshot's `buybackPoolSol` shows that).
+      case "backersPaid":
+        // `payout_backers` (agent authority): the principal (`kind` 0) or a dividend (`kind` 1) credited to backers.
         return {
           launch,
-          inserted: activity({ type: "profit_shared", actor: null, sol_amount: ev.data.amount.toString() }),
+          inserted: activity({
+            type: "backers_paid",
+            actor: null,
+            sol_amount: ev.data.amount.toString(),
+            ref: ev.data.kind === 0 ? "principal" : "dividend",
+          }),
         };
       case "woundDown":
         return {
@@ -602,7 +606,8 @@ export class ChainSync {
           }),
         };
       case "creatorFeesCollected":
-        // `collect_pump_fees`: pump.fun / PumpSwap creator fees swept into the launch (25% buyback pool, 75% vault).
+        // `collect_pump_fees`: pump.fun / PumpSwap creator fees swept into the launch and split by the frozen terms
+        // (vault SOL / buyback pool / backers).
         return {
           launch,
           inserted: activity({ type: "creator_fees_collected", actor: null, sol_amount: ev.data.amount.toString() }),

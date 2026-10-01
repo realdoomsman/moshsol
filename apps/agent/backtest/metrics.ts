@@ -3,10 +3,10 @@ import type { RunResult } from "./sim";
 /**
  * Per-run comparison against the no-agent run of the same scenario, and the training objective.
  *
- * Vault value = SOL + tokens × mark + the agent's realized profit already paid to backers (agent
- * sells return only the sold tokens' cost to the vault), relative to the no-agent vault's value
- * (which never trades: bundle tokens + reserve SOL). Marks: each run's own final spot and its own
- * public 24 h VWAP, so price support shows up in the value of the tokens the vault still holds.
+ * Vault value = SOL + tokens × mark (every agent sell's proceeds stay in the vault as liquid SOL),
+ * relative to the no-agent vault's value (which never trades: bundle tokens + reserve SOL). Marks: each
+ * run's own final spot and its own public 24 h VWAP, so price support shows up in the value of the
+ * tokens the vault still holds.
  */
 
 export interface Comparison {
@@ -21,13 +21,11 @@ export interface Comparison {
   lnVwap: number;
   /** Net SOL the vault spent (reserve deployed) as % of the vault's starting value. */
   netSpentPct: number;
-  /** Vault tokens and SOL at the end vs start: % of starting tokens, SOL (vault only; profit paid out is `profitShared`). */
+  /** Vault tokens and SOL at the end vs start: % of starting tokens, SOL. */
   dTokensPct: number;
   /** Round-trip gain: tokens bought minus the tokens the spent SOL was sold for (at the average agent sell price), % of starting tokens. */
   rtTokensPct: number;
   dSol: number;
-  /** Realized agent-sell profit paid to backers, SOL. */
-  profitShared: number;
   solSpent: number;
   solReceived: number;
   buys: number;
@@ -47,12 +45,8 @@ export interface Comparison {
 /** SOL + tokens (whole) × mark (lamports per base unit) in SOL. */
 export const value = (sol: number, tokens: number, mark: number) => sol + (tokens * mark) / 1_000;
 
-/** SOL on the backers' side at the end of a run: left in the vault plus the profit share paid out. */
-export const endSol = (r: RunResult) => r.sol1 + r.profitShared;
-
 export function compare(base: RunResult, run: RunResult): Comparison {
-  const ratio = (markRun: number, markBase: number) =>
-    value(endSol(run), run.tokens1, markRun) / value(endSol(base), base.tokens1, markBase);
+  const ratio = (markRun: number, markBase: number) => value(run.sol1, run.tokens1, markRun) / value(base.sol1, base.tokens1, markBase);
   const vwapRatio = ratio(run.vwap24, base.vwap24);
   const a = run.agent;
   const landed = a ? Object.values(a.landedRejects).reduce((s, n) => s + (n ?? 0), 0) : 0;
@@ -64,11 +58,10 @@ export function compare(base: RunResult, run: RunResult): Comparison {
     dvFinal: (ratio(run.finalPrice, base.finalPrice) - 1) * 100,
     dvVwap: (vwapRatio - 1) * 100,
     lnVwap: Math.log(vwapRatio) * 100,
-    netSpentPct: (Math.max(0, run.sol0 - endSol(run)) / value(run.sol0, run.tokens0, run.startPrice)) * 100,
+    netSpentPct: (Math.max(0, run.sol0 - run.sol1) / value(run.sol0, run.tokens0, run.startPrice)) * 100,
     dTokensPct: ((run.tokens1 - run.tokens0) / run.tokens0) * 100,
     rtTokensPct: a && a.solReceived > 0 ? ((a.tokensBought - (a.solSpent * a.tokensSold) / a.solReceived) / run.tokens0) * 100 : 0,
     dSol: run.sol1 - run.sol0,
-    profitShared: run.profitShared,
     solSpent: a?.solSpent ?? 0,
     solReceived: a?.solReceived ?? 0,
     buys: a?.buys ?? 0,

@@ -6,6 +6,8 @@ import { ApiError, type LaunchFilter, type LaunchSort, type Timeframe } from "./
 import { useFallbackInterval } from "./live";
 import {
   activityQuery,
+  agentActivityQuery,
+  agentResearchQuery,
   agentStatusQuery,
   agentsQuery,
   backersQuery,
@@ -239,6 +241,25 @@ export function useAgentStatus() {
   return useQuery({
     ...agentStatusQuery(),
     refetchInterval: 4_000,
+    retry: false,
+  });
+}
+
+/** The agent's decision log for one launch (`launchId`); polls while mounted, empty until the agent has decided anything. */
+export function useAgentActivity(id: string, enabled = true) {
+  return useQuery({
+    ...agentActivityQuery(id),
+    refetchInterval: 10_000,
+    retry: false,
+    enabled,
+  });
+}
+
+/** What the agent's research loop learned (`GET /research`); refreshes slowly, it changes at most hourly. */
+export function useAgentResearch() {
+  return useQuery({
+    ...agentResearchQuery(),
+    refetchInterval: 120_000,
     retry: false,
   });
 }

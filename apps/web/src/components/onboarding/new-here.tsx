@@ -4,7 +4,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { X } from "lucide-react";
 import Link from "next/link";
 import { useSyncExternalStore } from "react";
-import { pumpSplit } from "@/lib/pump-terms";
+import { fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { usePlatform } from "@/lib/queries";
 import { Term } from "../glossary";
 import { Button, IconButton } from "../ui/button";
@@ -61,11 +61,13 @@ export function NewHere({ className }: { className?: string }) {
           <Term k="bundle" split={s} />, before anyone else can trade.
         </li>
         <li>
-          The bundle sits in a <Term k="vault" split={s} /> traded only by a rate-limited <Term k="vaultAgent" split={s} />. Backers get{" "}
-          {s.backerPct}% of its realized profit; {s.burnPct}% buys and burns the Holdfast token.
+          The bundle sits in a <Term k="vault" split={s} /> traded only by a rate-limited <Term k="vaultAgent" split={s} />. What it sells
+          stays in the vault; {s.backerPct}% of the token&rsquo;s creator fees go to backers, {s.vaultPct}% to the vault and {s.burnPct}%
+          buys and burns the Holdfast token.
         </li>
         <li>
-          Miss the minimum raise and backers get 100% back. Buying and selling the token itself happens on pump.fun.
+          <Term k="payback" split={s}>Payback</Term>: when the vault is {fmtMult(s.payoutMult)} its start and the chart is strong, the agent
+          may pay backers back. Miss the minimum raise and backers get 100% back. Buying and selling the token itself happens on pump.fun.
         </li>
       </ul>
       <div className="mt-4 flex flex-wrap items-center gap-3">

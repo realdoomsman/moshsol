@@ -19,7 +19,8 @@
     "handoff": "pnpm --filter @holdfast/scripts run handoff",
     "upgrade": "pnpm --filter @holdfast/scripts run upgrade",
     "migrate:launches": "pnpm --filter @holdfast/scripts run migrate",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "vault:withdraw": "pnpm --filter @holdfast/scripts run vault-withdraw"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"

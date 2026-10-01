@@ -281,6 +281,24 @@ impl Env {
         Pubkey::new_from_array(g[57..89].try_into().unwrap())
     }
 
+    /// Rewrites pump.fun's fee config so curve trades pay `protocol_bps` on top of the 0.3%
+    /// creator fee (mainnet today: 0.95% + 0.3%); lets a test make the venue keep more of a
+    /// fill than the program's 97% floor allows.
+    pub fn set_pump_protocol_fee_bps(&mut self, protocol_bps: u64) {
+        let key = fee_config(&PUMP_PROGRAM_ID);
+        let mut a = self.svm.get_account(&key).unwrap();
+        // FeeConfig { bump, admin, flat_fees: Fees { lp, protocol, creator }, fee_tiers:
+        // Vec<FeeTier { market_cap_lamports_threshold: u128, fees: Fees }> } behind the
+        // discriminator; the fixture has one tier.
+        const FLAT_PROTOCOL: usize = 8 + 1 + 32 + 8;
+        const TIER0_PROTOCOL: usize = 8 + 1 + 32 + 24 + 4 + 16 + 8;
+        assert_eq!(u32::from_le_bytes(a.data[65..69].try_into().unwrap()), 1, "one fee tier in the fixture");
+        for at in [FLAT_PROTOCOL, TIER0_PROTOCOL] {
+            a.data[at..at + 8].copy_from_slice(&protocol_bps.to_le_bytes());
+        }
+        self.svm.set_account(key, a).unwrap();
+    }
+
     pub fn curve(&self, mint: &Pubkey) -> Curve {
         let d = self.svm.get_account(&pump::bonding_curve_pda(mint)).unwrap().data;
         let u = |at: usize| u64::from_le_bytes(d[at..at + 8].try_into().unwrap());
@@ -653,7 +671,7 @@ impl Env {
         self.send(&[ix], &[admin])
     }
 
-    pub fn migrate_launch(&mut self, admin: &Keypair, launch: &Pubkey) -> TxResult {
+    pub fn migrate_launch(&mut self, admin: &Keypair, launch: &Pubkey, initial_vault_sol: u64) -> TxResult {
         let ix = Instruction {
             program_id: moshsol::ID,
             accounts: moshsol::accounts::MigrateLaunch {
@@ -663,9 +681,39 @@ impl Env {
                 system_program: system_program::ID,
             }
             .to_account_metas(None),
-            data: moshsol::instruction::MigrateLaunch {}.data(),
+            data: moshsol::instruction::MigrateLaunch { initial_vault_sol }.data(),
         };
         self.send(&[ix], &[admin])
+    }
+
+    pub fn payout_backers_as(&mut self, agent: &Keypair, launch: &Pubkey) -> TxResult {
+        let ix = Instruction {
+            program_id: moshsol::ID,
+            accounts: moshsol::accounts::PayoutBackers {
+                agent: agent.pubkey(),
+                platform: platform_pda(),
+                launch: *launch,
+            }
+            .to_account_metas(None),
+            data: moshsol::instruction::PayoutBackers {}.data(),
+        };
+        self.send(&[ix], &[agent])
+    }
+
+    pub fn payout_backers(&mut self, launch: &Pubkey) -> TxResult {
+        let agent = self.agent.insecure_clone();
+        self.payout_backers_as(&agent, launch)
+    }
+
+    /// Rewrites a launch account by address (see `set_launch`).
+    pub fn set_launch_at(&mut self, launch: &Pubkey, f: impl FnOnce(&mut Launch)) {
+        let mut acct = self.svm.get_account(launch).unwrap();
+        let mut l = self.launch_at(launch);
+        f(&mut l);
+        let mut data = Vec::with_capacity(acct.data.len());
+        l.try_serialize(&mut data).unwrap();
+        acct.data[..data.len()].copy_from_slice(&data);
+        self.svm.set_account(*launch, acct).unwrap();
     }
 
     /// Creates a pump launch, funds it and launches it as the creator.

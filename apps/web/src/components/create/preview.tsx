@@ -90,7 +90,7 @@ export function BundleTable({ range, loading }: { range: BundleRange | null; loa
     },
     { label: "Start price", min: fmtPrice(range.atMin.priceAfter), max: fmtPrice(range.atMax.priceAfter) },
     {
-      label: <RuleTooltip rule="SOL kept in the vault for the agent's dip buys: the reserve plus anything the bundle cap leaves over.">Vault SOL</RuleTooltip>,
+      label: <RuleTooltip rule="SOL kept in the vault as the agent's capital for dip buys: the reserve plus anything the bundle cap leaves over. What the agent sells later stays in the vault too.">Vault SOL</RuleTooltip>,
       min: fmtLamports(range.atMin.vaultSol),
       max: fmtLamports(range.atMax.vaultSol),
     },

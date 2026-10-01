@@ -2,6 +2,7 @@
 
 import type { LaunchTermsJson } from "@holdfast/sdk";
 import { useState, type ReactNode } from "react";
+import { fmtInterval, fmtMult, pumpSplit, type PumpTermsLike } from "@/lib/pump-terms";
 import type { LaunchSummary, PlatformInfo } from "@/lib/types";
 import { Address } from "../ui/address";
 import { Select } from "../ui/select";
@@ -16,10 +17,8 @@ function span(secs: number): string {
   return `${secs} s`;
 }
 
-type AgentTerms = Pick<
-  LaunchTermsJson,
-  "agentBandBps" | "agentBuyBpsPerWindow" | "agentSellBpsPerWindow" | "agentMaxImpactBps" | "agentWindowSecs" | "emaPeriodSecs"
->;
+type AgentTerms = PumpTermsLike &
+  Pick<LaunchTermsJson, "agentBandBps" | "agentBuyBpsPerWindow" | "agentSellBpsPerWindow" | "agentMaxImpactBps" | "agentWindowSecs" | "emaPeriodSecs">;
 
 interface RuleRow {
   rule: ReactNode;
@@ -29,6 +28,7 @@ interface RuleRow {
 
 function rows(t: AgentTerms, platform: PlatformInfo, scope: string): RuleRow[] {
   const terms = `Program · ${scope}`;
+  const s = pumpSplit(t);
   return [
     {
       rule: <RuleTooltip rule="The EMA is a slow moving average of price; the band is measured from it.">Buy band</RuleTooltip>,
@@ -47,13 +47,24 @@ function rows(t: AgentTerms, platform: PlatformInfo, scope: string): RuleRow[] {
       by: terms,
     },
     {
-      rule: <RuleTooltip rule="How far one agent trade may move the curve price.">Max impact per trade</RuleTooltip>,
+      rule: <RuleTooltip rule="How far one agent trade may move the venue price.">Max impact per trade</RuleTooltip>,
       value: pct(t.agentMaxImpactBps),
       by: terms,
     },
     { rule: "EMA period", value: span(t.emaPeriodSecs), by: terms },
+    { rule: "Sell proceeds", value: "Stay in the vault as SOL; nothing is split off a sell", by: "Program" },
+    { rule: "Buy-backs", value: "Paid from vault SOL: the reserve, past sell proceeds and the vault's share of creator fees", by: "Program" },
+    {
+      rule: <RuleTooltip rule="SOL the vault always keeps for fees and rent (min_vault_sol).">Vault floor</RuleTooltip>,
+      value: `${s.minVaultSol} SOL; no agent buy and no payout may take the vault below it`,
+      by: terms,
+    },
+    {
+      rule: <RuleTooltip rule="payout_backers: signed by the agent authority only, never more than once per interval.">Backer payback</RuleTooltip>,
+      value: `Only when liquid vault SOL ≥ ${fmtMult(s.payoutMult)} what went in at launch and the chart is strong: the principal first, then ${s.payoutSharePct}% of the vault, at most once per ${fmtInterval(s.payoutIntervalHours)}. Buying back dips comes first`,
+      by: `${terms} · chart strength is the agent's check`,
+    },
     { rule: "Trade fee", value: "None on agent trades", by: "Program" },
-    { rule: "Sell profit", value: "100% to backers: fill minus the sold tokens' average cost, paid through the fee accumulator", by: "Program" },
     { rule: "Withdraw", value: "The agent can't. The platform admin can, with admin_withdraw_vault; every withdrawal is public", by: "Program" },
     {
       rule: "Agent signer",
@@ -62,7 +73,7 @@ function rows(t: AgentTerms, platform: PlatformInfo, scope: string): RuleRow[] {
     },
     {
       rule: "Agents paused",
-      value: platform.params.agentsPaused ? "Yes: no agent trades until the admin resumes them" : "No",
+      value: platform.params.agentsPaused ? "Yes: no agent trades or payouts until the admin resumes them" : "No",
       by: "Platform admin",
     },
   ];

@@ -44,7 +44,7 @@ function LaunchedNow({ launch: l }: { launch: LaunchSummary }) {
             {fmtPct(b.supplyPct)} of supply
           </Cell>
           <Cell label="Vault tokens">{fmtTokens(b.bundleTokens)}</Cell>
-          <Cell label="Vault SOL" rule="Kept in the vault for the agent to buy dips with.">
+          <Cell label="Vault SOL" rule="Kept in the vault as the agent's capital to buy dips with; what it sells later stays here too.">
             {fmtLamports(b.vaultSol)} SOL
           </Cell>
           <Cell label={pump ? "SOL into pump.fun" : "SOL into the curve"}>{fmtLamports(b.bundleSol)} SOL</Cell>

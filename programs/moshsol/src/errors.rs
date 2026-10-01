@@ -70,7 +70,7 @@ pub enum MoshError {
     LaunchTooYoung,
     #[msg("Launch traded in the last 24 hours; it can't wind down yet")]
     RecentTrade,
-    #[msg("Tokens are held outside the curve and vault; the launch can't wind down")]
+    #[msg("More tokens are held outside the venue and vault than a dead launch allows; it can't wind down")]
     OutsideHolders,
     #[msg("This instruction is for the other venue (Holdfast curve vs pump.fun)")]
     WrongVenue,
@@ -88,4 +88,8 @@ pub enum MoshError {
     BuybackThrottled,
     #[msg("Account already uses the current layout")]
     AlreadyMigrated,
+    #[msg("No backer payout is due: vault SOL under the payback target or the last payout is too recent")]
+    PayoutNotDue,
+    #[msg("Vault SOL may not drop below the launch's minimum vault reserve")]
+    VaultFloor,
 }

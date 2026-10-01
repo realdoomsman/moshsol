@@ -6,19 +6,23 @@ import { DEFAULT_PARAMS, evaluate, sellAllowance, type StrategyParams } from "..
 import { compare, runObjective } from "./metrics";
 import { PRODUCTION_TERMS, agentSell, launch, type Chain } from "./program";
 import { ScenarioBuilder } from "./scenarios";
-import { Market, T0, simulate, type Policy } from "./sim";
+import { Market, T0, simulate } from "./sim";
 
-// Seeded public flow and seeded agent timing make a run a pure function of (scenario, policy), so
-// this comparison is stable: the default policy must keep beating the frozen v1 rule on a fixed
-// synthetic launch whose seed is outside the TRAIN and TEST sets.
-test("default policy beats v1 on a fixed synthetic launch", () => {
+// Seeded public flow and seeded agent timing make a run a pure function of (scenario, policy), so this
+// run is stable: on a fixed synthetic launch whose seed is outside the TRAIN and TEST sets the default
+// policy must trade both ways, and the vault's SOL must account for every lamport it spent and received
+// (sell proceeds stay in the vault; nothing is shared out) while never dropping below the launch's floor.
+test("default policy round-trips and keeps every sell's proceeds in the vault on a fixed synthetic launch", () => {
   const sc = new ScenarioBuilder().build({ kind: "synthetic", seed: 900, hours: 12 });
   const base = simulate(sc, { kind: "none" });
   assert.deepEqual(simulate(sc, { kind: "none" }), base, "the simulation must be deterministic");
-  const objective = (policy: Policy) => runObjective(compare(base, simulate(sc, policy)));
-  const tuned = objective({ kind: "tuned", params: DEFAULT_PARAMS });
-  const v1 = objective({ kind: "v1" });
-  assert.ok(tuned > v1, `default objective ${tuned.toFixed(2)} ≤ v1 ${v1.toFixed(2)}`);
+  const run = simulate(sc, { kind: "tuned", params: DEFAULT_PARAMS });
+  const a = run.agent!;
+  assert.ok(a.buys > 0 && a.sells > 0, `expected trades both ways, got ${a.buys} buys / ${a.sells} sells`);
+  assert.equal(a.plannedRejects, 0, `planned rejects: ${JSON.stringify(a.plannedRejectKinds)}`);
+  assert.ok(Math.abs(run.sol1 - (run.sol0 - a.solSpent + a.solReceived)) < 1e-6, `vault SOL ${run.sol1} ≠ ${run.sol0} − ${a.solSpent} + ${a.solReceived}`);
+  assert.ok(run.sol1 >= Number(PRODUCTION_TERMS.minVaultSol) / 1e9, `vault SOL ${run.sol1} under the floor`);
+  assert.ok(Number.isFinite(runObjective(compare(base, run))));
 });
 
 /**

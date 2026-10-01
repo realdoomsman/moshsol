@@ -4,6 +4,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useState } from "react";
 import { fmtLamports, fmtSolValue } from "@/lib/format";
 import { launchId } from "@/lib/launch";
+import { fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { useBackers } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { Chip, RoleChip } from "../ui/chip";
@@ -17,8 +18,8 @@ const PAGE = 50;
 
 /**
  * Backers tab (§4.5, bags "fees shared"): who funded the first buy and what each has earned — deposit,
- * pool share, claimed, claimable, total — with everything paid to backers underneath (fee share,
- * vault agent profit, wind-down payout: one accumulator, one claim).
+ * pool share, claimed, claimable, total — with everything paid to backers underneath (their cut of
+ * venue fees, backer payback, wind-down payout: one accumulator, one claim).
  */
 export function BackersTab({ launch: l, onFilterMaker }: { launch: LaunchSummary; onFilterMaker?: (wallet: string) => void }) {
   const q = useBackers(launchId(l));
@@ -64,8 +65,8 @@ export function BackersTab({ launch: l, onFilterMaker }: { launch: LaunchSummary
                 {l.status === "refunding"
                   ? "Every deposit has been refunded. Refunded backer accounts close on-chain."
                   : l.venue === "pump"
-                    ? `No backers yet. Deposits fund the first buy on pump.fun and earn ${100 - l.terms.burnShareBps / 100}% of the vault agent's profit.`
-                    : "No backers yet. Deposits fund the first buy and earn a share of every trade plus all of the vault agent's profit."}
+                    ? `No backers yet. Deposits fund the first buy on pump.fun and earn ${pumpSplit(l.terms).backerPct}% of its creator fees, plus the payback once the vault is ${fmtMult(pumpSplit(l.terms).payoutMult)} its start.`
+                    : "No backers yet. Deposits fund the first buy and earn a share of every trade, plus the payback once the vault is strong."}
               </EmptyState>
             </TableMessage>
           ) : (
@@ -111,7 +112,11 @@ export function BackersTab({ launch: l, onFilterMaker }: { launch: LaunchSummary
         <div className="flex flex-wrap items-baseline justify-between gap-3 border-t border-line px-4 py-3">
           <span className="small text-ink-2">
             Paid to backers
-            {l.profitSharedSol > 0 ? ` (${fmtSolValue(l.profitSharedSol)} SOL from vault profit)` : ""}
+            {(l.backersRepaidSol ?? 0) + (l.backerPayoutsSol ?? 0) > 0
+              ? ` (${fmtSolValue(l.backersRepaidSol ?? 0)} SOL principal, ${fmtSolValue(l.backerPayoutsSol ?? 0)} SOL dividends)`
+              : l.profitSharedSol > 0
+                ? ` (${fmtSolValue(l.profitSharedSol)} SOL under the old profit split)`
+                : ""}
           </span>
           <span className="num-l text-ink">{fmtLamports(l.backerFeesAccrued)} SOL</span>
         </div>

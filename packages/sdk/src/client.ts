@@ -99,6 +99,43 @@ export function pumpRefOf(l: Pick<LaunchJson, "address" | "mint" | "pump">): Pum
 /** Why `wind_down` would fail right now; null = it would succeed. */
 export type WindDownBlocker = "notLive" | "tooYoung" | "recentTrade" | "outsideHolders";
 
+/** Backer payback state of a launch at `nowSec` (lamports as bigint), mirroring `payout_backers`. */
+export interface PayoutStatus {
+  /** Liquid vault SOL the payback needs: `initialVaultSol × payoutMultBps / 10000`. */
+  target: bigint;
+  /** Liquid vault SOL now (tokens don't count). */
+  liquid: bigint;
+  /** Vault floor a payout (or an agent buy) may never go below. */
+  minVaultSol: bigint;
+  /** `backersRepaid ≥ initialVaultSol`: the next payout is a dividend, not the principal. */
+  principalRepaid: boolean;
+  /** Earliest time the interval allows the next payout (`lastPayoutTs + payoutIntervalSecs`). */
+  nextCheckAt: number;
+  /** What the next payout would credit to backers if cranked now (0 when not due). */
+  amount: bigint;
+  /** Whether `payout_backers` would succeed right now (live, interval elapsed, liquid ≥ target, floor kept). */
+  due: boolean;
+}
+
+type PayoutInput = Pick<
+  LaunchJson,
+  "status" | "initialVaultSol" | "backersRepaid" | "vaultSol" | "lastPayoutTs" | "terms"
+> | LaunchAccount;
+
+export function payoutStatus(l: PayoutInput, nowSec: number): PayoutStatus {
+  const live = typeof l.status === "string" ? l.status === "live" : "live" in l.status;
+  const initial = BigInt(l.initialVaultSol.toString());
+  const liquid = BigInt(l.vaultSol.toString());
+  const minVaultSol = BigInt(l.terms.minVaultSol.toString());
+  const target = (initial * BigInt(l.terms.payoutMultBps)) / 10_000n;
+  const repaid = BigInt(l.backersRepaid.toString());
+  const principalRepaid = repaid >= initial;
+  const nextCheckAt = Number(l.lastPayoutTs.toString()) + l.terms.payoutIntervalSecs;
+  const amount = principalRepaid ? (liquid * BigInt(l.terms.payoutShareBps)) / 10_000n : initial - repaid;
+  const due = live && nowSec >= nextCheckAt && liquid >= target && amount > 0n && liquid - amount >= minVaultSol;
+  return { target, liquid, minVaultSol, principalRepaid, nextCheckAt, amount: due ? amount : 0n, due };
+}
+
 /** Unix time from which the program's age and idle rules allow `wind_down`. */
 export function windDownOpensAt(l: Pick<LaunchJson, "launchedAt" | "lastTradeTs">): number {
   return Math.max(l.launchedAt + WIND_DOWN_MIN_AGE_SECS, l.lastTradeTs + WIND_DOWN_IDLE_SECS);
@@ -117,24 +154,33 @@ export function windDownTimingBlocker(
 
 const big = (v: BN | number | bigint): bigint => BigInt(v.toString());
 
-/** u16/u32 terms decode to plain numbers. */
-export type LaunchTermsJson = IdlTypes<Moshsol>["launchTerms"];
+/** On-chain `LaunchTerms`: u16/u32 as numbers, `minVaultSol` (u64) as BN. */
+export type LaunchTermsAccount = IdlTypes<Moshsol>["launchTerms"];
+/** JSON snapshot of the terms: `minVaultSol` as a decimal lamport string. */
+export type LaunchTermsJson = Omit<LaunchTermsAccount, "minVaultSol"> & { minVaultSol: string };
+/** Either form (what the builders and `payoutStatus` accept). */
+export type TermsLike = Omit<LaunchTermsAccount, "minVaultSol"> & { minVaultSol: { toString(): string } };
 
 /**
  * Platform params a creator reviewed: the on-chain `PlatformParams` (u64 as BN) or the indexer's
  * JSON (u64 as strings). `create_launch` fails with `TermsChanged` if the chain differs.
  */
-export type ReviewedTerms = LaunchTermsJson & {
+export type ReviewedTerms = TermsLike & {
   virtualSolReserves: { toString(): string };
   createFeeLamports: { toString(): string };
 };
 
 /** The terms a pump launch freezes from platform params (`LaunchTerms::pump`): no trade-fee split, creator share 0. */
-export function pumpTermsOf(t: LaunchTermsJson): LaunchTermsJson {
+export function pumpTermsOf(t: TermsLike): LaunchTermsAccount {
+  return { ...termsOf(t), tradeFeeBps: 0, backerFeeShareBps: 0, creatorFeeShareBps: 0 };
+}
+
+/** Exactly the `LaunchTerms` fields of a params/terms object (what `create_launch*` compare on chain). */
+export function termsOf(t: TermsLike): LaunchTermsAccount {
   return {
-    tradeFeeBps: 0,
-    backerFeeShareBps: 0,
-    creatorFeeShareBps: 0,
+    tradeFeeBps: t.tradeFeeBps,
+    backerFeeShareBps: t.backerFeeShareBps,
+    creatorFeeShareBps: t.creatorFeeShareBps,
     launchFeeBps: t.launchFeeBps,
     agentBuyBpsPerWindow: t.agentBuyBpsPerWindow,
     agentSellBpsPerWindow: t.agentSellBpsPerWindow,
@@ -143,6 +189,12 @@ export function pumpTermsOf(t: LaunchTermsJson): LaunchTermsJson {
     agentWindowSecs: t.agentWindowSecs,
     emaPeriodSecs: t.emaPeriodSecs,
     burnShareBps: t.burnShareBps,
+    creatorFeeVaultBps: t.creatorFeeVaultBps,
+    payoutMultBps: t.payoutMultBps,
+    payoutShareBps: t.payoutShareBps,
+    payoutIntervalSecs: t.payoutIntervalSecs,
+    deadHoldersBps: t.deadHoldersBps,
+    minVaultSol: new BN(t.minVaultSol.toString()),
   };
 }
 
@@ -205,8 +257,6 @@ export interface LaunchJson {
   agentSolSpent: string;
   agentSolReceived: string;
   agentTokensSold: string;
-  /** SOL from agent sells still available for buy-backs. */
-  buybackSol: string;
   volumeSol: string;
   tradeCount: number;
   venue: LaunchVenue;
@@ -229,6 +279,14 @@ export interface LaunchJson {
   name: string;
   symbol: string;
   uri: string;
+  /** SOL the vault started with at launch (bundle + reserve); the payback target is a multiple of it. */
+  initialVaultSol: string;
+  /** Principal repaid to backers by `payout_backers` so far. */
+  backersRepaid: string;
+  /** Dividends paid to backers by `payout_backers` so far. */
+  backerPayouts: string;
+  /** Last payout (or launch) time; the next payout waits `terms.payoutIntervalSecs` after it. */
+  lastPayoutTs: number;
   /** Derived: SOL per whole token (Holdfast curve; 0 on pump launches, whose venue prices them). */
   priceSol: number;
   /** Derived: EMA in SOL per whole token. */
@@ -254,7 +312,7 @@ export function launchToJson(address: PublicKey, l: LaunchAccount): LaunchJson {
     status: statusOf(l),
     createdAt: n(l.createdAt),
     launchedAt: n(l.launchedAt),
-    terms: { ...l.terms },
+    terms: { ...l.terms, minVaultSol: s(l.terms.minVaultSol) },
     raiseMin: s(l.raiseMin),
     raiseMax: s(l.raiseMax),
     maxPerWallet: s(l.maxPerWallet),
@@ -292,7 +350,6 @@ export function launchToJson(address: PublicKey, l: LaunchAccount): LaunchJson {
     agentSolSpent: s(l.agentSolSpent),
     agentSolReceived: s(l.agentSolReceived),
     agentTokensSold: s(l.agentTokensSold),
-    buybackSol: s(l.buybackSol),
     volumeSol: s(l.volumeSol),
     tradeCount: n(l.tradeCount),
     venue: venueOf(l),
@@ -310,6 +367,10 @@ export function launchToJson(address: PublicKey, l: LaunchAccount): LaunchJson {
     name: l.name,
     symbol: l.symbol,
     uri: l.uri,
+    initialVaultSol: s(l.initialVaultSol),
+    backersRepaid: s(l.backersRepaid),
+    backerPayouts: s(l.backerPayouts),
+    lastPayoutTs: n(l.lastPayoutTs),
     priceSol: "pump" in l.venue ? 0 : spotPrice(curve),
     emaSol: q64ToSolPerToken(big(l.emaPrice)),
     marketCapSol: "pump" in l.venue ? 0 : marketCapSol(curve),
@@ -395,9 +456,9 @@ export class MoshClient {
 
   /**
    * Whether `wind_down` / `wind_down_pump` would pass right now, from one consistent snapshot of the
-   * launch, its mint supply and the venue/vault token balances (the program's outside-holder rule:
-   * `supply == venue + vault`, the venue being the Holdfast curve, the pump.fun bonding curve or
-   * the PumpSwap pool). null = eligible.
+   * launch, its mint supply and the venue/vault token balances (the program's dead-launch rule:
+   * `supply − (venue + vault) ≤ terms.deadHoldersBps` of supply, the venue being the Holdfast curve,
+   * the pump.fun bonding curve or the PumpSwap pool). null = eligible.
    */
   async windDownBlocker(
     l: Pick<LaunchJson, "address" | "mint" | "venue" | "pump">,
@@ -423,7 +484,8 @@ export class MoshClient {
     const supply = unpackMint(mint, mintInfo, tokenProgram).supply;
     const held =
       unpackAccount(venueTokens, venueInfo, tokenProgram).amount + unpackAccount(vaultTokens, vaultInfo, tokenProgram).amount;
-    return supply === held ? null : "outsideHolders";
+    const outside = supply - held;
+    return outside <= (supply * BigInt(fresh.terms.deadHoldersBps)) / 10_000n ? null : "outsideHolders";
   }
 
   parseEvents(logs: string[]): MoshEvent[] {
@@ -521,19 +583,7 @@ export class MoshClient {
         whitelistRoot: p.whitelistRoot,
         bundleSupplyBps: p.bundleSupplyBps,
         reserveBps: p.reserveBps,
-        expectedTerms: {
-          tradeFeeBps: t.tradeFeeBps,
-          backerFeeShareBps: t.backerFeeShareBps,
-          creatorFeeShareBps: t.creatorFeeShareBps,
-          launchFeeBps: t.launchFeeBps,
-          agentBuyBpsPerWindow: t.agentBuyBpsPerWindow,
-          agentSellBpsPerWindow: t.agentSellBpsPerWindow,
-          agentMaxImpactBps: t.agentMaxImpactBps,
-          agentBandBps: t.agentBandBps,
-          agentWindowSecs: t.agentWindowSecs,
-          emaPeriodSecs: t.emaPeriodSecs,
-          burnShareBps: t.burnShareBps,
-        },
+        expectedTerms: termsOf(t),
         expectedVirtualSol: new BN(t.virtualSolReserves.toString()),
         maxCreateFeeLamports: new BN(t.createFeeLamports.toString()),
       })
@@ -769,7 +819,7 @@ export class MoshClient {
       .instruction();
   }
 
-  /** Admin only, once after the pump upgrade: grows the platform account to the current layout. */
+  /** Admin only, once after the payback upgrade: grows the platform account to the current layout. */
   async migratePlatformIx(admin: PublicKey) {
     return this.program.methods
       .migratePlatform()
@@ -777,11 +827,33 @@ export class MoshClient {
       .instruction();
   }
 
-  /** Admin only, once per pre-pump launch after the upgrade: grows it to the current layout. */
-  async migrateLaunchIx(admin: PublicKey, launch: PublicKey) {
+  /**
+   * Admin only, once per pre-payback launch after the upgrade: grows it to the current layout.
+   * `initialVaultSol` (bundle + reserve at launch, `bundleSol + vaultSol` of the `Launched` event) is
+   * only used for launched pump launches; the program derives it for Holdfast launches (raise − launch
+   * fee) and zeroes it for unlaunched ones.
+   */
+  async migrateLaunchIx(admin: PublicKey, launch: PublicKey, initialVaultSol: bigint) {
     return this.program.methods
-      .migrateLaunch()
+      .migrateLaunch(bn(initialVaultSol))
       .accountsStrict({ admin, platform: platformPda(this.programId), launch, systemProgram: SystemProgram.programId })
+      .instruction();
+  }
+
+  /**
+   * Agent-authority crank: pays backers (principal once liquid vault SOL reaches the payback target,
+   * then a dividend per interval) — see `payoutStatus` for when it would pass. `agent` defaults to
+   * the platform's agent authority.
+   */
+  async payoutBackersIx(launch: PublicKey, agent?: PublicKey) {
+    if (!agent) {
+      const platform = await this.fetchPlatform();
+      if (!platform) throw new Error("Platform is not initialized");
+      agent = platform.agentAuthority;
+    }
+    return this.program.methods
+      .payoutBackers()
+      .accountsStrict({ agent, platform: platformPda(this.programId), launch })
       .instruction();
   }
 

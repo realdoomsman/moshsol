@@ -18,21 +18,26 @@ import { TokenAvatar } from "../ui/token-avatar";
 
 const MAX_TILES = 6;
 const MAX_RAISING = 2;
+const HERO_TILES = 4;
+
+/** The open raises closing soonest (up to `maxRaising`), then live launches by trending, up to `max` tiles. */
+function useTiles(max: number, maxRaising: number) {
+  const nowSec = useNow(30_000);
+  const raising = useLaunches({ status: "raising", sort: "new" });
+  const live = useLaunches({ status: "live", sort: "trending" });
+  const open = (raising.data?.launches ?? [])
+    .filter((l) => l.raiseDeadline > nowSec && BigInt(l.raised) < BigInt(l.raiseMax))
+    .sort((a, b) => a.raiseDeadline - b.raiseDeadline)
+    .slice(0, maxRaising);
+  return { raising, live, tiles: [...open, ...(live.data?.launches ?? []).slice(0, max - open.length)] };
+}
 
 /**
  * §2 "On Holdfast now": up to six tiles in one 1px-ruled row — the open raises closing soonest
  * (up to two), then live launches by trending. Horizontal scroll-snap on mobile. No marquee.
  */
 export function LiveLaunches() {
-  const nowSec = useNow(30_000);
-  const raising = useLaunches({ status: "raising", sort: "new" });
-  const live = useLaunches({ status: "live", sort: "trending" });
-
-  const open = (raising.data?.launches ?? [])
-    .filter((l) => l.raiseDeadline > nowSec && BigInt(l.raised) < BigInt(l.raiseMax))
-    .sort((a, b) => a.raiseDeadline - b.raiseDeadline)
-    .slice(0, MAX_RAISING);
-  const tiles = [...open, ...(live.data?.launches ?? []).slice(0, MAX_TILES - open.length)];
+  const { raising, live, tiles } = useTiles(MAX_TILES, MAX_RAISING);
 
   let body;
   if (tiles.length) {
@@ -81,6 +86,50 @@ export function LiveLaunches() {
       </div>
       {body}
     </div>
+  );
+}
+
+/**
+ * The hero's stand-in for the launch recording: the same pick as "On Holdfast now", four tiles in
+ * a 2×2 grid inside the video slot's panel, with the states the row has (loading, unreachable, empty).
+ */
+export function HeroLaunches() {
+  const { raising, live, tiles } = useTiles(HERO_TILES, MAX_RAISING);
+  if (tiles.length) {
+    return (
+      <ul className="grid grid-cols-2">
+        {tiles.map((l, i) => (
+          <li key={l.mint} className={cn(i % 2 === 1 && "border-l border-line", i >= 2 && "border-t border-line")}>
+            <Tile launch={l} />
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  if (raising.isError && live.isError) {
+    return (
+      <ErrorState onRetry={() => void Promise.all([raising.refetch(), live.refetch()])} retrying={live.isFetching}>
+        Couldn&rsquo;t load launches. Indexer unreachable.
+      </ErrorState>
+    );
+  }
+  if (raising.isPending || live.isPending) {
+    return (
+      <div className="grid grid-cols-2">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className={cn("p-5", i % 2 === 1 && "border-l border-line", i >= 2 && "border-t border-line")}>
+            <Skeleton className="size-10" />
+            <Skeleton className="mt-3 h-4 w-28" />
+            <Skeleton className="mt-2 h-6 w-20" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <EmptyState action={<ButtonLink href="/create" size="sm" variant="secondary">Launch a token</ButtonLink>}>
+      No raises open and nothing trading yet.
+    </EmptyState>
   );
 }
 

@@ -4,13 +4,12 @@ use anchor_spl::token_interface::{self, Mint, TokenAccount, TransferChecked};
 
 use crate::constants::*;
 use crate::errors::MoshError;
-use crate::events::{Trade, VaultProfitShared};
+use crate::events::Trade;
 use crate::math;
 use crate::state::{Launch, LaunchStatus, Platform, Venue};
 
-/// Agents can only move value between the launch's own curve and its own vault (and credit
-/// realized profit to backers). No account outside the launch can receive anything from these
-/// instructions.
+/// Agents can only move value between the launch's own curve and its own vault. No account
+/// outside the launch can receive anything from these instructions.
 #[derive(Accounts)]
 pub struct AgentTrade<'info> {
     pub agent: Signer<'info>,
@@ -46,7 +45,8 @@ fn prelude(launch: &mut Launch, platform: &Platform, clock: &Clock) -> Result<()
 }
 
 /// Buy with vault SOL — only on dips (price at least `band` under the EMA) and only at or
-/// below the vault's average cost, so the vault can never be steered into buying high.
+/// below the vault's average cost, or as a buy-back below the average agent sell price, so the
+/// vault can never be steered into buying high. Never below the vault's SOL floor.
 pub fn agent_buy(ctx: Context<AgentTrade>, sol_in: u64, min_tokens_out: u64) -> Result<()> {
     let clock = Clock::get()?;
     let now = clock.unix_timestamp;
@@ -55,6 +55,7 @@ pub fn agent_buy(ctx: Context<AgentTrade>, sol_in: u64, min_tokens_out: u64) -> 
     let terms = launch.terms;
     require!(sol_in > 0, MoshError::ZeroAmount);
     require!(sol_in <= launch.vault_sol, MoshError::InsufficientVault);
+    require!(launch.vault_sol - sol_in >= terms.min_vault_sol, MoshError::VaultFloor);
     require!(
         launch.window_sol_spent + sol_in <= launch.window_buy_cap,
         MoshError::AgentWindowLimit
@@ -71,23 +72,16 @@ pub fn agent_buy(ctx: Context<AgentTrade>, sol_in: u64, min_tokens_out: u64) -> 
 
     // Two ways a buy can be allowed:
     //  1. fill price (sol_in / tokens) at or below the vault's average cost, or
-    //  2. a buy-back paid from earlier sell proceeds at a fill price at least `band` below the
-    //     average agent sell price — every sell→buy-back round trip leaves the vault with more
-    //     tokens than it sold.
+    //  2. a buy-back at a fill price at least `band` below the average agent sell price —
+    //     every sell→buy-back round trip leaves the vault with more tokens than it sold.
     let (cost_sol, cost_tokens) = launch.cost_basis();
     let below_cost = (sol_in as u128) * (cost_tokens as u128) <= (tokens as u128) * (cost_sol as u128);
-    if !below_cost {
-        let below_avg_sell = launch.agent_tokens_sold > 0
-            && (sol_in as u128) * (launch.agent_tokens_sold as u128) * BPS as u128
-                <= (tokens as u128)
-                    * (launch.agent_sol_received as u128)
-                    * (BPS - terms.agent_band_bps as u64) as u128;
-        require!(
-            below_avg_sell && sol_in <= launch.buyback_sol,
-            MoshError::AgentAboveCostBasis
-        );
-        launch.buyback_sol -= sol_in;
-    }
+    let below_avg_sell = launch.agent_tokens_sold > 0
+        && (sol_in as u128) * (launch.agent_tokens_sold as u128) * BPS as u128
+            <= (tokens as u128)
+                * (launch.agent_sol_received as u128)
+                * (BPS - terms.agent_band_bps as u64) as u128;
+    require!(below_cost || below_avg_sell, MoshError::AgentAboveCostBasis);
 
     launch.apply_buy(sol_in, tokens)?;
     launch.vault_sol -= sol_in;
@@ -143,8 +137,8 @@ pub fn agent_buy(ctx: Context<AgentTrade>, sol_in: u64, min_tokens_out: u64) -> 
 
 /// Sell vault tokens — only into rallies (price at least `band` over the EMA) and only at a
 /// fill price above the vault's average cost plus band, so the vault never realizes a loss.
-/// The realized profit (fill minus the sold tokens' average cost) goes to backers; only the
-/// cost part returns to the vault and to the buy-back budget.
+/// The whole fill stays in the vault as liquid SOL (the agent's buy-back capital); the sold
+/// tokens' average cost leaves the cost basis.
 pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) -> Result<()> {
     let clock = Clock::get()?;
     let now = clock.unix_timestamp;
@@ -177,16 +171,12 @@ pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) ->
 
     // Average-cost method: remove the sold tokens' share of the basis, rounded up, so the basis
     // left behind never overstates the average cost (a dust remainder can't masquerade as cheap
-    // inventory for the buy-at-or-below-cost rule). Profit is the fill above that cost, so backers
-    // are never credited dust the sell didn't earn.
+    // inventory for the buy-at-or-below-cost rule).
     let cost = launch.vault_cost_of(tokens_in);
-    let profit = sol.saturating_sub(cost);
-    let kept = sol - profit;
     launch.vault_cost_sol -= cost;
     launch.apply_sell(tokens_in, sol)?;
     launch.vault_tokens -= tokens_in;
-    launch.vault_sol += kept;
-    launch.credit_backers(profit)?;
+    launch.vault_sol += sol;
     let after = launch.price_q64()?;
     require!(
         math::move_bps(before, after) <= terms.agent_max_impact_bps as u64,
@@ -197,7 +187,6 @@ pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) ->
     launch.agent_sells = launch.agent_sells.saturating_add(1);
     launch.agent_sol_received = launch.agent_sol_received.saturating_add(sol);
     launch.agent_tokens_sold = launch.agent_tokens_sold.saturating_add(tokens_in);
-    launch.buyback_sol = launch.buyback_sol.saturating_add(kept);
     launch.record_volume(sol);
 
     let mint_key = ctx.accounts.mint.key();
@@ -234,14 +223,5 @@ pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) ->
         vault_tokens: launch.vault_tokens,
         timestamp: now,
     });
-    if profit > 0 {
-        emit!(VaultProfitShared {
-            launch: launch.key(),
-            mint: mint_key,
-            amount: profit,
-            to_buyback_pool: 0,
-            timestamp: now,
-        });
-    }
     Ok(())
 }

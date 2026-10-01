@@ -66,6 +66,13 @@ function arweaveConfig(rpcUrl: string) {
 const rpcUrl = process.env.RPC_URL || "http://127.0.0.1:8899";
 const port = envInt("PORT", 8787);
 const trustProxy = (process.env.TRUST_PROXY ?? "").trim().toLowerCase();
+// A bare hop count ("1") used to mean trust-all here, which lets any client pick its own X-Forwarded-For and
+// escape every per-IP limit; Fastify ≥ 5.12 itself trusts nothing for a number. Only a proxy address list is safe.
+if (/^\d+$/.test(trustProxy) && trustProxy !== "0") {
+  throw new Error(
+    `TRUST_PROXY=${trustProxy}: hop counts are not supported; list the proxy addresses instead (Railway: uniquelocal,100.64.0.0/10)`,
+  );
+}
 const storage = process.env.STORAGE || "local";
 if (storage !== "local" && storage !== "arweave") throw new Error(`STORAGE must be local or arweave, got "${storage}"`);
 
@@ -78,6 +85,8 @@ export const config = {
   dbPath: path.resolve(process.env.DB_PATH || path.join(APP_DIR, "data", "indexer.db")),
   filesDir: path.resolve(process.env.FILES_DIR || path.join(APP_DIR, "data", "files")),
   publicUrl: (process.env.PUBLIC_URL || `http://127.0.0.1:${port}`).replace(/\/+$/, ""),
+  /** The website the metadata of a new launch links to (`website: SITE_URL/launch/<launch address>`). */
+  siteUrl: (process.env.SITE_URL || "https://holdfast.fun").replace(/\/+$/, ""),
   /** Requests per minute per client IP across all routes (0 disables). */
   rateLimitPerMin: envInt("RATE_LIMIT_PER_MIN", 1_200, 0),
   /** `POST /api/upload` + `POST /api/upload/image` requests per minute per client IP (0 disables). */
@@ -95,11 +104,11 @@ export const config = {
   /** Enables `DELETE /api/comments/:id` (header `x-admin-token`); moderation is off when unset. */
   adminToken: process.env.ADMIN_TOKEN?.trim() || null,
   /**
-   * Client IP from X-Forwarded-For behind reverse proxies. `1`/`true`/`yes` trusts every hop (the leftmost,
-   * client-supplied entry wins); a comma-separated list of proxy IPs/CIDRs or `loopback`/`linklocal`/`uniquelocal`
-   * trusts only those proxies, so clients can't spoof their IP.
+   * Client IP from X-Forwarded-For behind reverse proxies: a comma-separated list of proxy IPs/CIDRs or
+   * `loopback`/`linklocal`/`uniquelocal` trusts only those proxies, so clients can't spoof their IP.
+   * `true`/`yes` trusts every hop (the leftmost, client-supplied entry wins): per-IP limits are then spoofable.
    */
-  trustProxy: ["1", "true", "yes"].includes(trustProxy) ? true : ["", "0", "false", "no"].includes(trustProxy) ? false : trustProxy,
+  trustProxy: ["true", "yes"].includes(trustProxy) ? true : ["", "0", "false", "no"].includes(trustProxy) ? false : trustProxy,
   // Cadences are tunable so public RPCs (devnet/mainnet rate limits) aren't hammered.
   pollMs: envInt("POLL_MS", 4_000),
   fullRefreshMs: envInt("FULL_REFRESH_MS", 15_000),

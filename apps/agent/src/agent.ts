@@ -11,6 +11,7 @@ import {
   type MoshClient,
   type VenueState,
 } from "@holdfast/sdk";
+import type { ActivityItem, ActivityLog } from "./activity";
 import { LookupTable } from "./alt";
 import type { AgentConfig } from "./config";
 import { Cranks, type CrankLaunch } from "./cranks";
@@ -24,6 +25,7 @@ import {
   marketOf,
   type DisplayPrices,
   type Evaluation,
+  type StrategyParams,
   type TradePlan,
   type Sizing,
 } from "./strategy";
@@ -69,6 +71,8 @@ export class Agent {
   private readonly sizing: Sizing;
   private readonly alt: LookupTable;
   private readonly cranks: Cranks;
+  /** Policy in force; replaced by the research loop when a proposal beats it walk-forward (`setStrategy`). */
+  private strategy: StrategyParams;
   private lastTickAt: number | null = null;
   private tickCount = 0;
   /** Fee wallet balance as of the last tick; `low_balance` is logged each time it falls under the threshold. */
@@ -78,13 +82,24 @@ export class Agent {
     private readonly cfg: AgentConfig,
     private readonly client: MoshClient,
     private readonly signer: Keypair,
+    private readonly activity: ActivityLog,
   ) {
     this.sizing = {
       minTradeLamports: cfg.minTradeLamports,
       slippageBps: cfg.slippageBps,
     };
+    this.strategy = cfg.strategy;
     this.alt = new LookupTable(client.connection, signer, cfg.priorityFee, cfg.altFile, cfg.alt, client.programId);
-    this.cranks = new Cranks(cfg, client, signer, this.alt);
+    this.cranks = new Cranks(cfg, client, signer, this.alt, activity);
+  }
+
+  currentStrategy(): StrategyParams {
+    return this.strategy;
+  }
+
+  setStrategy(params: StrategyParams): void {
+    this.strategy = params;
+    log("strategy_updated", { strategy: params });
   }
 
   snapshot(): StatusSnapshot {
@@ -165,6 +180,7 @@ export class Agent {
       for (const key of [...this.decisions.keys()]) if (!live.has(key)) this.decisions.delete(key);
       for (const key of [...this.runtime.keys()]) if (!live.has(key)) this.runtime.delete(key);
       this.cranks.retain(live);
+      this.activity.forget(live);
     }
     this.lastTickAt = nowSec();
     this.tickCount += 1;
@@ -217,11 +233,14 @@ export class Agent {
     }
     const market = marketOf(account, venue?.curve);
     const flow = rt.flow.observe(market, now);
-    let ev = evaluate(market, this.sizing, now, this.cfg.strategy, flow);
+    let ev = evaluate(market, this.sizing, now, this.strategy, flow);
     if (skipReason) {
       this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason: skipReason }, "paused");
       return;
     }
+    // Backer payouts are signed by the agent and only sent into a strong market (never a dip): decided on the
+    // same projection and flow the trade decision used.
+    await this.cranks.payout(l, market, ev.projection, flow, now, this.strategy);
     if (venue?.complete) {
       const reason = "bonding curve complete, awaiting pump.fun migration (then graduate_pump)";
       this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason }, "complete");
@@ -239,6 +258,8 @@ export class Agent {
         expectedOut: plan.expectedOut,
         minOut: plan.minOut,
         impactBps: plan.impactBps,
+        support: plan.support ?? false,
+        dryRun: true,
       });
       return;
     }
@@ -273,7 +294,7 @@ export class Agent {
         return;
       }
     }
-    ev = evaluate(marketOf(fresh, freshVenue?.curve), this.sizing, clockUnixTs(clockInfo.data), this.cfg.strategy, flow);
+    ev = evaluate(marketOf(fresh, freshVenue?.curve), this.sizing, clockUnixTs(clockInfo.data), this.strategy, flow);
     const plan = ev.plan;
     if (plan.action === "hold") {
       rt.failures = 0;
@@ -286,7 +307,7 @@ export class Agent {
   private async execute(rt: LaunchRuntime, l: CrankLaunch, ev: Evaluation, flow: FlowFeatures, plan: TradePlan): Promise<void> {
     const amount = plan.amount.toString();
     const prices = displayPrices(ev.projection);
-    let extra: Record<string, unknown> = { expectedOut: plan.expectedOut, minOut: plan.minOut, impactBps: plan.impactBps };
+    let extra: Record<string, unknown> = { expectedOut: plan.expectedOut, minOut: plan.minOut, impactBps: plan.impactBps, support: plan.support ?? false };
     try {
       const ix = await this.tradeIx(l, plan);
       const sent = await sendIxs(this.client.connection, this.signer, [ix], this.cfg.priorityFee, this.alt);
@@ -296,9 +317,7 @@ export class Agent {
       rt.lastError = undefined;
       rt.nextTradeAt = Date.now() + this.cfg.cooldownMs;
       const result = await landed(this.client, sent.signature);
-      const events = result?.events ?? [];
-      const trade = events.find((e) => e.name === "trade");
-      const profit = events.find((e) => e.name === "vaultProfitShared");
+      const trade = (result?.events ?? []).find((e) => e.name === "trade");
       const fill =
         trade?.name === "trade"
           ? {
@@ -308,15 +327,10 @@ export class Agent {
               vaultTokens: trade.data.vaultTokens.toString(),
             }
           : {};
-      const shared =
-        profit?.name === "vaultProfitShared"
-          ? { profitSharedLamports: profit.data.amount.toString(), toBuybackPoolLamports: profit.data.toBuybackPool.toString() }
-          : {};
       this.record(rt, l, prices, flow, { action: plan.action, reason: plan.reason, amount, signature: sent.signature }, plan.kind, {
         ...extra,
         ...result?.cost,
         ...fill,
-        ...shared,
       });
     } catch (err) {
       const error = describeError(err);
@@ -369,5 +383,42 @@ export class Agent {
       rt.loggedKind = kind;
       log("decision", { ...decision, ...extra });
     }
+    // Activity feed: every do-nothing reason too (the log collapses repeats of the same hold kind).
+    const item: Omit<ActivityItem, "narrative"> = {
+      ts: decision.at,
+      kind: d.action === "sell" ? "sell" : d.action === "buy" ? (kind === "buyback" ? "buyback" : "buy") : "hold",
+      reason: d.reason,
+      detail: trade ? activityDetail(decision, d, extra) : { holdKind: kind, ...activityDetail(decision, d, extra) },
+    };
+    if (d.signature) item.sig = d.signature;
+    this.activity.record(
+      { address: l.json.address, mint: l.json.mint, symbol: rt.symbol, venue: l.json.venue },
+      item,
+      trade ? { plan: kind, vaultSol: l.json.vaultSol, vaultTokens: l.json.vaultTokens } : undefined,
+    );
   }
+}
+
+/** Flat JSON facts of a decision for the activity feed: prices in SOL per token, amounts in UI units, flow rounded. */
+function activityDetail(decision: Decision, d: Pick<Decision, "action" | "amount" | "error">, extra: Record<string, unknown>): ActivityItem["detail"] {
+  const detail: ActivityItem["detail"] = {
+    priceSol: decision.priceSol,
+    emaSol: decision.emaSol,
+    bandLowSol: decision.bandLowSol,
+    bandHighSol: decision.bandHighSol,
+    imbalance: decision.flow.imbalance,
+    volumeRatio: decision.flow.volumeRatio,
+    volume24hSol: decision.flow.volume24hSol,
+    drawdown24h: decision.flow.drawdown24h,
+  };
+  if (d.amount !== undefined) {
+    // Lamports for buys, token base units for sells.
+    detail[d.action === "buy" ? "amountSol" : "amountTokens"] = d.action === "buy" ? Number(d.amount) / LAMPORTS_PER_SOL : Number(d.amount) / 1e6;
+  }
+  if (d.error) detail.error = d.error;
+  for (const [k, v] of Object.entries(extra)) {
+    if (typeof v === "number" || typeof v === "string" || typeof v === "boolean") detail[k] = v;
+    else if (typeof v === "bigint") detail[k] = v.toString();
+  }
+  return detail;
 }

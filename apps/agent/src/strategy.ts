@@ -20,7 +20,7 @@ import {
   type LaunchAccount,
   type LaunchVenue,
 } from "@holdfast/sdk";
-import type { FlowFeatures } from "./flow";
+import { FLOW_SHORT_SECS, type FlowFeatures } from "./flow";
 
 /**
  * Pure decision logic in two layers.
@@ -29,9 +29,9 @@ import type { FlowFeatures } from "./flow";
  *    bigint-exact copies of programs/moshsol (state.rs `roll_window`, `update_ema`, `cost_basis`;
  *    instructions/agent.rs checks), so the agent sees exactly what the program will see at the given
  *    chain timestamp. All limits come from the launch's immutable `terms`, never from platform params.
- * 2. Policy (`StrategyParams`): how far past the band to wait before acting and how much of the
- *    bundle a rally may sell at a given price (inventory floor). It only chooses among trades the
- *    mirror accepts.
+ * 2. Policy (`StrategyParams`): how far past the band to wait before acting, how much of the
+ *    bundle a rally may sell at a given price (inventory floor + sell guardrail), and how a dip is
+ *    bought back (support mode). It only chooses among trades the mirror accepts.
  */
 
 /** Size trades to use at most 90% of the on-chain impact limit. */
@@ -48,6 +48,8 @@ export interface AgentTerms {
   sellBpsPerWindow: bigint;
   windowSecs: bigint;
   emaPeriodSecs: bigint;
+  /** Lamports of vault SOL no agent buy (and no backer payout) may go below: the launch's fee / rent reserve. */
+  minVaultSol: bigint;
 }
 
 /**
@@ -68,7 +70,6 @@ export interface MarketState {
   bundleTokens: bigint;
   agentSolReceived: bigint;
   agentTokensSold: bigint;
-  buybackSol: bigint;
   windowStart: bigint;
   windowBuyCap: bigint;
   windowSolSpent: bigint;
@@ -105,6 +106,7 @@ export function marketOf(l: LaunchAccount, venue?: CurveState): MarketState {
       sellBpsPerWindow: BigInt(t.agentSellBpsPerWindow),
       windowSecs: BigInt(t.agentWindowSecs),
       emaPeriodSecs: BigInt(t.emaPeriodSecs),
+      minVaultSol: b(t.minVaultSol),
     },
     virtualSol: reserves.virtualSol,
     realSol: reserves.realSol,
@@ -116,7 +118,6 @@ export function marketOf(l: LaunchAccount, venue?: CurveState): MarketState {
     bundleTokens: b(l.bundleTokens),
     agentSolReceived: b(l.agentSolReceived),
     agentTokensSold: b(l.agentTokensSold),
-    buybackSol: b(l.buybackSol),
     windowStart: b(l.windowStart),
     windowBuyCap: b(l.windowBuyCap),
     windowSolSpent: b(l.windowSolSpent),
@@ -261,9 +262,19 @@ export function buyBelowCost(p: Projection, solIn: bigint, tokens: bigint): bool
   return solIn * p.costTokens <= tokens * p.costSol;
 }
 
-/** agent_buy path 2 (buy-back, also needs `solIn ≤ buybackSol`): fill at least `band` below the average agent sell price. */
+/** agent_buy path 2 (buy-back, paid from vault SOL like any buy): fill at least `band` below the average agent sell price. */
 export function buyBelowAvgSell(m: MarketState, solIn: bigint, tokens: bigint): boolean {
   return m.agentTokensSold > 0n && solIn * m.agentTokensSold * BPS <= tokens * m.agentSolReceived * (BPS - m.terms.bandBps);
+}
+
+/** agent_buy cost rule: either path. Monotone in `solIn` (the fill price only rises with size), so `largestFeasible` applies. */
+export function buyCostOk(m: MarketState, p: Projection, solIn: bigint, tokens: bigint): boolean {
+  return buyBelowCost(p, solIn, tokens) || buyBelowAvgSell(m, solIn, tokens);
+}
+
+/** Vault SOL an agent buy may spend: everything above the launch's `minVaultSol` floor (`VaultFloor`). */
+export function spendableSol(m: Pick<MarketState, "vaultSol" | "terms">): bigint {
+  return m.vaultSol > m.terms.minVaultSol ? m.vaultSol - m.terms.minVaultSol : 0n;
 }
 
 /** agent_sell curve and impact checks for `tokensIn` base units. */
@@ -372,6 +383,16 @@ export interface StrategyParams {
   rampShape: number;
   strongVolumeRatio: number;
   strongFlowMult: number;
+  /**
+   * Low-volume support mode for dip buys: while the launch's 24 h activity (SOL, `FlowFeatures.volume24hSol`)
+   * is below `supportVolumeMult` × the vault's SOL, buy-backs shrink to `supportClipShare` of the size the
+   * band / impact / window rules would allow and keep at least `supportSpacingSecs` between the agent's own
+   * fills — small, spaced buys that give a quiet chart volume without spending the window budget in one clip.
+   * 0 = off (every dip buy is sized to the band edge, paced only by the window budget).
+   */
+  supportVolumeMult: number;
+  supportClipShare: number;
+  supportSpacingSecs: number;
 }
 
 export type ParamKey = keyof StrategyParams;
@@ -392,6 +413,9 @@ export const PARAM_SPACE: Record<ParamKey, { lo: number; hi: number; log?: boole
   rampShape: { lo: 0.33, hi: 3, log: true },
   strongVolumeRatio: { lo: 1, hi: 5 },
   strongFlowMult: { lo: 1, hi: 10, log: true },
+  supportVolumeMult: { lo: 0, hi: 20 },
+  supportClipShare: { lo: 0.05, hi: 1 },
+  supportSpacingSecs: { lo: 30, hi: 3_600, log: true },
 };
 
 export const PARAM_KEYS = Object.keys(PARAM_SPACE) as ParamKey[];
@@ -399,8 +423,13 @@ export const PARAM_KEYS = Object.keys(PARAM_SPACE) as ParamKey[];
 /**
  * Shipped defaults (`backtest flow`, 74 pools): v1's 25 bps entry, inventory floor off, flow knobs off — the
  * trained flow policy won on TEST (+0.40 vs this) but lost in the walk-forward test (−0.32), so it stays an
- * opt-in via STRATEGY_PARAMS. The sell guardrail ships as a risk constraint: with a 1 SOL base allowance and
- * the trained ramp it is neutral on value (TEST median ΔV 13.9 → 14.0 %, walk-forward 7.4 → 7.4 %).
+ * opt-in via STRATEGY_PARAMS. The sell ramp ships as a risk constraint: with a 1 SOL base allowance and the
+ * trained ramp it is neutral on value. `backtest support` (no profit share, 2026-10): re-tuning the ramp and
+ * the support knobs jointly on walk-forward TRAIN (+0.09 in-sample) lost on walk-forward TEST (−0.44 vs this
+ * policy) and on TEST (−0.83), a bolder hand-set ramp (2 SOL base, full at 8× / 300 SOL) won walk-forward
+ * (+0.22) but lost TEST (−1.62), so the ramp stays. The support mode at this preset (24 h activity below 2× the
+ * vault's SOL → ⅓-size buys ≥ 5 min apart) changes no backtest number (walk-forward −0.001, TEST 0.000): it
+ * only fires on charts quieter than the dataset's pools, which is exactly where it is meant to give volume.
  */
 export const DEFAULT_PARAMS: StrategyParams = {
   buyMarginBps: 25,
@@ -417,6 +446,9 @@ export const DEFAULT_PARAMS: StrategyParams = {
   rampShape: 2.15,
   strongVolumeRatio: 1.39,
   strongFlowMult: 6.63,
+  supportVolumeMult: 2,
+  supportClipShare: 0.33,
+  supportSpacingSecs: 300,
 };
 
 /** `base` with the given overrides; throws on unknown keys or values outside `PARAM_SPACE`. */
@@ -433,12 +465,29 @@ export function withParams(base: StrategyParams, overrides: Record<string, unkno
   return out;
 }
 
-export type HoldKind = "in_band" | "entry" | "flow" | "floor" | "allowance" | "budget" | "vault_empty" | "too_small" | "impact" | "cost_basis";
+export type HoldKind =
+  | "in_band"
+  | "entry"
+  | "flow"
+  | "floor"
+  | "allowance"
+  | "budget"
+  | "vault_empty"
+  | "vault_floor"
+  | "too_small"
+  | "impact"
+  | "cost_basis"
+  | "spacing";
 
-/** Trade plan: `amount` is lamports in for buys, token base units in for sells; `minOut` is the slippage floor. */
+/**
+ * Trade plan: `amount` is lamports in for buys, token base units in for sells; `minOut` is the slippage floor.
+ * `kind`: `dip` = buy at/below the vault's average cost, `buyback` = buy below the average agent sell price,
+ * `rally` = sell; `support` marks a buy clipped by the low-volume support mode.
+ */
 export interface TradePlan {
   action: "buy" | "sell";
-  kind: "dip" | "rally";
+  kind: "dip" | "buyback" | "rally";
+  support?: boolean;
   reason: string;
   amount: bigint;
   expectedOut: bigint;
@@ -473,42 +522,64 @@ function budgetHold(proj: Projection, remaining: string): Plan {
   return hold("budget", `window budget exhausted (${remaining} left), resets in ${countdown(Number(proj.windowEnd), Number(proj.now))}`);
 }
 
-function planBuy(m: MarketState, s: Sizing, proj: Projection, head: string): Plan {
+/** Support mode decision for this poll: on when the 24 h activity is below `supportVolumeMult` × the vault's SOL. */
+export function supportMode(params: StrategyParams, m: Pick<MarketState, "vaultSol">, flow: FlowFeatures): { on: boolean; threshold: number } {
+  const threshold = params.supportVolumeMult * (Number(m.vaultSol) / 1e9);
+  return { on: params.supportVolumeMult > 0 && flow.volume24hSol < threshold, threshold };
+}
+
+function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyParams, flow: FlowFeatures, head: string): Plan {
   const t = m.terms;
   const { price, costSol, costTokens } = proj;
   if (m.vaultSol === 0n) return hold("vault_empty", `${head} but vault has no SOL`);
-  const room = minBig(proj.buyRemaining, m.vaultSol);
+  const spendable = spendableSol(m);
+  if (spendable < s.minTradeLamports) {
+    return hold("vault_floor", `${head} but vault SOL ${solStr(m.vaultSol)} is at its ${solStr(t.minVaultSol)} floor (fees / rent reserve)`);
+  }
+  const room = minBig(proj.buyRemaining, spendable);
   if (room < s.minTradeLamports) return budgetHold(proj, solStr(proj.buyRemaining));
   // `buyToPrice` is the net the reserves take; the agent spends that plus the venue's fee.
-  const ideal = grossForNet(m, buyToPrice(proj, minBig((proj.ema * (BPS - t.bandBps)) / BPS, impactTargets(proj, t.maxImpactBps).up)));
+  let ideal = grossForNet(m, buyToPrice(proj, minBig((proj.ema * (BPS - t.bandBps)) / BPS, impactTargets(proj, t.maxImpactBps).up)));
   if (ideal < s.minTradeLamports) return hold("too_small", `${head}, ideal buy ${solStr(ideal)} below minimum`);
+  // Low-volume support mode: a quiet chart gets smaller, spaced clips instead of one buy to the band edge.
+  const support = supportMode(params, m, flow);
+  let supportNote = "";
+  if (support.on) {
+    const quiet = `24 h activity ${fmtSol(flow.volume24hSol, 2)} SOL < ${fmtSol(support.threshold, 2)} SOL (${params.supportVolumeMult}× vault)`;
+    if (flow.sinceAgentTradeSecs < params.supportSpacingSecs) {
+      const wait = Math.ceil(params.supportSpacingSecs - flow.sinceAgentTradeSecs);
+      return hold("spacing", `${head} but support mode (${quiet}) spaces buys ${Math.round(params.supportSpacingSecs)}s apart, next in ${wait}s`);
+    }
+    ideal = (ideal * BigInt(Math.round(params.supportClipShare * 10_000))) / BPS;
+    if (ideal < s.minTradeLamports) ideal = s.minTradeLamports;
+    supportNote = `; support mode: ${quiet}, clip ${Math.round(params.supportClipShare * 100)}%`;
+  }
 
   const impactOk = (a: bigint) => buyImpactOk(m, proj, a);
   // Cost rules are checked against the slippage floor, so any fill the transaction accepts passes them.
   const worstFill = (a: bigint) => minOut(buyFill(m, proj, a), s.slippageBps);
-  const hi = minBig(ideal, room);
-  let solIn = largestFeasible(hi, (a) => impactOk(a) && buyBelowCost(proj, a, worstFill(a)));
-  let how = `at/below vault avg cost ${avgPriceStr(costSol, costTokens)}`;
-  if (solIn < s.minTradeLamports) {
-    // Prefer the below-cost path (it does not consume the buy-back budget); fall back to buy-back.
-    solIn = largestFeasible(minBig(hi, m.buybackSol), (a) => impactOk(a) && buyBelowAvgSell(m, a, worstFill(a)));
-    how = `buy-back below avg sell ${avgPriceStr(m.agentSolReceived, m.agentTokensSold)}`;
-  }
+  const solIn = largestFeasible(minBig(ideal, room), (a) => impactOk(a) && buyCostOk(m, proj, a, worstFill(a)));
   if (solIn < s.minTradeLamports) {
     if (!impactOk(s.minTradeLamports)) return hold("impact", `${head}, impact limit leaves buy below minimum`);
     const cost = `spot above vault avg cost ${avgPriceStr(costSol, costTokens)}`;
     const buyback =
-      m.agentTokensSold === 0n || m.buybackSol < s.minTradeLamports
-        ? `buy-back budget ${solStr(m.buybackSol)}`
+      m.agentTokensSold === 0n
+        ? "nothing sold yet to buy back"
         : `buy-back needs fill ≤ ${avgPriceStr((m.agentSolReceived * (BPS - t.bandBps)) / BPS, m.agentTokensSold)}`;
     return hold("cost_basis", `${head} but ${cost}, ${buyback}`);
   }
   const expectedTokens = buyFill(m, proj, solIn);
+  // Label by the path the fill passes (the below-cost path first, like the program checks it).
+  const belowCost = buyBelowCost(proj, solIn, worstFill(solIn));
+  const how = belowCost
+    ? `at/below vault avg cost ${avgPriceStr(costSol, costTokens)}`
+    : `buy-back below avg sell ${avgPriceStr(m.agentSolReceived, m.agentTokensSold)}`;
   const impactBps = moveBps(price, priceQ64(proj.x + buyNet(m, solIn), proj.y - expectedTokens));
   return {
     action: "buy",
-    kind: "dip",
-    reason: `${head}: buy ${solStr(solIn)} ${how} (impact ${Number(impactBps) / 100}%)`,
+    kind: belowCost ? "dip" : "buyback",
+    ...(support.on ? { support: true } : {}),
+    reason: `${head}: buy ${solStr(solIn)} ${how} (impact ${Number(impactBps) / 100}%)${supportNote}`,
     amount: solIn,
     expectedOut: expectedTokens,
     minOut: minOut(expectedTokens, s.slippageBps),
@@ -630,7 +701,7 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
       return done(hold("flow", `${head} but live sell-off: ${Math.round(sellShare * 100)}% of the last minute's volume were sells, waiting for ≤ ${Math.round(params.buyDumpShare * 100)}%`));
     }
     if (params.vwapEntryBps > 0 && flow.vwapDevBps > -params.vwapEntryBps) return done(hold("flow", `${head} but ${vwap}, buying from −${pctStr(params.vwapEntryBps)}`));
-    return done(planBuy(m, s, proj, head));
+    return done(planBuy(m, s, proj, params, flow, head));
   }
   if (proj.price >= proj.sellFloor) {
     const head = `rally ${dev} vs EMA`;
@@ -643,6 +714,41 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
     return done(planSell(m, s, proj, params, flow, head));
   }
   return done(hold("in_band", `price inside band (${dev} vs EMA)`));
+}
+
+/** Thresholds of the payout market gate (not tuned: payouts are outside the backtest objective). */
+export const PAYOUT_GATE = {
+  /** A payout waits while spot is more than this far below its 24 h high. */
+  maxDrawdown: 0.2,
+  /** Spot must be at least this multiple of the bundle (launch) price. */
+  minMcapMult: 1,
+} as const;
+
+/**
+ * Whether the market is strong enough to pay backers right now ("the coin is sending"), by the sell ramp's
+ * observables: spot above the EMA band, net buying on at least `strongVolumeRatio` × the median minute
+ * volume, above the 30 min VWAP and the launch price, and not in a 24 h drawdown. Payouts are
+ * opportunistic: in a dip the vault's SOL is for buying back, never for paying out.
+ */
+export function payoutMarketStrong(m: MarketState, proj: Projection, params: StrategyParams, flow: FlowFeatures): { ok: boolean; reason: string } {
+  const dev = fmtDeviation(proj.deviationPpm);
+  if (proj.price < proj.sellFloor) return { ok: false, reason: `price under EMA band (${dev} vs EMA)` };
+  if (flow.spanSecs < FLOW_SHORT_SECS) return { ok: false, reason: `no buy flow observed yet (${Math.round(flow.spanSecs)}s of flow history)` };
+  if (flow.imbalance <= 0) {
+    const minutes = Math.round(Math.min(flow.spanSecs, FLOW_SHORT_SECS) / 60);
+    return { ok: false, reason: flow.imbalance < 0 ? `net selling over the last ${minutes} min (imbalance ${flow.imbalance.toFixed(2)})` : `no net buying over the last ${minutes} min` };
+  }
+  if (flow.volumeRatio < params.strongVolumeRatio) {
+    return { ok: false, reason: `thin volume: ${flow.volumeRatio.toFixed(2)}× the median minute, needs ${params.strongVolumeRatio.toFixed(2)}×` };
+  }
+  if (flow.vwapDevBps <= 0) return { ok: false, reason: `price below the 30 min VWAP (${(flow.vwapDevBps / 100).toFixed(1)}%)` };
+  if (flow.drawdown24h > PAYOUT_GATE.maxDrawdown) return { ok: false, reason: `${Math.round(flow.drawdown24h * 100)}% under the 24 h high` };
+  const mcapMult = m.bundleTokens > 0n ? (Number(proj.x) / Number(proj.y)) * (Number(m.bundleTokens) / Number(m.bundleSol)) : 0;
+  if (mcapMult < PAYOUT_GATE.minMcapMult) return { ok: false, reason: `mcap ${mcapMult.toFixed(2)}× launch, below ${PAYOUT_GATE.minMcapMult}×` };
+  return {
+    ok: true,
+    reason: `strong market: ${dev} vs EMA, buy flow ${flow.volumeRatio.toFixed(2)}× median volume, +${(flow.vwapDevBps / 100).toFixed(1)}% vs VWAP, mcap ${mcapMult.toFixed(1)}× launch`,
+  };
 }
 
 /** Display prices (SOL per whole token) of a decision. */

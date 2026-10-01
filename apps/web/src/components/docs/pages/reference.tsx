@@ -1,14 +1,15 @@
 import { IDL, PROGRAM_ID } from "@holdfast/sdk";
 import Link from "next/link";
 import { CLUSTER, CLUSTER_LABEL, CLUSTER_NAME, INDEXER_URL, IS_TEST_CLUSTER } from "@/lib/env";
-import { pumpSplit } from "@/lib/pump-terms";
+import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { pctFromBps } from "../../band/model";
 import { glossaryRule } from "../../glossary";
 import { Lockup } from "../../brand/lockup";
 import { Mark } from "../../brand/mark";
 import { faqItems } from "../../landing/faq";
-import { instructionRows, WIND_DOWN_RULE } from "../../landing/instructions";
+import { instructionRows, windDownRule } from "../../landing/instructions";
 import { A, B, C, Callout, Code, P, Table, Ul } from "../prose";
+import { paybackSentence } from "../rules";
 import type { DocPage } from "../types";
 
 type IdlField = { name: string; type: unknown; docs?: string[] };
@@ -39,52 +40,58 @@ export const overview: DocPage = {
   nav: "Overview",
   title: "Holdfast docs",
   description:
-    "Holdfast is the Solana launchpad where backers buy first and share the profit. Backers' SOL makes a pump.fun token's first buy, which sits in an on-chain vault traded only by a rate-limited agent; backers get most of the agent's realized profit and the rest buys and burns the Holdfast token.",
-  sections: ({ p }) => [
-    {
-      id: "start",
-      title: "Start here",
-      body: (
-        <Table
-          head={["If you want to…", "Read"]}
-          rows={[
-            ["Understand the mechanism in two minutes", <A key="h" href="/docs/how-it-works">How it works (2 min)</A>],
-            ["Back a raise and earn", <A key="b" href="/docs/for-backers">For backers</A>],
-            ["Launch a token", <A key="c" href="/docs/for-creators">For creators</A>],
-            ["Trade", <A key="t" href="/docs/for-traders">For traders</A>],
-            ["Check the claims", <A key="v" href="/docs/verify">Verify on-chain</A>],
-            ["Build on the data", <A key="a" href="/docs/api">Indexer API</A>],
-          ]}
-        />
-      ),
-    },
-    {
-      id: "numbers",
-      title: "The numbers",
-      body: (
-        <Ul>
-          <li>Fixed supply of 1,000,000,000 per launch; the bundle buys at most the creator&rsquo;s cap of it.</li>
-          {p ? (
-            <>
-              <li>
-                {pumpSplit(p).backerPct}% of the vault agent&rsquo;s realized sell profit to backers, {pumpSplit(p).burnPct}% to buy back
-                and burn the Holdfast token; the same split on pump.fun&rsquo;s creator fee (vault / buyback pool). Creators earn 0% of
-                fees; Holdfast earns the {pctFromBps(p.launchFeeBps)} launch fee and the create fee.
-              </li>
+    "Holdfast is the Solana launchpad where backers buy first. Backers' SOL makes a pump.fun token's first buy, which sits in an on-chain vault traded only by a rate-limited agent; the vault keeps what it sells, earns most of the token's creator fees, and pays backers back once it has grown.",
+  sections: ({ p }) => {
+    const s = pumpSplit(p);
+    return [
+      {
+        id: "start",
+        title: "Start here",
+        body: (
+          <Table
+            head={["If you want to…", "Read"]}
+            rows={[
+              ["Understand the mechanism in two minutes", <A key="h" href="/docs/how-it-works">How it works (2 min)</A>],
+              ["Back a raise and earn", <A key="b" href="/docs/for-backers">For backers</A>],
+              ["Launch a token", <A key="c" href="/docs/for-creators">For creators</A>],
+              ["Trade", <A key="t" href="/docs/for-traders">For traders</A>],
+              ["Check the claims", <A key="v" href="/docs/verify">Verify on-chain</A>],
+              ["Build on the data", <A key="a" href="/docs/api">Indexer API</A>],
+            ]}
+          />
+        ),
+      },
+      {
+        id: "numbers",
+        title: "The numbers",
+        body: (
+          <Ul>
+            <li>Fixed supply of 1,000,000,000 per launch; the bundle buys at most the creator&rsquo;s cap of it, in the same instruction that creates the token.</li>
+            <li>
+              pump.fun&rsquo;s creator fee on the token: {s.vaultPct}% to the vault as SOL, {s.burnPct}% to buy back and burn the Holdfast
+              token, {s.backerPct}% to backers. Creators earn 0% of fees; Holdfast earns the {s.launchFeePct}% launch fee and the create fee.
+            </li>
+            <li>
+              Everything the vault agent sells stays in the vault. {paybackSentence(s)} Never below the {s.minVaultSol} SOL vault floor.
+            </li>
+            {p ? (
               <li>
                 Agent band {pctFromBps(p.agentBandBps)} around the EMA; buys ≤ {pctFromBps(p.agentBuyBpsPerWindow)} of vault SOL and sells ≤{" "}
                 {pctFromBps(p.agentSellBpsPerWindow)} of vault tokens per {Math.round(p.agentWindowSecs / 60)} minutes.
               </li>
-            </>
-          ) : null}
-          <li>100% refund if a raise misses its minimum; the vault&rsquo;s SOL back to backers when a dead launch is wound down.</li>
-          <li>
-            Vault withdrawals only by the platform admin (<C>admin_withdraw_vault</C>), each one shown on the launch page.
-          </li>
-        </Ul>
-      ),
-    },
-  ],
+            ) : null}
+            <li>
+              100% refund if a raise misses its minimum; all of the vault&rsquo;s SOL to backers when a dead launch (≤ {s.deadHoldersPct}% of
+              supply held outside the vault and pump.fun) is wound down.
+            </li>
+            <li>
+              Vault withdrawals only by the platform admin (<C>admin_withdraw_vault</C>), each one shown on the launch page.
+            </li>
+          </Ul>
+        ),
+      },
+    ];
+  },
 };
 
 export const program: DocPage = {
@@ -93,7 +100,7 @@ export const program: DocPage = {
   nav: "Program reference",
   title: "Program reference",
   description: "Instructions, accounts, events and errors of the Holdfast program, generated from the IDL shipped in @holdfast/sdk.",
-  sections: () => [
+  sections: ({ p }) => [
     {
       id: "address",
       title: "Address",
@@ -109,7 +116,7 @@ export const program: DocPage = {
       body: (
         <Table
           head={["Instruction", "Args", "Signer", "Writable accounts"]}
-          rows={instructionRows().map((r) => [
+          rows={instructionRows(pumpSplit(p)).map((r) => [
             <C key="n">{r.name}</C>,
             r.args.length ? r.args.map((a) => `${a.name}: ${a.type}`).join(", ") : "—",
             r.accounts.filter((a) => a.signer).map((a) => a.name).join(", ") || "none",
@@ -189,7 +196,7 @@ export const api: DocPage = {
           rows={[
             ["GET /api/health", "Sync status, slot, lag"],
             ["GET /api/platform", "Platform account and default params"],
-            ["GET /api/stats", "SOL/USD price, launch counts, volume, vault SOL, profit shared, vault withdrawals"],
+            ["GET /api/stats", "SOL/USD price, launch counts, volume, vault SOL, backers repaid and paid out, vault withdrawals"],
             ["GET /api/launches?status=&sort=&q=&limit=&offset=", "Launch summaries (sort: new, trending, volume, mcap, raised)"],
             ["GET /api/launches/:mint", "One launch: on-chain snapshot + indexer fields"],
             ["GET /api/launches/:mint/trades?before=&limit=&agent=1", "Trades, newest first; agent=1 for vault-agent trades"],
@@ -203,7 +210,7 @@ export const api: DocPage = {
             ["GET /api/leaderboard?kind=&window=", "Backers, creators, traders or launches over 24h / 7d / all"],
             ["GET /api/search?q=", "Up to 8 launches and 8 wallets"],
             ["GET /api/users/:wallet", "Profile and stats for any wallet"],
-            ["GET /api/portfolio/:wallet", "Positions, claimables and holdings, live from chain"],
+            ["GET /api/portfolio/:wallet", "Positions and claimables from the deposit ledger, token holdings from chain"],
             ["GET /api/activity?limit=", "Latest events across all launches"],
             ["GET /api/agents", "Vault-agent totals, window budgets and recent agent trades"],
           ]}
@@ -265,67 +272,92 @@ export const risks: DocPage = {
   group: "Reference",
   nav: "Risks",
   title: "Risks",
-  description: "What Holdfast removes — sniper first buys and dumps by the creator or backers — and everything it doesn't.",
-  sections: () => [
-    {
-      id: "admin-withdraw",
-      title: "The admin can withdraw vaults",
-      body: (
-        <Callout tone="warn" title="Vault funds are not locked">
-          The platform admin can call <C>admin_withdraw_vault</C> on any launch and send its vault SOL and tokens to the platform fee
-          recipient — tokens it could then sell. The admin is a Squads 2-of-3 multisig on mainnet. The instruction can&rsquo;t touch the
-          curve&rsquo;s liquidity or backers&rsquo; accrued earnings, and every withdrawal is on-chain (<C>VaultWithdrawn</C>) and shown on
-          the launch page. See <A href="/docs/verify">Verify on-chain</A>.
-        </Callout>
-      ),
-    },
-    {
-      id: "market",
-      title: "Market risk",
-      body: (
-        <Callout tone="warn" title="Price can go down">
-          Other holders can sell at any time. The vault agent is rate-limited and only buys below its cost; it does not hold a price,
-          set a floor or guarantee anything. You can lose what you put in.
-        </Callout>
-      ),
-    },
-    {
-      id: "protocol",
-      title: "Protocol and operator risk",
-      body: (
-        <Ul>
-          <li>
-            <B>Upgradeable program.</B> While an upgrade authority exists, an upgrade could change any rule. Check it on{" "}
+  description:
+    "What Holdfast removes, sniper first buys and dumps by the creator or backers, and everything it doesn't: the vault can shrink, payback is not guaranteed, wind-down can return less than you put in.",
+  sections: ({ p }) => {
+    const s = pumpSplit(p);
+    return [
+      {
+        id: "admin-withdraw",
+        title: "The admin can withdraw vaults",
+        body: (
+          <Callout tone="warn" title="Vault funds are not locked">
+            The platform admin can call <C>admin_withdraw_vault</C> on any launch and send its vault SOL and tokens to the platform fee
+            recipient, tokens it could then sell. The admin is a Squads 2-of-3 multisig on mainnet. The instruction can&rsquo;t touch what
+            backers have already accrued, and every withdrawal is on-chain (<C>VaultWithdrawn</C>) and shown on the launch page. See{" "}
             <A href="/docs/verify">Verify on-chain</A>.
-          </li>
-          <li>
-            <B>Admin controls.</B> Besides vault withdrawals, the admin can pause new launches and deposits and pause the vault agent.
-            Trading, refunds and claims don&rsquo;t depend on it.
-          </li>
-          <li>
-            <B>Agent availability.</B> If the agent is offline the vault doesn&rsquo;t trade. Its status is public at{" "}
-            <A href="/agents">/agents</A>.
-          </li>
-          <li>
-            <B>Wind-down.</B> Once a launch is {WIND_DOWN_RULE}, anyone can end it: its SOL goes to backers and trading stops for good.
-          </li>
-          <li>
-            <B>Bugs.</B> The program and SDK are unaudited software.{IS_TEST_CLUSTER ? ` ${CLUSTER_LABEL[CLUSTER]} is for testing; its SOL has no value.` : ""}
-          </li>
-        </Ul>
-      ),
-    },
-    {
-      id: "creator",
-      title: "Creator and token risk",
-      body: (
-        <P>
-          A creator can&rsquo;t touch the bundle, but can hold ordinary tokens bought on the curve like anyone else, and token metadata
-          (name, image, links) is whatever they uploaded. Holdfast doesn&rsquo;t vet launches.
-        </P>
-      ),
-    },
-  ],
+          </Callout>
+        ),
+      },
+      {
+        id: "market",
+        title: "Market risk",
+        body: (
+          <Callout tone="warn" title="Price can go down">
+            Other holders can sell at any time. The vault agent is rate-limited and buys only on its own rules; it does not hold a price
+            or guarantee anything. You can lose what you put in.
+          </Callout>
+        ),
+      },
+      {
+        id: "vault",
+        title: "Vault and payback risk",
+        body: (
+          <Ul>
+            <li>
+              <B>The vault can shrink.</B> It buys dips with its SOL; a token that keeps falling leaves it holding tokens worth less than
+              it paid, and the admin can withdraw it.
+            </li>
+            <li>
+              <B>Payback is not guaranteed.</B> {paybackSentence(s)} A vault that never reaches {fmtMult(s.payoutMult)}, or whose chart is
+              weak at every {fmtInterval(s.payoutIntervalHours)} check, pays nothing beyond your share of creator fees.
+            </li>
+            <li>
+              <B>Wind-down can return less than principal.</B> It sells what the vault holds into a dead market and splits whatever SOL is
+              left. It is the worst case, not a refund.
+            </li>
+          </Ul>
+        ),
+      },
+      {
+        id: "protocol",
+        title: "Protocol and operator risk",
+        body: (
+          <Ul>
+            <li>
+              <B>Upgradeable program.</B> While an upgrade authority exists, an upgrade could change any rule. Check it on{" "}
+              <A href="/docs/verify">Verify on-chain</A>.
+            </li>
+            <li>
+              <B>Admin controls.</B> Besides vault withdrawals, the admin can pause new launches and deposits and pause the vault agent.
+              Trading on the venue, refunds and claims don&rsquo;t depend on it.
+            </li>
+            <li>
+              <B>Agent availability.</B> If the agent is offline the vault doesn&rsquo;t trade and no payback runs. Its status is public at{" "}
+              <A href="/agents">/agents</A>.
+            </li>
+            <li>
+              <B>Wind-down.</B> Once a launch is {windDownRule(s)}, anyone can end it: its SOL goes to backers and the vault stops trading
+              for good.
+            </li>
+            <li>
+              <B>Bugs.</B> The program and SDK are unaudited software.{IS_TEST_CLUSTER ? ` ${CLUSTER_LABEL[CLUSTER]} is for testing; its SOL has no value.` : ""}
+            </li>
+          </Ul>
+        ),
+      },
+      {
+        id: "creator",
+        title: "Creator and token risk",
+        body: (
+          <P>
+            A creator can&rsquo;t touch the bundle, but can hold ordinary tokens bought on pump.fun like anyone else, and token metadata
+            (name, image, links) is whatever they uploaded. Holdfast doesn&rsquo;t vet launches.
+          </P>
+        ),
+      },
+    ];
+  },
 };
 
 export const glossary: DocPage = {
@@ -342,19 +374,22 @@ export const glossary: DocPage = {
         <dl className="border-t border-line">
           {[
             ["Raise", "The pre-launch period where backers deposit SOL toward a min and max."],
-            ["Backer", "A wallet that deposited into a raise; it earns the backers' share of vault-agent profit pro-rata to its deposit."],
+            ["Backer", "A wallet that deposited into a raise; it earns the backers' share of creator fees, the vault's paybacks and its wind-down SOL, pro-rata to its deposit."],
             ["Bundle", glossaryRule("bundle", pumpSplit(p))],
             ["Vault", glossaryRule("vault", pumpSplit(p))],
             ["Reserve", "The share of the raise kept as SOL in the vault for the agent to buy dips with."],
-            ["Curve", "The launch's constant-product market (x · y = k) with virtual SOL reserves; it never migrates."],
+            ["Initial vault SOL", "What went in at launch: the bundle's SOL plus the reserve (initial_vault_sol). The payback rule measures the vault's liquid SOL against it."],
+            ["Curve", "A launch's market: pump.fun's bonding curve (then PumpSwap), or the legacy Holdfast constant-product curve that never migrates."],
             ["EMA", `Exponential moving average of price, updated at every trade${p ? ` over ${Math.round(p.emaPeriodSecs / 60)} minutes` : ""}.`],
             ["Band", `The zone around the EMA${p ? ` (± ${pctFromBps(p.agentBandBps)})` : ""} inside which the vault agent holds.`],
             ["Vault average cost", "The SOL cost per token of what the vault holds; agent buys must fill at or below it."],
             ["Window", "The period over which the agent's buy and sell budgets reset."],
             ["Impact", "How far a trade moves the spot price, in percent."],
-            ["Terms", "The fee split and agent limits frozen into a launch at creation."],
+            ["Terms", "The fee split, the payback rule, the vault floor and the agent limits frozen into a launch at creation."],
             ["Vault agent", glossaryRule("vaultAgent", pumpSplit(p))],
             ["Backer earnings", glossaryRule("backerEarnings", pumpSplit(p))],
+            ["Payback", glossaryRule("payback", pumpSplit(p))],
+            ["Vault floor", glossaryRule("vaultFloor", pumpSplit(p))],
             ["Buyback pool", glossaryRule("buybackPool", pumpSplit(p))],
             ["Wind-down", glossaryRule("windDown", pumpSplit(p))],
           ].map(([t, d]) => (
@@ -430,9 +465,14 @@ export const brand: DocPage = {
       body: (
         <Ul>
           <li>Recolour the coin, round the jaws, or add glows, gradients or padlocks.</li>
-          <li>Promise outcomes: no &ldquo;safe&rdquo;, &ldquo;floor&rdquo;, &ldquo;guaranteed&rdquo;.</li>
           <li>
-            Say &ldquo;AI&rdquo; or &ldquo;bot&rdquo; — it&rsquo;s <Link href="/docs/agents" className="underline">the vault agent</Link>.
+            Promise outcomes: no &ldquo;safe&rdquo;, &ldquo;guaranteed&rdquo;, &ldquo;100x&rdquo;, and no &ldquo;floor&rdquo; except the
+            vault floor, the SOL a vault keeps for fees.
+          </li>
+          <li>
+            Say &ldquo;AI&rdquo; or &ldquo;bot&rdquo;: it&rsquo;s <Link href="/docs/agents" className="underline">the vault agent</Link>. The one
+            exception is the optional narration, which may be described as it is: a language model writes a plain-English note for each
+            decision and never decides trades.
           </li>
         </Ul>
       ),

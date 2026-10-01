@@ -12,6 +12,7 @@ import {
   describeError,
   fetchVenueState,
   minOut,
+  payoutStatus,
   poolPda,
   pumpRefOf,
   quoteBuy,
@@ -25,11 +26,14 @@ import {
   type PumpLaunchRef,
   type VenueState,
 } from "@holdfast/sdk";
+import type { ActivityItem, ActivityKind, ActivityLog } from "./activity";
 import type { LookupTable } from "./alt";
 import type { AgentConfig } from "./config";
+import type { FlowFeatures } from "./flow";
 import { log } from "./log";
 import { landed, sendIxs } from "./send";
 import type { CrankAttempt, CrankKind } from "./status";
+import { payoutMarketStrong, type MarketState, type Projection, type StrategyParams } from "./strategy";
 import { tokenAmount } from "./venue";
 
 /**
@@ -38,7 +42,8 @@ import { tokenAmount } from "./venue";
  * launches `graduate_pump` (once the curve completed and pump.fun migrated it), `collect_pump_fees`
  * (creator fees worth collecting) and `buyback_burn` (a buyback pool worth spending). Each check costs
  * RPC reads, so every (launch, crank) pair runs at most every `crankMs` (wind-down: WIND_DOWN_RECHECK_MS)
- * and a failed send backs off exponentially from there.
+ * and a failed send backs off exponentially from there. `payout_backers` is different: it is signed by the
+ * agent authority and only sent when the program says a payout is due AND the market is strong.
  */
 
 /** Creator fees below this stay in pump.fun's vaults (the crank's own fee would be a visible share). */
@@ -53,6 +58,15 @@ const WIND_DOWN_RECHECK_MS = 10 * 60_000;
 const MAX_CRANK_BACKOFF_MS = WIND_DOWN_IDLE_SECS * 1000;
 /** Crank attempts kept for `GET /status`, newest first. */
 const MAX_CRANKS = 50;
+/** A payout that is due but skipped for market reasons is re-recorded in the activity feed at most this often. */
+const PAYOUT_SKIP_NOTE_MS = 10 * 60_000;
+/** Crank kinds shown in the launch activity feed (graduation and the Holdfast-token buyback are not this launch's chart). */
+const ACTIVITY_KINDS: Partial<Record<CrankKind, ActivityKind>> = { collect_fees: "collect_fees", wind_down: "wind_down", payout: "payout" };
+const ACTIVITY_LABELS: Record<string, string> = {
+  collect_fees: "collected creator fees",
+  wind_down: "wound down: vault sold and SOL paid to backers",
+  payout: "paid backers",
+};
 
 export interface CrankLaunch {
   address: PublicKey;
@@ -66,6 +80,9 @@ interface CrankState {
   nextAt: number;
   /** Consecutive failed sends (sizes the back-off). */
   failures: number;
+  /** Payout: the market reason the last skip was recorded with, and when (`PAYOUT_SKIP_NOTE_MS`). */
+  skipReason?: string;
+  skipAt?: number;
 }
 
 export class Cranks {
@@ -80,6 +97,7 @@ export class Cranks {
     private readonly client: MoshClient,
     private readonly signer: Keypair,
     private readonly alt: LookupTable,
+    private readonly activity: ActivityLog,
   ) {}
 
   /** Forgets launches that are no longer live. */
@@ -105,6 +123,45 @@ export class Cranks {
       const e = events.find((x) => x.name === "woundDown");
       return e?.name === "woundDown" ? { amount: e.data.solToBackers.toString(), tokens: e.data.tokensReturned.toString() } : {};
     });
+  }
+
+  /**
+   * `payout_backers`, agent-signed: when the program's conditions hold (`payoutStatus.due`: liquid vault SOL ≥
+   * the payout multiple of the initial vault, the 4 h interval, the vault floor) AND the market is strong by
+   * the sell ramp's observables. A due payout in a weak market is skipped and the reason goes to the activity
+   * feed (`payout`, `skipped`): the vault's SOL buys the dip first, backers are paid out of strength.
+   */
+  async payout(l: CrankLaunch, market: MarketState, proj: Projection, flow: FlowFeatures, now: bigint, params: StrategyParams): Promise<void> {
+    const status = payoutStatus(l.account, Number(now));
+    if (!status.due || !this.due(l, "payout")) return;
+    const kind: 0 | 1 = status.principalRepaid ? 1 : 0;
+    const gate = payoutMarketStrong(market, proj, params, flow);
+    const key = l.address.toBase58();
+    if (!gate.ok) {
+      const per = this.state.get(key)?.payout;
+      if (per?.skipReason !== gate.reason || Date.now() - (per.skipAt ?? 0) >= PAYOUT_SKIP_NOTE_MS) {
+        this.defer(l, "payout", 0);
+        const state = this.state.get(key)!.payout!;
+        state.skipReason = gate.reason;
+        state.skipAt = Date.now();
+        this.activity.record(
+          { address: l.json.address, mint: l.json.mint, symbol: l.symbol, venue: l.json.venue },
+          {
+            ts: Math.floor(Date.now() / 1000),
+            kind: "payout",
+            reason: `payout eligible, skipped: ${gate.reason}`,
+            detail: { skipped: true, eligible: true, payoutKind: kind, targetSol: Number(status.target) / LAMPORTS_PER_SOL, liquidSol: Number(status.liquid) / LAMPORTS_PER_SOL },
+          },
+        );
+        log("payout_skipped", { address: l.json.address, mint: l.json.mint, reason: gate.reason });
+      }
+      return;
+    }
+    this.defer(l, "payout", this.cfg.crankMs);
+    await this.attempt("payout", l, this.cfg.crankMs, () => Promise.resolve(this.client.payoutBackersIx(l.address, this.signer.publicKey)), (events) => {
+      const e = events.find((x) => x.name === "backersPaid");
+      return e?.name === "backersPaid" ? { amount: e.data.amount.toString() } : {};
+    }, { payoutKind: kind, market: gate.reason, targetSol: Number(status.target) / LAMPORTS_PER_SOL, liquidSol: Number(status.liquid) / LAMPORTS_PER_SOL });
   }
 
   /** The pump launch cranks: graduation, creator fee collection, buyback-and-burn. */
@@ -206,11 +263,12 @@ export class Cranks {
     baseMs: number,
     build: () => Promise<TransactionInstruction>,
     outcome: (events: MoshEvent[]) => Pick<CrankAttempt, "amount" | "tokens">,
+    detail: ActivityItem["detail"] = {},
   ): Promise<boolean> {
     const attempt: CrankAttempt = { kind, address: l.json.address, mint: l.json.mint, venue: l.json.venue, symbol: l.symbol, at: Math.floor(Date.now() / 1000) };
     if (this.cfg.dryRun) {
       this.defer(l, kind, baseMs);
-      this.record(attempt, { dryRun: true });
+      this.record(l, attempt, { dryRun: true }, detail);
       return false;
     }
     const key = l.address.toBase58();
@@ -219,7 +277,7 @@ export class Cranks {
       const result = await landed(this.client, sent.signature);
       const per = this.state.get(key)?.[kind];
       if (per) per.failures = 0;
-      this.record({ ...attempt, signature: sent.signature, ...outcome(result?.events ?? []) }, { ...sent.cost, ...result?.cost });
+      this.record(l, { ...attempt, signature: sent.signature, ...outcome(result?.events ?? []) }, { ...sent.cost, ...result?.cost }, detail);
       return true;
     } catch (err) {
       const per = this.state.get(key)?.[kind];
@@ -227,14 +285,26 @@ export class Cranks {
       const retryInMs = Math.min(baseMs * 2 ** failures, MAX_CRANK_BACKOFF_MS);
       this.defer(l, kind, retryInMs);
       this.state.get(key)![kind]!.failures = failures + 1;
-      this.record({ ...attempt, error: describeError(err) }, { retryInMs });
+      this.record(l, { ...attempt, error: describeError(err) }, { retryInMs }, detail);
       return false;
     }
   }
 
-  private record(attempt: CrankAttempt, extra: Record<string, unknown>): void {
+  private record(l: CrankLaunch, attempt: CrankAttempt, extra: Record<string, unknown>, detail: ActivityItem["detail"]): void {
     this.attempts.unshift(attempt);
     this.attempts.length = Math.min(this.attempts.length, MAX_CRANKS);
     log("crank", { ...attempt, ...extra });
+    const activityKind = ACTIVITY_KINDS[attempt.kind];
+    if (!activityKind) return;
+    const facts: ActivityItem["detail"] = { ...detail };
+    if (attempt.amount !== undefined) facts.amountSol = Number(attempt.amount) / LAMPORTS_PER_SOL;
+    if (attempt.tokens !== undefined) facts.tokens = Number(attempt.tokens) / 1e6;
+    if (attempt.error !== undefined) facts.error = attempt.error;
+    if (extra.dryRun === true) facts.dryRun = true;
+    const label = ACTIVITY_LABELS[activityKind] ?? activityKind;
+    const reason = attempt.error ? `${label} failed: ${attempt.error}` : extra.dryRun ? `dry run, not sent: ${label}` : label;
+    const item: Omit<ActivityItem, "narrative"> = { ts: attempt.at, kind: activityKind, reason, detail: facts };
+    if (attempt.signature) item.sig = attempt.signature;
+    this.activity.record({ address: l.json.address, mint: l.json.mint, symbol: l.symbol, venue: l.json.venue }, item);
   }
 }

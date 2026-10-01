@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { pumpSplit } from "@/lib/pump-terms";
+import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import type { PlatformInfo } from "@/lib/types";
 import { Term } from "../glossary";
 
 /**
- * §2 How it works in three beats (Back → Launch on pump.fun → Earn) for someone who knows pump.fun
- * and nothing else: one sentence each, every number from the platform's frozen split.
+ * §2 How it works in three beats (Back → Launch on pump.fun → Get paid back) for someone who knows
+ * pump.fun and nothing else: one sentence each, every number from the platform's frozen split.
  */
 export function HowStrip({ params }: { params: PlatformInfo["params"] | null }) {
   const s = pumpSplit(params);
@@ -18,17 +18,20 @@ export function HowStrip({ params }: { params: PlatformInfo["params"] | null }) 
       title: "Launch on pump.fun",
       body: (
         <>
-          The pooled SOL, minus the {s.launchFeePct}% launch fee, creates the token and makes its first buy, the{" "}
-          <Term k="bundle" split={s} />, before anyone else can trade. Those tokens go into a <Term k="vault" split={s} />.
+          The pooled SOL, minus the {s.launchFeePct}% launch fee and the create fee, creates the token and makes its first buy, the{" "}
+          <Term k="bundle" split={s} />, in the same instruction, before anyone else can trade. Tokens and SOL reserve go into a{" "}
+          <Term k="vault" split={s} />.
         </>
       ),
     },
     {
-      title: "Earn",
+      title: "Get paid back",
       body: (
         <>
-          A rate-limited <Term k="vaultAgent" split={s} /> sells into rallies above cost and buys back dips. You get {s.backerPct}% of
-          its realized profit; {s.burnPct}% buys and burns the Holdfast token.
+          A rate-limited <Term k="vaultAgent" split={s} /> sells slowly when the chart is strong and buys back dips; what it sells stays
+          in the vault. When the vault is {fmtMult(s.payoutMult)} its start and the chart is strong, it may pay backers back: principal
+          first, then {s.payoutSharePct}% of the vault every {fmtInterval(s.payoutIntervalHours)} (<Term k="payback" split={s} />). Buying
+          back dips always comes first. You also get {s.backerPct}% of pump.fun&rsquo;s creator fee.
         </>
       ),
     },

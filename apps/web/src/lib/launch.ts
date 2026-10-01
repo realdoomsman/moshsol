@@ -71,7 +71,7 @@ export function phaseExplainer(phase: Phase, venue: LaunchVenue): string {
     case "refunding":
       return "Refunding: this raise was cancelled or missed its minimum. Every backer gets 100% of their deposit back from this page.";
     case "live":
-      return `Live: buy or sell ${where}. The vault agent trades the backers' bundle; their share of its profit accrues here.`;
+      return `Live: buy or sell ${where}. The vault agent holds the backers' bundle, selling into strength and buying back dips; once the vault is well above its start it may pay backers back.`;
     case "woundDown":
       return "Wound down: trading is over. Backers claim their share of the vault's SOL from this page.";
   }

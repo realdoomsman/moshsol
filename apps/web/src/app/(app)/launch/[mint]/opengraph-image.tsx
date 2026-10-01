@@ -2,31 +2,16 @@ import { countdown, fmtPrice, lamportsToSol } from "@holdfast/sdk";
 import { ImageResponse } from "next/og";
 import { fmtMcap, fmtSolValue, fmtTokens } from "@/lib/format";
 import { phaseOf } from "@/lib/launch";
+import { DEFAULT_PUMP_SPLIT, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { OG as C, OgLockup } from "@/lib/og-brand";
 import { ogFonts } from "@/lib/og-fonts";
 import { loadLaunch, parseMint } from "@/lib/server";
+import { imageDataUri } from "@/lib/og-image";
 import type { LaunchSummary } from "@/lib/types";
 
-export const alt = "Holdfast launch: backers buy first and share the profit";
+export const alt = "Holdfast launch: backers buy first; at 5× its start the vault may pay them back";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
-
-/** Formats the OG renderer can decode; anything else falls back to the ticker tile. */
-const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/svg+xml"];
-
-async function imageDataUri(url: string | null): Promise<string | null> {
-  if (!url) return null;
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(3_000) });
-    const type = (res.headers.get("content-type") ?? "").split(";")[0].trim();
-    if (!res.ok || !IMAGE_TYPES.includes(type)) return null;
-    const bytes = Buffer.from(await res.arrayBuffer());
-    if (bytes.byteLength > 2 * 1024 * 1024) return null;
-    return `data:${type};base64,${bytes.toString("base64")}`;
-  } catch {
-    return null;
-  }
-}
 
 function Label({ children }: { children: string }) {
   return <div style={{ fontSize: 20, fontWeight: 600, color: C.ink3, letterSpacing: 1.6, textTransform: "uppercase" }}>{children}</div>;
@@ -81,6 +66,13 @@ function LiveFooter({ l }: { l: LaunchSummary }) {
   );
 }
 
+/** "10% of creator fees · payback at 5×" — what a raise's backers earn, from the launch's frozen terms. */
+function raiseTagline(l: LaunchSummary): string {
+  const s = pumpSplit(l.terms);
+  const fees = l.venue === "pump" ? `${s.backerPct}% of creator fees` : `${l.terms.backerFeeShareBps / 100}% of trade fees`;
+  return `${fees} to backers · payback once the vault is ${fmtMult(s.payoutMult)} its start`;
+}
+
 function RaiseFooter({ l, nowSec }: { l: LaunchSummary; nowSec: number }) {
   const raised = lamportsToSol(l.raised);
   const max = lamportsToSol(l.raiseMax);
@@ -106,7 +98,7 @@ function RaiseFooter({ l, nowSec }: { l: LaunchSummary; nowSec: number }) {
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 22, color: C.ink3 }}>
         <div style={{ display: "flex" }}>{`min ${fmtSolValue(min)} SOL · 100% refundable if it isn't met`}</div>
-        <div style={{ display: "flex" }}>{`${l.terms.backerFeeShareBps / 100}% of fees + all vault profit to backers`}</div>
+        <div style={{ display: "flex" }}>{raiseTagline(l)}</div>
       </div>
     </div>
   );
@@ -180,14 +172,16 @@ export default async function Image({ params }: { params: Promise<{ mint: string
               {l ? l.name : "Holdfast"}
             </div>
             <div style={{ fontSize: 36, color: C.ink2 }}>
-              {l ? `$${l.symbol}` : "The Solana launchpad where backers buy first and share the profit."}
+              {l ? `$${l.symbol}` : `The Solana launchpad where backers buy first and the vault may pay them back at ${fmtMult(DEFAULT_PUMP_SPLIT.payoutMult)}.`}
             </div>
           </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", paddingTop: 28, borderTop: `1px solid ${C.line}` }}>
           {!l || !phase ? (
-            <div style={{ fontSize: 30, color: C.ink2 }}>Backers buy first and share the profit.</div>
+            <div style={{ fontSize: 30, color: C.ink2 }}>
+              {`Backers buy first. The vault agent trades the bundle; at ${fmtMult(DEFAULT_PUMP_SPLIT.payoutMult)} its start it may pay them back.`}
+            </div>
           ) : phase === "live" ? (
             <LiveFooter l={l} />
           ) : phase === "raising" || phase === "ready" ? (
@@ -195,8 +189,8 @@ export default async function Image({ params }: { params: Promise<{ mint: string
           ) : phase === "woundDown" ? (
             <div style={{ display: "flex", fontSize: 34, color: C.ink2 }}>
               {l.woundDown
-                ? `Wound down: ${fmtSolValue(l.woundDown.solToBackers)} SOL credited to backers. Trading has ended.`
-                : "Wound down: the curve and vault SOL went to backers. Trading has ended."}
+                ? `Wound down: ${l.venue === "pump" ? "the vault sold what it held, " : ""}${fmtSolValue(l.woundDown.solToBackers)} SOL credited to backers. Trading has ended.`
+                : `Wound down: ${l.venue === "pump" ? "all vault SOL" : "the curve and vault SOL"} went to backers. Trading has ended.`}
             </div>
           ) : (
             <div style={{ display: "flex", fontSize: 34, color: C.ink2 }}>

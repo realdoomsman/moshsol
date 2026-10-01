@@ -358,6 +358,9 @@ fn agent_sells_rallies_above_cost_then_buys_back_below_avg_sell() {
     let mut env = Env::new();
     let (_c, mint, backers) = env.live_launch(&[12 * SOL, 8 * SOL]);
     let initial = env.launch(&mint);
+    assert_eq!(initial.initial_vault_sol, 20 * SOL - 20 * SOL / 100, "bundle + reserve = raise − launch fee");
+    assert_eq!(initial.initial_vault_sol, initial.bundle_sol + initial.vault_sol);
+    assert_eq!(initial.last_payout_ts, initial.launched_at);
     let whale = env.user(40);
     env.warp(60);
     ok(env.buy(&whale, &mint, 15 * SOL, 0));
@@ -379,26 +382,20 @@ fn agent_sells_rallies_above_cost_then_buys_back_below_avg_sell() {
     let num = l.vault_cost_sol as u128 * chunk as u128;
     let cost = num.div_ceil(l.vault_tokens as u128) as u64;
     assert_eq!(l2.vault_cost_sol, l.vault_cost_sol - cost);
-    // Only the cost (rounded up) returns to the vault and the buy-back budget; the rest is profit
-    // and goes to backers in full.
-    let profit = quote - cost;
-    assert!(profit > 0);
-    assert_eq!(l2.vault_sol, l.vault_sol + cost);
-    assert_eq!(l2.buyback_sol, cost);
-    assert_eq!(l2.backer_fees_accrued, l.backer_fees_accrued + profit);
-    assert_eq!(
-        l2.acc_fee_per_share,
-        l.acc_fee_per_share + profit as u128 * ACC_PRECISION / l.raised as u128
-    );
+    // The whole fill stays in the vault as liquid SOL: nothing is split off to backers.
+    assert!(quote > cost, "the rally sell realized a profit");
+    assert_eq!(l2.vault_sol, l.vault_sol + quote);
+    assert_eq!(l2.backer_fees_accrued, l.backer_fees_accrued);
+    assert_eq!(l2.acc_fee_per_share, l.acc_fee_per_share);
     assert_eq!(l2.vault_tokens, l.vault_tokens - chunk);
     assert_eq!(l2.agent_sol_received, quote, "average sell price uses the full fill");
     assert_eq!(l2.agent_tokens_sold, chunk);
     ok(env.agent_sell(&mint, chunk, 0));
     env.assert_invariants(&mint);
 
-    // Backers claim the profit (and their fee share) pro-rata, never more than was credited.
+    // Backers claim only their trade-fee share, never more than was credited.
     let l = env.launch(&mint);
-    assert!(l.backer_fees_accrued > l2.backer_fees_accrued, "second sell was profitable too");
+    assert_eq!(l.backer_fees_accrued, l2.backer_fees_accrued, "agent sells credit backers nothing");
     let mut paid = 0;
     for b in &backers {
         let before = env.lamports(&b.pubkey());
@@ -417,18 +414,27 @@ fn agent_sells_rallies_above_cost_then_buys_back_below_avg_sell() {
     env.warp(300);
 
     let l = env.launch(&mint);
-    let budget = l.buyback_sol;
-    assert!(budget > 0 && budget < l.window_buy_cap, "budget {budget} cap {}", l.window_buy_cap);
-    // Above average cost, so only the buy-back budget may be spent.
-    assert_err(env.agent_buy(&mint, budget + 1, 0), MoshError::AgentAboveCostBasis);
-    ok(env.agent_buy(&mint, budget / 2, 1));
-    ok(env.agent_buy(&mint, budget - budget / 2, 1));
-    let l = env.launch(&mint);
-    assert_eq!(l.buyback_sol, 0);
-    assert_err(env.agent_buy(&mint, 1_000, 0), MoshError::AgentAboveCostBasis);
-
-    // Round trip: vault SOL is back where it started and the realized profit went to backers.
-    assert_eq!(l.vault_sol, initial.vault_sol);
+    // Above average cost, so this is the buy-back path: any vault SOL may be spent, up to the
+    // window cap and never below the vault floor.
+    let floor = l.terms.min_vault_sol;
+    assert_eq!(floor, DEFAULT_MIN_VAULT_SOL);
+    assert_err(env.agent_buy(&mint, l.vault_sol - floor + 1, 0), MoshError::VaultFloor);
+    assert_err(env.agent_buy(&mint, l.window_buy_cap + 1, 0), MoshError::AgentWindowLimit);
+    // In clips under the impact cap until the window cap is used up.
+    let spend = l.window_buy_cap;
+    for i in 0..4 {
+        let clip = if i == 3 { spend - 3 * (spend / 4) } else { spend / 4 };
+        ok(env.agent_buy(&mint, clip, 1));
+    }
+    let l3 = env.launch(&mint);
+    assert_eq!(l3.vault_sol, l.vault_sol - spend);
+    assert_eq!(l3.vault_cost_sol, l.vault_cost_sol + spend);
+    assert_err(env.agent_buy(&mint, 1_000, 0), MoshError::AgentWindowLimit);
+    // Round trip at a better price than it sold: bought back below the average sell price.
+    let bought = l3.vault_tokens + 2 * chunk - initial.vault_tokens;
+    assert!(bought as u128 * l3.agent_sol_received as u128 > l3.agent_sol_spent as u128 * l3.agent_tokens_sold as u128);
+    // Every lamport the agent received stayed in the vault; only what it spent left.
+    assert_eq!(l3.vault_sol + l3.agent_sol_spent, initial.vault_sol + l3.agent_sol_received);
     env.assert_invariants(&mint);
 }
 
@@ -645,7 +651,7 @@ fn abandoned_launch(env: &mut Env) -> (Keypair, Pubkey, Vec<Keypair>) {
 }
 
 #[test]
-fn wind_down_needs_live_age_idle_and_no_outside_holders() {
+fn wind_down_needs_live_age_idle_and_few_outside_holders() {
     let mut env = Env::new();
     let cranker = env.user(2);
 
@@ -660,14 +666,16 @@ fn wind_down_needs_live_age_idle_and_no_outside_holders() {
     let (_c, mint, _b) = env.live_launch(&[10 * SOL, 6 * SOL, 4 * SOL]);
     assert_err(env.wind_down(&cranker, &mint), MoshError::LaunchTooYoung);
 
-    // A trader keeps some tokens and parks one token in a random wallet's account.
+    // A trader buys more than the dead-launch threshold (5% of supply) and parks one token in
+    // a random wallet's account.
     let t = env.user(20);
     let parked = env.user(1);
     env.warp(60);
-    ok(env.buy(&t, &mint, 2 * SOL, 0));
+    ok(env.buy(&t, &mint, 3 * SOL, 0));
+    let threshold = math::bps(TOTAL_SUPPLY, DEFAULT_DEAD_HOLDERS_BPS).unwrap();
     let bal = env.token_balance(&ata(&t.pubkey(), &mint));
+    assert!(bal > threshold + 1_000_000, "trader holds {bal}, threshold {threshold}");
     env.transfer_tokens(&t, &mint, &parked.pubkey(), 1_000_000);
-    ok(env.sell(&t, &mint, bal - 1_000_000 - bal / 10, 0));
 
     let launched_at = env.launch(&mint).launched_at;
     let now = env.now();
@@ -676,23 +684,26 @@ fn wind_down_needs_live_age_idle_and_no_outside_holders() {
     env.warp(1);
     assert_err(env.wind_down(&cranker, &mint), MoshError::OutsideHolders);
 
-    // The trader sells the rest: a fresh trade restarts the idle clock.
-    let rest = env.token_balance(&ata(&t.pubkey(), &mint));
-    ok(env.sell(&t, &mint, rest, 0));
+    // The trader sells down to one base unit over the threshold (with the parked token): a
+    // fresh trade restarts the idle clock.
+    let keep = threshold + 1 - 1_000_000;
+    ok(env.sell(&t, &mint, bal - 1_000_000 - keep, 0));
     assert_err(env.wind_down(&cranker, &mint), MoshError::RecentTrade);
     env.warp(WIND_DOWN_IDLE_SECS - 1);
     assert_err(env.wind_down(&cranker, &mint), MoshError::RecentTrade);
     env.warp(1);
-    // One token in a random account still blocks it...
+    // One base unit over 5% still blocks it...
     assert_err(env.wind_down(&cranker, &mint), MoshError::OutsideHolders);
-    // ...but burned tokens don't.
+    // ...but burned tokens leave the supply (and the threshold moves with it).
     env.burn_tokens(&parked, &mint, 1_000_000);
     assert_eq!(env.mint_state(&mint).supply, TOTAL_SUPPLY - 1_000_000);
     let meta = ok(env.wind_down(&cranker, &mint));
     eprintln!("CU wind_down: {}", meta.compute_units_consumed);
     assert_eq!(env.launch(&mint).status, LaunchStatus::WoundDown);
     env.assert_invariants(&mint);
-    assert_eq!(env.token_balance(&curve_pda(&launch_pda(&mint))), TOTAL_SUPPLY - 1_000_000);
+    // The remaining outside holder keeps their tokens; everything else is back in the curve.
+    assert_eq!(env.token_balance(&ata(&t.pubkey(), &mint)), keep);
+    assert_eq!(env.token_balance(&curve_pda(&launch_pda(&mint))), TOTAL_SUPPLY - 1_000_000 - keep);
 }
 
 #[test]
@@ -708,7 +719,7 @@ fn wound_down_launch_pays_backers_and_stops_trading() {
     let l = env.launch(&mint);
     let launch_key = launch_pda(&mint);
     assert_eq!(l.status, LaunchStatus::WoundDown);
-    assert_eq!((l.real_sol, l.vault_sol, l.vault_tokens, l.vault_cost_sol, l.buyback_sol), (0, 0, 0, 0, 0));
+    assert_eq!((l.real_sol, l.vault_sol, l.vault_tokens, l.vault_cost_sol), (0, 0, 0, 0));
     assert_eq!(l.backer_fees_accrued, before.backer_fees_accrued + before.real_sol + before.vault_sol);
     assert_eq!(l.token_reserve, TOTAL_SUPPLY);
     assert_eq!(env.token_balance(&curve_pda(&launch_key)), TOTAL_SUPPLY);
@@ -751,16 +762,16 @@ fn admin_withdraw_vault_is_admin_only_and_keeps_accounting() {
     let admin = env.admin.insecure_clone();
     let agent = env.agent.insecure_clone();
     let fr = env.fee_recipient.pubkey();
-    // A profitable agent sell leaves a buy-back budget inside vault SOL.
+    // An agent sell adds its proceeds to vault SOL.
     let whale = env.user(40);
     env.warp(60);
     ok(env.buy(&whale, &mint, 15 * SOL, 0));
     env.warp(300);
     let chunk = env.launch(&mint).window_sell_cap / 4;
     let meta = ok(env.agent_sell(&mint, chunk, 0));
-    eprintln!("CU agent_sell (profit share): {}", meta.compute_units_consumed);
+    eprintln!("CU agent_sell: {}", meta.compute_units_consumed);
     let l = env.launch(&mint);
-    assert!(l.buyback_sol > 0);
+    assert!(l.vault_sol > l.initial_vault_sol - l.bundle_sol);
 
     // Only the platform admin, and only to the platform fee recipient.
     let recipient_tokens = env.create_ata(&admin, &fr, &mint);
@@ -779,8 +790,8 @@ fn admin_withdraw_vault_is_admin_only_and_keeps_accounting() {
     assert_err(env.admin_withdraw(&admin, &mint, 0, l.vault_tokens + 1), MoshError::InsufficientVault);
 
     // Partial: SOL to the recipient, tokens to its account taking their share of the cost basis;
-    // the buy-back budget shrinks to what's left of vault SOL.
-    let sol = l.vault_sol - l.buyback_sol / 2;
+    // the agent's vault shrinks by exactly that.
+    let sol = l.vault_sol / 2;
     let tokens = l.vault_tokens / 3;
     let fr_before = env.lamports(&fr);
     let meta = ok(env.admin_withdraw(&admin, &mint, sol, tokens));
@@ -792,7 +803,6 @@ fn admin_withdraw_vault_is_admin_only_and_keeps_accounting() {
     assert_eq!(l2.vault_tokens, l.vault_tokens - tokens);
     let removed = (l.vault_cost_sol as u128 * tokens as u128).div_ceil(l.vault_tokens as u128) as u64;
     assert_eq!(l2.vault_cost_sol, l.vault_cost_sol - removed);
-    assert_eq!(l2.buyback_sol, l2.vault_sol);
     assert_eq!(l2.backer_fees_accrued, l.backer_fees_accrued, "backers' credit is untouched");
     env.assert_invariants(&mint);
 
@@ -812,7 +822,7 @@ fn admin_withdraw_vault_is_admin_only_and_keeps_accounting() {
     // Everything that's left: the basis leaves with the last token, the agent has nothing to sell.
     ok(env.admin_withdraw(&admin, &mint, dust.vault_sol, dust.vault_tokens));
     let l3 = env.launch(&mint);
-    assert_eq!((l3.vault_sol, l3.vault_tokens, l3.vault_cost_sol, l3.buyback_sol), (0, 0, 0, 0));
+    assert_eq!((l3.vault_sol, l3.vault_tokens, l3.vault_cost_sol), (0, 0, 0));
     assert_eq!(env.token_balance(&recipient_tokens), l.vault_tokens);
     env.assert_invariants(&mint);
     env.warp(3_600);
@@ -823,4 +833,138 @@ fn admin_withdraw_vault_is_admin_only_and_keeps_accounting() {
     ok(env.propose_admin(&admin, multisig.pubkey()));
     ok(env.accept_admin(&multisig));
     assert_err(env.admin_withdraw(&admin, &mint, 0, 0), MoshError::Unauthorized);
+}
+
+/// Puts `sol` lamports of liquid SOL into the vault (funding the launch account so the
+/// accounting invariant holds), the way agent sells and fee sweeps would.
+fn fund_vault(env: &mut Env, mint: &Pubkey, sol: u64) {
+    let before = env.launch(mint).vault_sol;
+    if sol > before {
+        env.svm.airdrop(&launch_pda(mint), sol - before).unwrap();
+    }
+    env.set_launch(mint, |l| {
+        assert!(sol >= before, "fund_vault only tops up");
+        l.vault_sol = sol;
+    });
+}
+
+#[test]
+fn payout_backers_repays_principal_at_target_then_dividends_per_interval() {
+    let mut env = Env::new();
+    let (_c, mint, backers) = env.live_launch(&[12 * SOL, 8 * SOL]);
+    let launch_key = launch_pda(&mint);
+    let l0 = env.launch(&mint);
+    let initial = l0.initial_vault_sol;
+    let target = initial * DEFAULT_PAYOUT_MULT_BPS as u64 / 10_000;
+    assert_eq!(l0.payout_target().unwrap(), target);
+    assert_eq!(target, 5 * initial);
+    let interval = DEFAULT_PAYOUT_INTERVAL_SECS as i64;
+
+    // Only the agent authority.
+    let stranger = env.user(2);
+    assert_err(env.payout_backers_as(&stranger, &launch_key), MoshError::Unauthorized);
+    // Not before the vault reaches the target, however long it waits.
+    env.warp(interval);
+    assert_err(env.payout_backers(&launch_key), MoshError::PayoutNotDue);
+    fund_vault(&mut env, &mint, target - 1);
+    assert_err(env.payout_backers(&launch_key), MoshError::PayoutNotDue);
+    env.assert_invariants(&mint);
+
+    // At the target: the principal, once, to the backers' claimable credit — unless the agent
+    // circuit breaker is on, which covers the payout crank too.
+    fund_vault(&mut env, &mint, target);
+    let admin = env.admin.insecure_clone();
+    let mut p = test_params();
+    p.agents_paused = true;
+    ok(env.update_platform(&admin, p));
+    assert_err(env.payout_backers(&launch_key), MoshError::AgentsPaused);
+    p.agents_paused = false;
+    ok(env.update_platform(&admin, p));
+    let meta = ok(env.payout_backers(&launch_key));
+    eprintln!("CU payout_backers: {}", meta.compute_units_consumed);
+    let l1 = env.launch(&mint);
+    assert_eq!(l1.backers_repaid, initial);
+    assert_eq!(l1.backer_payouts, 0);
+    assert_eq!(l1.vault_sol, target - initial);
+    assert_eq!(l1.backer_fees_accrued, l0.backer_fees_accrued + initial);
+    assert_eq!(l1.last_payout_ts, env.now(), "payout clock restarted");
+    env.assert_invariants(&mint);
+    // Backers claim their principal pro-rata (12:8).
+    let mut paid = vec![];
+    for b in &backers {
+        let before = env.lamports(&b.pubkey());
+        ok(env.claim_backer(b, &mint));
+        paid.push(env.lamports(&b.pubkey()) + 5_000 - before);
+    }
+    let fees = l0.backer_fees_accrued;
+    assert!(paid[0].abs_diff((initial + fees) * 12 / 20) <= 2 && paid[1].abs_diff((initial + fees) * 8 / 20) <= 2, "{paid:?}");
+
+    // Never twice inside one interval, even with the vault back at the target.
+    fund_vault(&mut env, &mint, target);
+    assert_err(env.payout_backers(&launch_key), MoshError::PayoutNotDue);
+    env.warp(interval - 1);
+    assert_err(env.payout_backers(&launch_key), MoshError::PayoutNotDue);
+    env.warp(1);
+    // Dividend: 15% of liquid vault SOL.
+    ok(env.payout_backers(&launch_key));
+    let l2 = env.launch(&mint);
+    let dividend = target * DEFAULT_PAYOUT_SHARE_BPS as u64 / 10_000;
+    assert_eq!(l2.backer_payouts, dividend);
+    assert_eq!(l2.backers_repaid, initial, "principal is repaid once");
+    assert_eq!(l2.vault_sol, target - dividend);
+    assert_eq!(l2.backer_fees_accrued, l1.backer_fees_accrued + dividend);
+    env.assert_invariants(&mint);
+
+    // Next tick: the vault slipped under the target (it kept buying) → skipped, no payout.
+    env.warp(interval);
+    assert_err(env.payout_backers(&launch_key), MoshError::PayoutNotDue);
+    fund_vault(&mut env, &mint, target + SOL);
+    ok(env.payout_backers(&launch_key));
+    let l3 = env.launch(&mint);
+    assert_eq!(l3.backer_payouts, dividend + (target + SOL) * DEFAULT_PAYOUT_SHARE_BPS as u64 / 10_000);
+    env.assert_invariants(&mint);
+
+    // Tokens don't count: a vault rich in tokens but short of liquid SOL pays nothing.
+    env.warp(interval);
+    env.set_launch(&mint, |l| l.vault_tokens += TOTAL_SUPPLY / 10);
+    let l = env.launch(&mint);
+    assert!(l.vault_sol < target);
+    assert_err(env.payout_backers(&launch_key), MoshError::PayoutNotDue);
+    env.set_launch(&mint, |l| l.vault_tokens -= TOTAL_SUPPLY / 10);
+
+    // A wound-down launch has no vault to pay from.
+    env.set_launch(&mint, |l| l.status = LaunchStatus::WoundDown);
+    assert_err(env.payout_backers(&launch_key), MoshError::NotLive);
+}
+
+#[test]
+fn payout_never_takes_vault_below_its_floor() {
+    let mut env = Env::new();
+    let (_c, mint, _b) = env.live_launch(&[20 * SOL]);
+    let launch_key = launch_pda(&mint);
+    // A tiny launch: 0.05 SOL initial, so a 5× vault is 0.25 SOL and a dividend would cut
+    // into the 0.1 SOL floor once the vault is repaid down to it.
+    let initial = SOL / 20;
+    let l0 = env.launch(&mint);
+    env.svm.airdrop(&launch_key, 10 * SOL).unwrap();
+    env.set_launch(&mint, |l| {
+        l.initial_vault_sol = initial;
+        l.vault_sol = l0.vault_sol + 10 * SOL;
+    });
+    env.warp(DEFAULT_PAYOUT_INTERVAL_SECS as i64);
+    ok(env.payout_backers(&launch_key));
+    assert_eq!(env.launch(&mint).backers_repaid, initial);
+    env.assert_invariants(&mint);
+
+    // Raise the floor above what a dividend would leave: refused, vault untouched.
+    env.warp(DEFAULT_PAYOUT_INTERVAL_SECS as i64);
+    let l = env.launch(&mint);
+    let dividend = l.vault_sol * DEFAULT_PAYOUT_SHARE_BPS as u64 / 10_000;
+    env.set_launch(&mint, |l| l.terms.min_vault_sol = l.vault_sol - dividend + 1);
+    assert_err(env.payout_backers(&launch_key), MoshError::VaultFloor);
+    assert_eq!(env.launch(&mint).vault_sol, l.vault_sol);
+    env.set_launch(&mint, |l| l.terms.min_vault_sol = l.vault_sol - dividend);
+    ok(env.payout_backers(&launch_key));
+    assert_eq!(env.launch(&mint).vault_sol, l.vault_sol - dividend);
+    env.assert_invariants(&mint);
 }

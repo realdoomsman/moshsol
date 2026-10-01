@@ -85,7 +85,9 @@ pub fn venue_tokens<'info>(launch: &Launch, r: &[AccountInfo<'info>]) -> Result<
 /// the last CPI of the instruction: it returns fronted rent to the payer, a direct lamport
 /// move no later CPI would see. Every trade first sweeps whatever the authority already holds
 /// (anyone can send lamports to the PDA) into the launch and records it in `donated`, so the
-/// measured fill never includes it; the caller credits `donated` to the vault.
+/// measured fill never includes it; the caller credits `donated` to the vault. The same goes
+/// for whatever a pre-existing WSOL account of the authority holds (anyone can create and fund
+/// it): it lands on the launch when the account is closed after the trade and is `donated`.
 pub struct VenueTrade<'a, 'info> {
     pub launch: &'a AccountInfo<'info>,
     pub authority: &'a AccountInfo<'info>,
@@ -99,7 +101,8 @@ pub struct VenueTrade<'a, 'info> {
     pub remaining: &'a [AccountInfo<'info>],
     /// Rent the payer fronted for a transient WSOL account, owed back by `settle`.
     pub rent_owed: Cell<u64>,
-    /// Lamports found on the pump authority before trading, swept into the launch.
+    /// Lamports found on the pump authority or on its pre-existing WSOL account before trading,
+    /// swept into the launch (the latter by closing the account after the trade).
     pub donated: Cell<u64>,
 }
 
@@ -121,6 +124,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
         self.absorb()?;
         let sol_before = self.launch.lamports();
         let rent_before = self.rent_owed.get();
+        let donated_before = self.donated.get();
         let tokens_before = pump::token_amount(self.user_tokens)?;
         if self.graduated {
             pump::ensure_pool_volume_accumulator(self.authority, self.payer, self.system_program, self.remaining)?;
@@ -152,8 +156,10 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
             )?;
             self.sweep()?;
         }
-        // Rent a closed WSOL account dropped on the launch is the payer's, not a fill.
-        let spent = sol_before + (self.rent_owed.get() - rent_before) - self.launch.lamports();
+        // Rent a closed WSOL account dropped on the launch is the payer's, not a fill; what the
+        // account held before the trade is donated, not a fill.
+        let spent = sol_before + (self.rent_owed.get() - rent_before) + (self.donated.get() - donated_before)
+            - self.launch.lamports();
         let tokens = pump::token_amount(self.user_tokens)? - tokens_before;
         Ok((spent, tokens))
     }
@@ -187,6 +193,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
         self.absorb()?;
         let sol_before = self.launch.lamports();
         let rent_before = self.rent_owed.get();
+        let donated_before = self.donated.get();
         let tokens_before = pump::token_amount(self.user_tokens)?;
         if self.graduated {
             self.open_wsol()?;
@@ -208,7 +215,10 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
             )?;
             self.sweep()?;
         }
-        let received = self.launch.lamports() - sol_before - (self.rent_owed.get() - rent_before);
+        let received = self.launch.lamports()
+            - sol_before
+            - (self.rent_owed.get() - rent_before)
+            - (self.donated.get() - donated_before);
         let sold = tokens_before - pump::token_amount(self.user_tokens)?;
         Ok((received, sold))
     }
@@ -216,6 +226,9 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
     /// Makes sure the authority's WSOL ATA exists for a PumpSwap trade. Existence is decided
     /// by the account being a token account, not by its balance (anyone can send lamports to
     /// the address); whatever the payer fronts for it is measured and owed back by `settle`.
+    /// An account that already exists (anyone can create and fund it) is used as is: every
+    /// lamport on it — rent and wrapped balance alike — reaches the launch when `close_wsol`
+    /// unwraps it, so it is booked as donated and kept out of the measured fill.
     fn open_wsol(&self) -> Result<()> {
         let r = self.remaining;
         let wsol = &r[pump::pool::USER_WSOL];
@@ -225,6 +238,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
             MoshError::InvalidVenueAccount
         );
         if pump::is_token_account(wsol) {
+            self.donated.set(self.donated.get() + wsol.lamports());
             return Ok(());
         }
         require_keys_eq!(

@@ -11,6 +11,7 @@ import {
   sellAboveCost,
   sellCurveOk,
   sellToPrice,
+  spendableSol,
   type HoldKind,
   type MarketState,
   type Plan,
@@ -21,7 +22,8 @@ import {
  * The agent's decision rule before the parameterized policy, frozen as the `v1` baseline: act 25 bps
  * past the band, size each trade to push spot back to the band edge (≤ 90% of the impact limit) with
  * at most half of the remaining window budget, 50 bps slippage floor. Uses the same exact program-mirror
- * predicates.
+ * predicates. (Its buy-back leg used to be capped by the sell-proceeds budget the program no longer
+ * enforces; it now spends vault SOL above the floor like every buy.)
  */
 const SAFETY_MARGIN_BPS = 25n;
 const MAX_FRACTION_BPS = 5_000n;
@@ -34,8 +36,8 @@ export function evaluateV1(m: MarketState, s: Sizing, now: bigint): Plan {
   const t = m.terms;
   const band = t.bandBps;
   if (p.price <= (p.ema / BPS) * (BPS - band - SAFETY_MARGIN_BPS)) {
-    if (m.vaultSol === 0n) return hold("vault_empty");
-    const perTrade = minBig((p.buyRemaining * MAX_FRACTION_BPS) / BPS, p.buyRemaining, m.vaultSol);
+    if (spendableSol(m) === 0n) return hold("vault_empty");
+    const perTrade = minBig((p.buyRemaining * MAX_FRACTION_BPS) / BPS, p.buyRemaining, spendableSol(m));
     if (perTrade < s.minTradeLamports) return hold("budget");
     const ideal = buyToPrice(p, minBig((p.ema * (BPS - band)) / BPS, impactTargets(p, t.maxImpactBps).up));
     if (ideal < s.minTradeLamports) return hold("too_small");
@@ -43,7 +45,7 @@ export function evaluateV1(m: MarketState, s: Sizing, now: bigint): Plan {
     const impactOk = (a: bigint) => buyImpactOk(m, p, a);
     const fill = (a: bigint) => tokensOut(p.x, p.y, a);
     let solIn = largestFeasible(hi, (a) => impactOk(a) && buyBelowCost(p, a, fill(a)));
-    if (solIn < s.minTradeLamports) solIn = largestFeasible(minBig(hi, m.buybackSol), (a) => impactOk(a) && buyBelowAvgSell(m, a, fill(a)));
+    if (solIn < s.minTradeLamports) solIn = largestFeasible(hi, (a) => impactOk(a) && buyBelowAvgSell(m, a, fill(a)));
     if (solIn < s.minTradeLamports) return hold("cost_basis");
     const out = tokensOut(p.x, p.y, solIn);
     const impactBps = moveBps(p.price, priceQ64(p.x + solIn, p.y - out));

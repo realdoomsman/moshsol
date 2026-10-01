@@ -57,6 +57,10 @@ export const agentsQuery = () => queryOptions({ queryKey: ["agents"], queryFn: a
 
 export const agentStatusQuery = () => queryOptions({ queryKey: ["agent-status"], queryFn: api.agentStatus });
 
+export const agentActivityQuery = (id: string) => queryOptions({ queryKey: ["agent-activity", id], queryFn: () => api.agentActivity(id) });
+
+export const agentResearchQuery = () => queryOptions({ queryKey: ["agent-research"], queryFn: api.agentResearch });
+
 export const healthQuery = () => queryOptions({ queryKey: ["health"], queryFn: api.health });
 
 export const searchQuery = (q: string) =>

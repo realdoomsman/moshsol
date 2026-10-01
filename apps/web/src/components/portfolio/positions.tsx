@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useCallback, useState, type ReactNode } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import { launchHref, launchId, type LaunchRef } from "@/lib/launch";
+import { fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { usePlatform } from "@/lib/queries";
 import { TX_STAGE_LABEL, type TxStage } from "@/lib/tx";
 import type { ActivityEvent, LaunchSummary, PortfolioBacked, PortfolioCreated, PortfolioHolding } from "@/lib/types";
@@ -96,13 +97,14 @@ function ActionButton({
 export function BackedPanel({ rows, actions, now }: { rows: PortfolioBacked[]; actions: PositionActions; now: number }) {
   const params = usePlatform().data?.params;
   if (!rows.length) {
+    const split = pumpSplit(params);
     return (
       <EmptyState action={<ButtonLink href="/app" size="sm" variant="secondary">Find a raise</ButtonLink>}>
         No backed launches.
         {params
           ? params.holdfastCurveEnabled
-            ? ` Backers earn ${params.backerFeeShareBps / 100}% of every trade fee and 100% of the vault agent's profit.`
-            : ` Backers earn ${100 - params.burnShareBps / 100}% of the vault agent's profit; the rest buys and burns the Holdfast token.`
+            ? ` Backers earn ${params.backerFeeShareBps / 100}% of every trade fee; when the vault is ${fmtMult(split.payoutMult)} its start and the chart is strong, the vault agent may pay them back.`
+            : ` Backers earn ${split.backerPct}% of a launch's pump.fun creator fees; when the vault is ${fmtMult(split.payoutMult)} its start and the chart is strong, the vault agent may pay them back.`
           : ""}
       </EmptyState>
     );
@@ -124,6 +126,9 @@ export function BackedPanel({ rows, actions, now }: { rows: PortfolioBacked[]; a
   };
   const vaultShare = (b: PortfolioBacked) =>
     b.launch.status === "live" ? `${fmtSolValue(b.vaultShareSol)} SOL + ${fmtTokens(b.vaultShareTokens * 1e6)}` : "—";
+  // Payback so far, pro rata; the fields are absent from an indexer that predates the payback model.
+  const repaid = (b: PortfolioBacked) => ((b.launch.backersRepaidSol ?? 0) * b.shareBps) / 10_000;
+  const dividends = (b: PortfolioBacked) => ((b.launch.backerPayoutsSol ?? 0) * b.shareBps) / 10_000;
   return (
     <>
       <ul className="md:hidden">
@@ -153,6 +158,12 @@ export function BackedPanel({ rows, actions, now }: { rows: PortfolioBacked[]; a
           <TH align="right" className="hidden xl:table-cell">
             Vault share
           </TH>
+          <TH align="right" className="hidden lg:table-cell">
+            Principal repaid
+          </TH>
+          <TH align="right" className="hidden lg:table-cell">
+            Dividends
+          </TH>
           <TH align="right">Earned</TH>
           <TH align="right">Claimable</TH>
           {actions.own ? (
@@ -176,6 +187,12 @@ export function BackedPanel({ rows, actions, now }: { rows: PortfolioBacked[]; a
                 <TD align="right">{(b.shareBps / 100).toFixed(2)}%</TD>
                 <TD align="right" className="hidden text-ink-2 xl:table-cell">
                   {vaultShare(b)}
+                </TD>
+                <TD align="right" className="hidden text-ink-2 lg:table-cell">
+                  {fmtSolValue(repaid(b))} SOL
+                </TD>
+                <TD align="right" className="hidden text-ink-2 lg:table-cell">
+                  {fmtSolValue(dividends(b))} SOL
                 </TD>
                 <TD align="right" className="text-ink-2">
                   {fmtLamports(BigInt(b.feesClaimed) + claimable)} SOL
@@ -204,7 +221,7 @@ export function CreatedPanel({ rows, actions, now }: { rows: PortfolioCreated[];
         {params
           ? params.holdfastCurveEnabled
             ? ` Creators earn ${params.creatorFeeShareBps / 100}% of every trade fee on their launch.`
-            : " New launches are pump.fun tokens; the launch itself collects pump.fun's creator fees for its vault and the buyback pool."
+            : " New launches are pump.fun tokens; the launch itself collects pump.fun's creator fees for its vault, the buyback pool and its backers. The creator takes 0%."
           : ""}
       </EmptyState>
     );
@@ -461,7 +478,8 @@ const ACTIVITY_VERB: Record<ActivityEvent["type"], string> = {
   cancelled: "Raise failed",
   backer_claim: "Claimed backer earnings",
   creator_claim: "Claimed creator fees",
-  profit_shared: "Vault profit to backers",
+  profit_shared: "Vault profit to backers (old profit split)",
+  backers_paid: "Backers paid",
   wound_down: "Wound down",
   vault_withdrawn: "Admin vault withdrawal",
   creator_fees_collected: "pump.fun creator fees collected",
@@ -480,6 +498,7 @@ function amountOf(e: ActivityEvent): string {
     return `${fmtTokens(e.tokenAmount)} for ${fmtLamports(e.solAmount)} SOL`;
   }
   if (e.type === "launched" && e.tokenAmount) return `${fmtTokens(e.tokenAmount)} to the vault`;
+  if (e.type === "backers_paid" && e.solAmount) return `${fmtLamports(e.solAmount)} SOL ${e.ref === "principal" ? "principal" : "dividend"}`;
   if (e.type === "buyback_burned" && e.tokenAmount && BigInt(e.tokenAmount) > 0n) {
     return `${fmtLamports(e.solAmount ?? "0")} SOL → ${fmtTokens(e.tokenAmount)} burned`;
   }

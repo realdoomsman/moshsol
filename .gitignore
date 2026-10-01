@@ -12,6 +12,7 @@ apps/accounts/data/
 apps/agent/backtest/data/
 apps/agent/backtest/results/
 apps/agent/.alt.json
+apps/agent/.agent*.db*
 .localnet/
 .devnet/
 *.tsbuildinfo

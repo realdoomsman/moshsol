@@ -3,6 +3,7 @@ import { JetBrains_Mono, Mona_Sans } from "next/font/google";
 import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { SITE_URL } from "@/lib/env";
+import { DEFAULT_PUMP_SPLIT, fmtMult } from "@/lib/pump-terms";
 import { THEME_COLOR } from "@/lib/theme";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -10,9 +11,8 @@ import { Providers } from "./providers";
 const sans = Mona_Sans({ subsets: ["latin"], axes: ["wdth"], variable: "--font-mona", display: "swap" });
 const mono = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-jetbrains", display: "swap" });
 
-const title = "Holdfast — backers buy first and share the profit";
-const description =
-  "The Solana launchpad where backers fund the first buy. It's held in a vault and traded only by a rate-limited agent; backers get 100% of the agent's realized profit and half of every trading fee.";
+const title = "Holdfast — back a token before it launches; a vault agent holds the first buy";
+const description = `The Solana launchpad where backers fund a token's first buy on pump.fun. It's held in a vault and traded only by a rate-limited vault agent that sells slowly into strength and buys back dips. When the vault is ${fmtMult(DEFAULT_PUMP_SPLIT.payoutMult)} its start and the chart is strong, backers get paid back.`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

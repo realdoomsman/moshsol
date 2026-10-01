@@ -5,7 +5,8 @@ use common::*;
 use moshsol::constants::*;
 use moshsol::errors::MoshError;
 use moshsol::pump::{self, WSOL_MINT};
-use anchor_lang::Space;
+use anchor_lang::{AnchorDeserialize, Space};
+use anchor_spl::token::{spl_token, ID as TOKEN_ID};
 use moshsol::state::{LaunchStatus, Venue};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signer;
@@ -97,6 +98,8 @@ fn pump_launch_creates_token_and_vault_holds_bundle() {
     assert!(l.bundle_sol <= budget);
     assert_eq!(l.vault_sol, remaining - l.bundle_sol);
     assert_eq!(l.vault_cost_sol, l.bundle_sol);
+    assert_eq!(l.initial_vault_sol, remaining, "bundle + reserve: the raise minus launch fee and create rent");
+    assert_eq!((l.last_payout_ts, l.backers_repaid, l.backer_payouts), (l.launched_at, 0, 0));
     assert_eq!(curve.real_token_reserves, 793_100_000 * 1_000_000 - l.bundle_tokens);
     assert_eq!(l.window_buy_cap, l.vault_sol / 10);
     assert_eq!(l.ema_price, curve_price_q64(&curve));
@@ -113,7 +116,7 @@ fn public_pump(env: &mut Env, mint: &Pubkey, sol: u64) -> solana_sdk::signature:
 }
 
 #[test]
-fn pump_agent_rules_and_profit_split() {
+fn pump_agent_rules_and_vault_keeps_proceeds() {
     let mut env = pump_env();
     let (_creator, launch, mint, backers) = env.live_pump_launch(&[10 * SOL, 10 * SOL]);
     let l0 = env.launch_at(&launch);
@@ -134,7 +137,7 @@ fn pump_agent_rules_and_profit_split() {
     assert_err(env.agent_sell_pump(&launch, l0.window_sell_cap + 1, 0), MoshError::AgentWindowLimit);
     // Slippage: the agent's floor is forwarded to the venue, which refuses the fill first.
     assert!(env.agent_sell_pump(&launch, l0.window_sell_cap / 4, 100 * SOL).is_err());
-    // Rally sell: fill above cost + band; profit 25% → buyback pool, 75% → backers.
+    // Rally sell: fill above cost + band; the whole fill stays in the vault, backers get nothing.
     let chunk = l0.window_sell_cap / 4;
     let meta = ok(env.agent_sell_pump(&launch, chunk, 0));
     eprintln!("CU agent_sell_pump: {}", meta.compute_units_consumed);
@@ -144,24 +147,18 @@ fn pump_agent_rules_and_profit_split() {
     assert_eq!(l1.agent_tokens_sold, chunk);
     let received = l1.agent_sol_received;
     let cost = (l0.vault_cost_sol as u128 * chunk as u128).div_ceil(l0.vault_tokens as u128) as u64;
-    let profit = received - cost;
-    assert!(profit > 0, "the rally sell realized a profit");
-    assert_eq!(l1.buyback_pool_sol, profit / 4);
-    assert_eq!(l1.backer_fees_accrued, profit - profit / 4);
-    assert_eq!(l1.vault_sol, l0.vault_sol + cost);
+    assert!(received > cost, "the rally sell realized a profit");
+    assert_eq!(l1.buyback_pool_sol, 0);
+    assert_eq!(l1.backer_fees_accrued, 0);
+    assert_eq!(l1.vault_sol, l0.vault_sol + received);
     assert_eq!(l1.vault_cost_sol, l0.vault_cost_sol - cost);
-    assert_eq!(l1.buyback_sol, cost);
     assert!(l1.ema_price > l0.ema_price && l1.ema_price < price, "EMA sampled the venue, lagging");
     env.assert_pump_invariants(&launch);
     // The EMA moved once per sample: a second sell in the same second sees the same band.
     assert_eq!(env.spl_balance(&spl_ata(&pump_authority_pda(&launch), &mint)), l1.vault_tokens);
 
-    // Backers can claim their 75% pro-rata.
-    let b = &backers[0];
-    let before = env.lamports(&b.pubkey());
-    ok(env.claim_backer_at(b, &launch));
-    let paid = env.lamports(&b.pubkey()) + 5_000 - before; // + signature fee
-    assert!(paid.abs_diff((profit - profit / 4) / 2) <= 1, "paid {paid} of {profit}");
+    // Nothing for backers to claim.
+    assert_err(env.claim_backer_at(&backers[0], &launch), MoshError::NothingToClaim);
     env.assert_pump_invariants(&launch);
 
     // Impact cap: a sell that would move the venue more than 3% is refused.
@@ -178,7 +175,8 @@ fn pump_agent_rules_and_profit_split() {
     assert_err(env.agent_sell_pump(&launch2, l2.window_sell_cap, 0), MoshError::AgentPriceImpact);
 
     // A dump takes the venue below the EMA: the agent buys back below its average sell price
-    // with the sell proceeds (the buy-back path), never above the vault's average cost otherwise.
+    // with vault SOL (the buy-back path), never above the vault's average cost otherwise, and
+    // never below the vault floor.
     env.warp(600);
     let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &mint));
     ok(env.pump_public_sell(&whale, &mint, whale_tokens));
@@ -186,17 +184,18 @@ fn pump_agent_rules_and_profit_split() {
     let dip = curve_price_q64(&env.curve(&mint));
     assert!(dip < l.ema_price * 98 / 100);
     assert_err(env.agent_buy_pump(&launch, l.window_buy_cap + 1, 0), MoshError::AgentWindowLimit);
-    let spend = l.buyback_sol.min(l.window_buy_cap) / 2;
+    assert_err(env.agent_buy_pump(&launch, l.vault_sol - l.terms.min_vault_sol + 1, 0), MoshError::VaultFloor);
+    let spend = l.window_buy_cap / 4;
     let meta = ok(env.agent_buy_pump(&launch, spend, 0));
     eprintln!("CU agent_buy_pump: {}", meta.compute_units_consumed);
     let l3 = env.launch_at(&launch);
     assert_eq!(l3.agent_buys, 1);
     assert_eq!(l3.vault_sol, l.vault_sol - spend);
     assert_eq!(l3.vault_cost_sol, l.vault_cost_sol + spend);
-    assert_eq!(l3.buyback_sol, l.buyback_sol - spend);
     assert!(l3.vault_tokens > l.vault_tokens);
-    // Round trip: more tokens than it sold for less SOL than it received.
-    assert!(l3.agent_sol_spent < l1.agent_sol_received);
+    // Round trip: bought back at a better price than it sold.
+    let bought = l3.vault_tokens - l.vault_tokens;
+    assert!(bought as u128 * l1.agent_sol_received as u128 > spend as u128 * l1.agent_tokens_sold as u128);
     env.assert_pump_invariants(&launch);
 
     // Only the agent authority.
@@ -231,9 +230,13 @@ fn collect_pump_fees_splits_creator_fees() {
     let l1 = env.launch_at(&launch);
     let amount = l1.creator_fees_collected;
     assert!(amount > 0 && amount <= accrued);
-    assert_eq!(l1.buyback_pool_sol, amount / 4);
-    assert_eq!(l1.vault_sol, l0.vault_sol + amount - amount / 4);
-    assert_eq!(l1.backer_fees_accrued, 0);
+    // 15% buyback pool, 75% vault SOL, the remaining 10% to backers.
+    let pool = amount * DEFAULT_BURN_SHARE_BPS as u64 / 10_000;
+    let vault = amount * DEFAULT_CREATOR_FEE_VAULT_BPS as u64 / 10_000;
+    assert_eq!(l1.buyback_pool_sol, pool);
+    assert_eq!(l1.vault_sol, l0.vault_sol + vault);
+    assert_eq!(l1.backer_fees_accrued, amount - pool - vault);
+    assert_eq!(l1.terms.backer_creator_fee_bps(), 1_000);
     // The cranker only paid the signature fee.
     assert_eq!(cranker_before - env.lamports(&cranker.pubkey()), 5_000, "cranker paid more than the fee");
     assert_eq!(l1.ema_price, l0.ema_price, "a permissionless crank never samples the EMA");
@@ -265,6 +268,12 @@ fn buyback_burn_refuses_without_mint_then_buys_and_burns_with_caps() {
     assert_err(env.buyback_burn(&launch, &mint, pool, 0), MoshError::BuybackMintUnset);
     // Only the agent authority may crank it (it sizes, times and floors the buy off-chain).
     assert_err(env.buyback_burn_as(&cranker, &launch, &hold_mint, pool, 0), MoshError::Unauthorized);
+    // And not while the agent circuit breaker is on.
+    p.agents_paused = true;
+    ok(env.update_platform(&admin, p));
+    assert_err(env.buyback_burn(&launch, &hold_mint, pool, 0), MoshError::AgentsPaused);
+    p.agents_paused = false;
+    ok(env.update_platform(&admin, p));
 
     let supply_before = env.spl_mint_supply(&hold_mint);
     let hold_curve = env.curve(&hold_mint);
@@ -317,6 +326,11 @@ fn pump_authority_donations_are_swept_into_the_vault() {
     let create_cost = net + donation - l0.vault_sol - l0.bundle_sol;
     assert!(create_cost > 0 && create_cost < SOL / 20, "create rent {create_cost}");
     assert_eq!(l0.vault_cost_sol, l0.bundle_sol, "the donation is not part of the bundle's cost");
+    assert_eq!(
+        l0.initial_vault_sol,
+        l0.bundle_sol + l0.vault_sol - donation,
+        "the donation is vault SOL but not part of the payback base"
+    );
     env.assert_pump_invariants(&launch);
 
     // Before an agent sell: the proceeds are measured without it.
@@ -326,9 +340,7 @@ fn pump_authority_donations_are_swept_into_the_vault() {
     let chunk = l0.window_sell_cap / 4;
     ok(env.agent_sell_pump(&launch, chunk, 0));
     let l1 = env.launch_at(&launch);
-    let cost = (l0.vault_cost_sol as u128 * chunk as u128).div_ceil(l0.vault_tokens as u128) as u64;
-    assert_eq!(l1.vault_sol, l0.vault_sol + cost + donation);
-    assert_eq!(l1.buyback_sol, cost);
+    assert_eq!(l1.vault_sol, l0.vault_sol + l1.agent_sol_received + donation);
     env.assert_pump_invariants(&launch);
 
     // Before an agent buy: a donation larger than the spend (the case that used to underflow
@@ -338,14 +350,13 @@ fn pump_authority_donations_are_swept_into_the_vault() {
     ok(env.pump_public_sell(&whale, &mint, whale_tokens));
     let l = env.launch_at(&launch);
     assert!(curve_price_q64(&env.curve(&mint)) < l.ema_price * 98 / 100);
-    let spend = l.buyback_sol.min(l.window_buy_cap) / 2;
+    let spend = l.window_buy_cap / 8;
     let big = spend * 2;
     env.svm.airdrop(&authority, big).unwrap();
     ok(env.agent_buy_pump(&launch, spend, 0));
     let l2 = env.launch_at(&launch);
     assert_eq!(l2.vault_sol, l.vault_sol - spend + big);
     assert_eq!(l2.vault_cost_sol, l.vault_cost_sol + spend);
-    assert_eq!(l2.buyback_sol, l.buyback_sol - spend);
     env.assert_pump_invariants(&launch);
     env.svm.airdrop(&authority, spend / 2).unwrap();
     ok(env.agent_buy_pump(&launch, spend, 0));
@@ -372,10 +383,17 @@ fn pump_ema_moves_at_most_halfway_per_agent_sample() {
     env.assert_pump_invariants(&launch);
 }
 
+/// `initial_vault_sol` of the live pump launch on mainnet: `bundle_sol + vault_sol` of its
+/// `Launched` event (tx TnjK9WUNYgYUtcrWaVDC6J7YQMLNjrKsnopjEDCPLJbRsEQkyHbfY8aWkF2kVyVhhocsUEa4iJWUtGR2yyYPnkN):
+/// 670_526_969 + 301_898_751.
+const HFPUMP_INITIAL_VAULT_SOL: u64 = 972_425_720;
+
 #[test]
 fn migrate_launch_converts_mainnet_layout() {
-    // The platform and the two launches exactly as they sit on mainnet before the upgrade,
-    // with the admin swapped for the test admin (the real one is the Squads vault).
+    use moshsol::state::{LaunchV2, PlatformV2};
+    // The platform and every launch exactly as they sit on mainnet before the upgrade (a live
+    // Holdfast launch, a live pump launch, a raising pump launch and a refunding Holdfast
+    // launch), with the admin swapped for the test admin (the real one is the Squads vault).
     let mut env = Env::bare();
     // Mainnet's rent (SIMD lowered it to 2540 lamports per byte-year); the fixtures hold exactly
     // that, so the realloc's rent top-up must be computed against it.
@@ -383,18 +401,21 @@ fn migrate_launch_converts_mainnet_layout() {
     let admin = env.admin.insecure_clone();
     let (platform_key, mut platform_acct) = fixture_account("mainnet/449KHjhaaW58syfaWstZDzcUwTW613XbVB7S6Zp1gpZe");
     assert_eq!(platform_key, platform_pda());
-    assert_eq!(platform_acct.data.len(), 8 + moshsol::state::PlatformV1::INIT_SPACE);
+    assert_eq!(platform_acct.data.len(), 8 + PlatformV2::INIT_SPACE);
     platform_acct.data[8..40].copy_from_slice(admin.pubkey().as_ref());
+    let old_platform = PlatformV2::deserialize(&mut &platform_acct.data[8..]).unwrap();
     env.svm.set_account(platform_key, platform_acct).unwrap();
     let launches = [
-        "mainnet/ChpzEmQQQmuoS93AhcG7P8NRRbHJ4Hnx2Hs6ty1kNGD8",
-        "mainnet/HNCt4NhEAvJaZAfQVDP8nEJcATLYA3nFVzAk3YRDKNTj",
+        ("mainnet/ChpzEmQQQmuoS93AhcG7P8NRRbHJ4Hnx2Hs6ty1kNGD8", 0),
+        ("mainnet/Yw9a3uqxNVDhfD7FBmcbAeZAn81nRuG3Q1K3GDLJfYs", HFPUMP_INITIAL_VAULT_SOL),
+        ("mainnet/6CdsFZzsBjgfos8yw174b7xFcxLBB4Npfdy39KxSJ9Rt", 0),
+        ("mainnet/HNCt4NhEAvJaZAfQVDP8nEJcATLYA3nFVzAk3YRDKNTj", 0),
     ]
-    .map(|name| {
+    .map(|(name, initial)| {
         let (k, a) = fixture_account(name);
-        assert_eq!(a.data.len(), 8 + moshsol::state::LaunchV1::INIT_SPACE);
+        assert_eq!(a.data.len(), 8 + LaunchV2::INIT_SPACE);
         env.svm.set_account(k, a.clone()).unwrap();
-        (k, a)
+        (k, a, initial)
     });
 
     // The new layout can't read either account before migration.
@@ -407,41 +428,94 @@ fn migrate_launch_converts_mainnet_layout() {
     eprintln!("CU migrate_platform: {}", meta.compute_units_consumed);
     let p = env.platform();
     assert_eq!(p.admin, admin.pubkey());
-    assert!(!p.params.holdfast_curve_enabled);
+    assert_eq!((p.fee_recipient, p.agent_authority), (old_platform.fee_recipient, old_platform.agent_authority));
+    assert_eq!((p.launch_count, p.bump), (old_platform.launch_count, old_platform.bump));
+    assert_eq!(p.params.holdfast_curve_enabled, old_platform.params.holdfast_curve_enabled);
+    assert_eq!(p.params.buyback_mint, old_platform.params.buyback_mint);
+    assert_eq!(p.params.trade_fee_bps, old_platform.params.trade_fee_bps);
+    assert_eq!(p.params.max_wallet_deposit_lamports, old_platform.params.max_wallet_deposit_lamports);
     assert_eq!(p.params.burn_share_bps, DEFAULT_BURN_SHARE_BPS);
-    assert_eq!(p.params.buyback_mint, Pubkey::default());
-    assert_eq!(p.params.trade_fee_bps, 100);
-    assert_eq!(p.launch_count, 2);
+    assert_eq!(p.params.creator_fee_vault_bps, DEFAULT_CREATOR_FEE_VAULT_BPS);
+    assert_eq!(p.params.payout_mult_bps, DEFAULT_PAYOUT_MULT_BPS);
+    assert_eq!(p.params.payout_share_bps, DEFAULT_PAYOUT_SHARE_BPS);
+    assert_eq!(p.params.payout_interval_secs, DEFAULT_PAYOUT_INTERVAL_SECS);
+    assert_eq!(p.params.dead_holders_bps, DEFAULT_DEAD_HOLDERS_BPS);
+    assert_eq!(p.params.min_vault_sol, DEFAULT_MIN_VAULT_SOL);
+    p.params.validate().unwrap();
     assert_err(env.migrate_platform(&admin), MoshError::AlreadyMigrated);
 
-    for (key, old) in launches {
-        assert_err(env.migrate_launch(&stranger, &key), MoshError::Unauthorized);
+    for (key, old, initial) in launches {
+        let v2 = LaunchV2::deserialize(&mut &old.data[8..]).unwrap();
+        assert_err(env.migrate_launch(&stranger, &key, initial), MoshError::Unauthorized);
+        if v2.venue == Venue::Pump && v2.status == LaunchStatus::Live {
+            // The caller's value is bounded by what the raise could have left.
+            assert_err(env.migrate_launch(&admin, &key, v2.bundle_sol - 1), MoshError::InvalidParam);
+            assert_err(env.migrate_launch(&admin, &key, v2.raised), MoshError::InvalidParam);
+        }
         let admin_before = env.lamports(&admin.pubkey());
-        let meta = ok(env.migrate_launch(&admin, &key));
+        let meta = ok(env.migrate_launch(&admin, &key, initial));
         eprintln!("CU migrate_launch: {}", meta.compute_units_consumed);
         let l = env.launch_at(&key);
         let acct = env.svm.get_account(&key).unwrap();
         assert_eq!(acct.data.len(), 8 + moshsol::state::Launch::INIT_SPACE);
-        // Old fields survive at their old values (spot-check what the raw bytes say)...
-        let old_mint = Pubkey::new_from_array(old.data[48..80].try_into().unwrap());
-        assert_eq!(l.mint, old_mint);
-        assert_eq!(l.venue, Venue::Holdfast);
-        assert_eq!(l.create_key, old_mint);
-        assert_eq!(key, launch_pda(&old_mint));
-        let old_raised = u64::from_le_bytes(old.data[156..164].try_into().unwrap());
-        assert_eq!(l.raised, old_raised);
-        assert_eq!(l.terms.burn_share_bps, 0);
-        assert_eq!(l.terms.trade_fee_bps, 100);
-        eprintln!("migrated {key}: status {:?}, raised {}, vault_sol {}", l.status, l.raised, l.vault_sol);
-        // ...the new ones start empty, and the admin paid exactly the extra rent.
-        assert_eq!((l.buyback_pool_sol, l.burned_sol, l.pump.graduated), (0, 0, false));
+        // Every old field survives at its old value...
+        assert_eq!((l.index, l.creator, l.mint, l.status), (v2.index, v2.creator, v2.mint, v2.status));
+        assert_eq!((l.bump, l.curve_bump, l.vault_bump), (v2.bump, v2.curve_bump, v2.vault_bump));
+        assert_eq!((l.created_at, l.launched_at), (v2.created_at, v2.launched_at));
+        assert_eq!(l.terms.trade_fee_bps, v2.terms.trade_fee_bps);
+        assert_eq!(l.terms.backer_fee_share_bps, v2.terms.backer_fee_share_bps);
+        assert_eq!(l.terms.creator_fee_share_bps, v2.terms.creator_fee_share_bps);
+        assert_eq!(l.terms.launch_fee_bps, v2.terms.launch_fee_bps);
+        assert_eq!(l.terms.agent_buy_bps_per_window, v2.terms.agent_buy_bps_per_window);
+        assert_eq!(l.terms.agent_sell_bps_per_window, v2.terms.agent_sell_bps_per_window);
+        assert_eq!(l.terms.agent_max_impact_bps, v2.terms.agent_max_impact_bps);
+        assert_eq!(l.terms.agent_band_bps, v2.terms.agent_band_bps);
+        assert_eq!(l.terms.agent_window_secs, v2.terms.agent_window_secs);
+        assert_eq!(l.terms.ema_period_secs, v2.terms.ema_period_secs);
+        assert_eq!((l.raise_min, l.raise_max, l.max_per_wallet, l.raise_deadline), (v2.raise_min, v2.raise_max, v2.max_per_wallet, v2.raise_deadline));
+        assert_eq!((l.raised, l.refunded, l.backer_count, l.whitelist_root), (v2.raised, v2.refunded, v2.backer_count, v2.whitelist_root));
+        assert_eq!((l.bundle_supply_bps, l.reserve_bps), (v2.bundle_supply_bps, v2.reserve_bps));
+        assert_eq!((l.virtual_sol, l.real_sol, l.token_reserve), (v2.virtual_sol, v2.real_sol, v2.token_reserve));
+        assert_eq!((l.vault_sol, l.vault_tokens, l.bundle_sol, l.bundle_tokens, l.vault_cost_sol), (v2.vault_sol, v2.vault_tokens, v2.bundle_sol, v2.bundle_tokens, v2.vault_cost_sol));
+        assert_eq!((l.acc_fee_per_share, l.backer_fees_accrued, l.backer_fees_claimed), (v2.acc_fee_per_share, v2.backer_fees_accrued, v2.backer_fees_claimed));
+        assert_eq!((l.creator_fees_unclaimed, l.creator_fees_claimed, l.platform_fees_unclaimed), (v2.creator_fees_unclaimed, v2.creator_fees_claimed, v2.platform_fees_unclaimed));
+        assert_eq!((l.window_start, l.window_buy_cap, l.window_sol_spent, l.window_sell_cap, l.window_tokens_sold), (v2.window_start, v2.window_buy_cap, v2.window_sol_spent, v2.window_sell_cap, v2.window_tokens_sold));
+        assert_eq!((l.ema_price, l.last_trade_ts, l.agent_buys, l.agent_sells), (v2.ema_price, v2.last_trade_ts, v2.agent_buys, v2.agent_sells));
+        assert_eq!((l.agent_sol_spent, l.agent_sol_received, l.agent_tokens_sold), (v2.agent_sol_spent, v2.agent_sol_received, v2.agent_tokens_sold));
+        assert_eq!((l.volume_sol, l.trade_count, l.last_public_trade_slot, l.last_agent_trade_slot), (v2.volume_sol, v2.trade_count, v2.last_public_trade_slot, v2.last_agent_trade_slot));
+        assert_eq!((l.venue, l.create_key, l.pump), (v2.venue, v2.create_key, v2.pump));
+        assert_eq!((l.buyback_pool_sol, l.creator_fees_collected, l.burned_sol, l.burned_tokens, l.last_buyback_ts), (v2.buyback_pool_sol, v2.creator_fees_collected, v2.burned_sol, v2.burned_tokens, v2.last_buyback_ts));
+        assert_eq!((&l.name, &l.symbol, &l.uri), (&v2.name, &v2.symbol, &v2.uri));
+        assert_eq!(key, Pubkey::create_program_address(&[LAUNCH_SEED, l.create_key.as_ref(), &[l.bump]], &moshsol::ID).unwrap());
+        // ...the payback terms take their defaults (the burn share included: 25% → 15%)...
+        assert_eq!(l.terms.burn_share_bps, DEFAULT_BURN_SHARE_BPS);
+        assert_eq!(l.terms.creator_fee_vault_bps, DEFAULT_CREATOR_FEE_VAULT_BPS);
+        assert_eq!(l.terms.payout_mult_bps, DEFAULT_PAYOUT_MULT_BPS);
+        assert_eq!(l.terms.payout_share_bps, DEFAULT_PAYOUT_SHARE_BPS);
+        assert_eq!(l.terms.payout_interval_secs, DEFAULT_PAYOUT_INTERVAL_SECS);
+        assert_eq!(l.terms.dead_holders_bps, DEFAULT_DEAD_HOLDERS_BPS);
+        assert_eq!(l.terms.min_vault_sol, DEFAULT_MIN_VAULT_SOL);
+        // ...and the payback fields are backfilled: bundle + reserve at launch, clock at launch.
+        let expected_initial = match (l.status, l.venue) {
+            (LaunchStatus::Live, Venue::Holdfast) => l.raised - l.raised * l.terms.launch_fee_bps as u64 / 10_000,
+            (LaunchStatus::Live, Venue::Pump) => initial,
+            _ => 0,
+        };
+        assert_eq!(l.initial_vault_sol, expected_initial);
+        if l.status == LaunchStatus::Live {
+            assert!(l.initial_vault_sol >= l.bundle_sol && l.initial_vault_sol > 0);
+        }
+        assert_eq!((l.backers_repaid, l.backer_payouts, l.last_payout_ts), (0, 0, l.launched_at));
+        eprintln!("migrated {key} {}: {:?} {:?}, raised {}, initial_vault_sol {}", l.symbol, l.status, l.venue, l.raised, l.initial_vault_sol);
+        // The admin paid exactly the extra rent; the launch's own lamports are untouched.
         let rent_old = env.svm.minimum_balance_for_rent_exemption(old.data.len());
         let rent_new = env.svm.minimum_balance_for_rent_exemption(acct.data.len());
         assert_eq!(admin_before - env.lamports(&admin.pubkey()), rent_new - rent_old + 5_000);
         assert_eq!(acct.lamports, old.lamports + rent_new - rent_old);
         assert!(acct.lamports >= rent_new + l.owed_lamports(), "mainnet accounting holds after migration");
-        assert_err(env.migrate_launch(&admin, &key), MoshError::AlreadyMigrated);
+        assert_err(env.migrate_launch(&admin, &key, initial), MoshError::AlreadyMigrated);
     }
+    assert_eq!(env.platform().launch_count, 4);
 }
 
 #[test]
@@ -451,11 +525,14 @@ fn wind_down_pump_sells_vault_into_venue_for_backers() {
     let cranker = env.user(2);
     assert_err(env.wind_down_pump(&cranker, &launch), MoshError::LaunchTooYoung);
     env.warp(WIND_DOWN_MIN_AGE_SECS);
-    // An outside holder blocks it.
-    let holder = public_pump(&mut env, &mint, SOL);
-    assert_err(env.wind_down_pump(&cranker, &launch), MoshError::OutsideHolders);
+    // Outside holders over 5% of supply block it; at most 5% don't.
+    let holder = public_pump(&mut env, &mint, 3 * SOL);
     let held = env.spl_balance(&spl_ata(&holder.pubkey(), &mint));
-    ok(env.pump_public_sell(&holder, &mint, held));
+    let threshold = moshsol::math::bps(env.spl_mint_supply(&mint), DEFAULT_DEAD_HOLDERS_BPS).unwrap();
+    assert!(held > threshold, "holder {held} over the threshold {threshold}");
+    assert_err(env.wind_down_pump(&cranker, &launch), MoshError::OutsideHolders);
+    ok(env.pump_public_sell(&holder, &mint, held - threshold));
+    assert_eq!(env.spl_balance(&spl_ata(&holder.pubkey(), &mint)), threshold);
 
     let l0 = env.launch_at(&launch);
     let curve = env.curve(&mint);
@@ -467,7 +544,7 @@ fn wind_down_pump_sells_vault_into_venue_for_backers() {
     eprintln!("CU wind_down_pump (curve): {}", meta.compute_units_consumed);
     let l = env.launch_at(&launch);
     assert_eq!(l.status, LaunchStatus::WoundDown);
-    assert_eq!((l.vault_sol, l.vault_tokens, l.vault_cost_sol, l.buyback_sol), (0, 0, 0, 0));
+    assert_eq!((l.vault_sol, l.vault_tokens, l.vault_cost_sol), (0, 0, 0));
     let proceeds = l.backer_fees_accrued - l0.vault_sol - donation;
     assert!(proceeds > fee_free * 97 / 100 && proceeds < fee_free, "sold the whole vault: {proceeds} vs {fee_free}");
     assert_eq!(env.spl_balance(&spl_ata(&pump_authority_pda(&launch), &mint)), 0);
@@ -485,6 +562,102 @@ fn wind_down_pump_sells_vault_into_venue_for_backers() {
     assert_eq!(l2.vault_sol, 0);
     env.assert_pump_invariants(&launch);
     assert_err(env.wind_down_pump(&cranker, &launch), MoshError::NotLive);
+}
+
+/// The wind-down sale is floored at 97% of the fee-free quote from the reserves it finds: a
+/// venue keeping more than that fails the instruction and leaves the launch as it was, to be
+/// retried. The reference is in-transaction, so a holder's pre-sell in the same bundle moves the
+/// quote and the sale alike (that exposure is bounded by the outside-holder cap).
+#[test]
+fn wind_down_pump_fails_short_of_its_floor_and_can_be_retried() {
+    let mut env = pump_env();
+    let (_c, launch, mint, _backers) = env.live_pump_launch(&[10 * SOL, 10 * SOL]);
+    let cranker = env.user(2);
+    env.warp(WIND_DOWN_MIN_AGE_SECS);
+    let holder = public_pump(&mut env, &mint, 3 * SOL);
+    let held = env.spl_balance(&spl_ata(&holder.pubkey(), &mint));
+    let threshold = moshsol::math::bps(env.spl_mint_supply(&mint), DEFAULT_DEAD_HOLDERS_BPS).unwrap();
+    ok(env.pump_public_sell(&holder, &mint, held - threshold));
+    let l0 = env.launch_at(&launch);
+    let vault_ata = spl_ata(&pump_authority_pda(&launch), &mint);
+
+    // The venue keeps 4.3% instead of 1.25%: the fill lands under the floor and nothing moves.
+    env.set_pump_protocol_fee_bps(400);
+    let failed = env.wind_down_pump(&cranker, &launch).expect_err("fill short of the floor");
+    assert!(
+        failed.meta.logs.iter().any(|l| l.contains("TooLittleSolReceived")),
+        "the venue refused the program's floor:\n{}",
+        failed.meta.logs.join("\n")
+    );
+    let l = env.launch_at(&launch);
+    assert_eq!((l.status, l.vault_sol, l.vault_tokens, l.vault_cost_sol), (LaunchStatus::Live, l0.vault_sol, l0.vault_tokens, l0.vault_cost_sol));
+    assert_eq!(env.spl_balance(&vault_ata), l0.vault_tokens);
+    env.assert_pump_invariants(&launch);
+
+    // Back to the venue's fee, after the holder sold everything (a bundle's first leg): the
+    // retry sells into the reserves as they are and clears the floor measured from them.
+    env.set_pump_protocol_fee_bps(95);
+    ok(env.pump_public_sell(&holder, &mint, threshold));
+    let curve = env.curve(&mint);
+    let quote = moshsol::math::sol_out(curve.virtual_sol_reserves, curve.virtual_token_reserves, l0.vault_tokens).unwrap();
+    ok(env.wind_down_pump(&cranker, &launch));
+    let l = env.launch_at(&launch);
+    assert_eq!(l.status, LaunchStatus::WoundDown);
+    let proceeds = l.backer_fees_accrued - l0.vault_sol;
+    assert!(proceeds >= quote * 97 / 100 && proceeds < quote, "{proceeds} vs quote {quote}");
+    env.assert_pump_invariants(&launch);
+}
+
+/// Anyone can create the pump authority's WSOL ATA ahead of a PumpSwap trade and park lamports
+/// on it, wrapped or not. Everything on it is vault SOL once the trade closes the account, and
+/// none of it passes for the fill — a balance above the agent's spend must not fail the buy,
+/// and on a sell it is not agent proceeds.
+#[test]
+fn prefunded_authority_wsol_account_is_donated_not_a_fill() {
+    let mut env = pump_env();
+    let (_c, launch, mint, _b) = env.live_pump_launch(&[10 * SOL]);
+    let cranker = env.user(2);
+    let whale = env.user(200);
+    let left = env.curve(&mint).real_token_reserves;
+    ok(env.pump_public_buy_tokens(&whale, &mint, left, 120 * SOL));
+    ok(env.pump_migrate(&cranker, &mint));
+    ok(env.graduate_pump(&cranker, &launch));
+    let authority = pump_authority_pda(&launch);
+    let stranger = env.user(10);
+
+    // Agent sell into a rally (the EMA lags the migration price), with a wrapped balance parked.
+    env.warp(60);
+    ok(env.amm_public_buy(&whale, &mint, 10 * SOL));
+    let l0 = env.launch_at(&launch);
+    let wsol = env.create_spl_ata(&stranger, &authority, &WSOL_MINT);
+    env.svm.airdrop(&wsol, SOL).unwrap();
+    ok(env.send(&[spl_token::instruction::sync_native(&TOKEN_ID, &wsol).unwrap()], &[&stranger]));
+    assert_eq!(env.spl_balance(&wsol), SOL);
+    let parked = env.lamports(&wsol);
+    ok(env.agent_sell_pump(&launch, l0.window_sell_cap / 4, 0));
+    let l1 = env.launch_at(&launch);
+    let fill = l1.agent_sol_received - l0.agent_sol_received;
+    assert!(fill > 0);
+    assert_eq!(l1.vault_sol, l0.vault_sol + fill + parked, "the fill is what the venue paid; the rest is donated");
+    assert_eq!(env.lamports(&wsol), 0, "closed after the trade");
+    env.assert_pump_invariants(&launch);
+
+    // Agent buy-back after a dump, with more parked (unwrapped) than the agent spends.
+    env.warp(600);
+    let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &mint));
+    ok(env.amm_public_sell(&whale, &mint, whale_tokens / 2));
+    let l2 = env.launch_at(&launch);
+    let spend = l2.window_buy_cap / 2;
+    let wsol = env.create_spl_ata(&stranger, &authority, &WSOL_MINT);
+    env.svm.airdrop(&wsol, spend * 2).unwrap();
+    let parked = env.lamports(&wsol);
+    ok(env.agent_buy_pump(&launch, spend, 0));
+    let l3 = env.launch_at(&launch);
+    assert_eq!(l3.vault_sol, l2.vault_sol - spend + parked, "spent `spend`; the parked lamports (rent included) are vault SOL");
+    assert_eq!(l3.vault_cost_sol, l2.vault_cost_sol + spend);
+    assert!(l3.vault_tokens > l2.vault_tokens);
+    assert_eq!(env.lamports(&wsol), 0);
+    env.assert_pump_invariants(&launch);
 }
 
 #[test]
@@ -545,7 +718,7 @@ fn graduation_moves_agent_fees_and_wind_down_to_pumpswap() {
     eprintln!("CU agent_sell_pump (pool): {}", meta.compute_units_consumed);
     let l1 = env.launch_at(&launch);
     assert_eq!(l1.vault_tokens, l0.vault_tokens - chunk);
-    assert!(l1.buyback_pool_sol > l0.buyback_pool_sol);
+    assert_eq!(l1.vault_sol, l0.vault_sol + l1.agent_sol_received - l0.agent_sol_received);
     assert_eq!(env.svm.get_account(&authority_wsol).map(|a| a.lamports).unwrap_or(0), 0, "transient WSOL account closed");
     env.assert_pump_invariants(&launch);
 
@@ -556,7 +729,7 @@ fn graduation_moves_agent_fees_and_wind_down_to_pumpswap() {
     eprintln!("CU collect_pump_fees (pool): {}", meta.compute_units_consumed);
     let l2 = env.launch_at(&launch);
     assert!(l2.creator_fees_collected > 0);
-    assert_eq!(l2.buyback_pool_sol - l1.buyback_pool_sol, l2.creator_fees_collected / 4);
+    assert_eq!(l2.buyback_pool_sol - l1.buyback_pool_sol, l2.creator_fees_collected * DEFAULT_BURN_SHARE_BPS as u64 / 10_000);
     env.assert_pump_invariants(&launch);
 
     // Agent buy on PumpSwap after a dump.
@@ -564,7 +737,7 @@ fn graduation_moves_agent_fees_and_wind_down_to_pumpswap() {
     let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &mint));
     ok(env.amm_public_sell(&whale, &mint, whale_tokens / 2));
     let l3 = env.launch_at(&launch);
-    let spend = l3.buyback_sol.min(l3.window_buy_cap) / 2;
+    let spend = l3.window_buy_cap / 2;
     let meta = ok(env.agent_buy_pump(&launch, spend, 0));
     eprintln!("CU agent_buy_pump (pool): {}", meta.compute_units_consumed);
     let l4 = env.launch_at(&launch);

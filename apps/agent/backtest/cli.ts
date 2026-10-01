@@ -11,6 +11,9 @@
  *                                                       flow model), then the sell guardrail's base allowance at --sweep levels (SOL per window)
  *   pnpm --filter @holdfast/agent backtest terms        search the launch terms (policy fixed) on TRAIN and walk-forward,
  *                                                       Pareto view + picks out of sample, then a reserve-share sweep
+ *   pnpm --filter @holdfast/agent backtest support      vault model without profit share: the previous policy vs the low-volume
+ *                                                       support mode (tuned on walk-forward TRAIN) and vs support + sell ramp retuned,
+ *                                                       on TRAIN, TEST and walk-forward TEST
  *
  * Flags: --params <JSON object or file> (policy to evaluate/ablate/start from; default DEFAULT_PARAMS),
  * --random <n> (200) and --gens <n> (25) for training and the terms search, --freeze <feature,…> (train with
@@ -27,7 +30,6 @@ import { DEFAULT_PARAMS, PARAM_KEYS, PARAM_SPACE, withParams, type ParamKey, typ
 import {
   Evaluator,
   FULL_MIN,
-  HOUR_MIN,
   SYN_TEST_SEEDS,
   SYN_TRAIN_SEEDS,
   minVersus,
@@ -38,13 +40,14 @@ import {
   summary,
   syntheticSpecs,
   table,
+  walkForward,
   type ModelStats,
 } from "./evaluate";
 import { mean, type Score } from "./metrics";
 import { SearchSpace, cmaes, randomSearch } from "./optimize";
 import { SimPool } from "./pool";
 import { PRODUCTION_TERMS } from "./program";
-import { DATA_DIR, loadIndex, type PoolEntry, type PoolFile, type ScenarioSpec } from "./scenarios";
+import { loadIndex, type PoolEntry, type ScenarioSpec } from "./scenarios";
 import { mulberry32, type Policy, type RunResult, type SimOptions } from "./sim";
 import {
   RULE_DOC,
@@ -76,6 +79,7 @@ const FEATURES: Record<string, { off: Partial<StrategyParams>; keys: ParamKey[] 
   vwap: { off: { vwapEntryBps: 0 }, keys: ["vwapEntryBps"] },
   guardrail: { off: { fullMcapMult: 1, fullVolumeSol: 1 }, keys: ["baseSellSol", "fullMcapMult", "fullVolumeSol", "rampShape"] },
   strong: { off: { strongFlowMult: 1 }, keys: ["strongVolumeRatio", "strongFlowMult"] },
+  support: { off: { supportVolumeMult: 0 }, keys: ["supportVolumeMult", "supportClipShare", "supportSpacingSecs"] },
 };
 
 /** The features that read the flow window (the sell guardrail's `strong` multiplier is part of the guardrail). */
@@ -101,6 +105,20 @@ function frozenFlag(): string[] {
 
 /** The policy shipped before the flow features and the sell guardrail: 25 bps margins, no inventory floor, nothing else. */
 const CURRENT: StrategyParams = without(DEFAULT_PARAMS, Object.keys(FEATURES));
+
+/**
+ * The policy shipped under the profit-share model (`backtest flow`): v1's entry, the 1 SOL guardrail with the
+ * trained ramp, no support mode. Reference of the `support` command.
+ */
+const PREVIOUS: StrategyParams = {
+  ...CURRENT,
+  baseSellSol: 1,
+  fullMcapMult: 17.6,
+  fullVolumeSol: 1387,
+  rampShape: 2.15,
+  strongVolumeRatio: 1.39,
+  strongFlowMult: 6.63,
+};
 
 const RESULTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "results");
 
@@ -169,10 +187,10 @@ async function report(ev: Evaluator, label: string, specs: ScenarioSpec[], param
   return scores;
 }
 
-/** Per-model stats of `params` and of the current policy on `specs`, printed as one table. */
-async function compareCurrent(ev: Evaluator, label: string, specs: ScenarioSpec[], named: [string, StrategyParams][]) {
+/** Per-model stats of each named policy on `specs`, printed as one table; the first entry is the reference. */
+async function compareNamed(ev: Evaluator, label: string, specs: ScenarioSpec[], named: [string, StrategyParams][]) {
   const rows: [string, Record<string, ModelStats>][] = [];
-  for (const [name, p] of [["current", CURRENT] as [string, StrategyParams], ...named]) {
+  for (const [name, p] of named) {
     rows.push([name, modelStats(ev, specs, await ev.runs(specs, { kind: "tuned", params: p }))]);
   }
   say(`\n### ${label}\n`);
@@ -180,11 +198,23 @@ async function compareCurrent(ev: Evaluator, label: string, specs: ScenarioSpec[
   return Object.fromEntries(rows);
 }
 
-async function tune(ev: Evaluator, specs: ScenarioSpec[], start: StrategyParams, label: string, frozen: string[]): Promise<StrategyParams> {
+/** `compareNamed` with the pre-flow policy as the reference. */
+function compareCurrent(ev: Evaluator, label: string, specs: ScenarioSpec[], named: [string, StrategyParams][]) {
+  return compareNamed(ev, label, specs, [["current", CURRENT], ...named]);
+}
+
+/**
+ * Tunes the keys of the features not in `frozen`. Frozen features are switched off (ablation / `--freeze`) or,
+ * with `pin`, kept at `start`'s values (the support command tunes a few knobs around a fixed policy).
+ */
+async function tune(ev: Evaluator, specs: ScenarioSpec[], start: StrategyParams, label: string, frozen: string[], pin = false): Promise<StrategyParams> {
   const fitness = ev.fitness(specs);
-  const space = new SearchSpace(PARAM_SPACE, tunableKeys(frozen), without(start, frozen));
+  const fixedKeys = new Set(frozen.flatMap((f) => FEATURES[f]!.keys));
+  const fix = (p: StrategyParams): StrategyParams =>
+    pin ? ({ ...p, ...Object.fromEntries([...fixedKeys].map((k) => [k, start[k]])) } as StrategyParams) : without(p, frozen);
+  const space = new SearchSpace(PARAM_SPACE, tunableKeys(frozen), fix(start));
   const t0 = Date.now();
-  const seeds = [start, DEFAULT_PARAMS, CURRENT].map((p) => without(p, frozen));
+  const seeds = [start, DEFAULT_PARAMS, CURRENT].map(fix);
   const random = await randomSearch(space, intFlag("random", 200), seeds, fitness, mulberry32(7));
   console.log(`[${label}] random search: best ${random[0]!.score.toFixed(3)} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
   const trials = await cmaes(space, random[0]!.params, fitness, {
@@ -196,33 +226,13 @@ async function tune(ev: Evaluator, specs: ScenarioSpec[], start: StrategyParams,
   });
   const best = trials[0]!.score >= random[0]!.score ? trials[0]! : random[0]!;
   say(
-    `\n${label}: ${space.keys.length} tuned parameters${frozen.length ? ` (switched off: ${frozen.join(", ")})` : ""}, ` +
+    `\n${label}: ${space.keys.length} tuned parameters${frozen.length ? ` (${pin ? "pinned" : "switched off"}: ${frozen.join(", ")})` : ""}, ` +
       `${random.length} random + ${trials.length} CMA-ES evaluations, best objective ${best.score.toFixed(3)}\n`,
   );
   say("```json");
   say(fmtParams(best.params));
   say("```");
   return best.params;
-}
-
-/** Pools with at least `min` candles inside [fromMin, toMin). */
-function withCandles(entries: PoolEntry[], fromMin: number, toMin: number, min: number): PoolEntry[] {
-  return entries.filter((e) => {
-    const pool = JSON.parse(fs.readFileSync(path.join(DATA_DIR, e.file), "utf8")) as PoolFile;
-    const origin = Math.floor(pool.createdAt / 60) * 60;
-    return pool.candles.filter((c) => c[0] >= origin + fromMin * 60 && c[0] < origin + toMin * 60).length >= min;
-  });
-}
-
-/** Walk-forward specs: every pool's hours 0–24 (+ synthetic TRAIN) to tune on, hours 24–72 to test on. */
-function walkForward(entries: PoolEntry[]): { wfTrain: ScenarioSpec[]; wfTest: ScenarioSpec[] } {
-  const first = withCandles(entries, 0, 24 * HOUR_MIN, 60);
-  const later = withCandles(entries, 24 * HOUR_MIN, FULL_MIN, 60);
-  say(`walk-forward: tune on hours 0–24 of ${first.length} pools (+ synthetic TRAIN), test on hours 24–72 of ${later.length} pools, each segment replayed as its own launch`);
-  return {
-    wfTrain: [...poolSpecs(first, 0, 24 * HOUR_MIN), ...syntheticSpecs(SYN_TRAIN_SEEDS)],
-    wfTest: poolSpecs(later, 24 * HOUR_MIN, FULL_MIN),
-  };
 }
 
 function termsFlag(): TermsPoint {
@@ -243,7 +253,7 @@ async function termsCommand(ev: Evaluator, entries: PoolEntry[], trainSpecs: Sce
   say(`every statistic is taken at its worst flow model; ΔV is vault value (plus agent profit paid to backers) vs no agent under the same terms (VWAP mark); rug budget: rug SOL lost ≤ baseline + ${budget} pp of the starting vault SOL.`);
   say(`picks, rounded to 25 bps (band, impact), 50 bps (caps) and 5 min (window, EMA) and measured again:\n`);
   for (const rule of RULES) say(`- **${rule}**: ${RULE_DOC[rule]}`);
-  const { wfTrain, wfTest } = walkForward(entries);
+  const { wfTrain, wfTest } = walkForward(entries, say);
   const phases = [
     { name: "split", tuneLabel: "TRAIN", testLabel: "TEST", tune: trainSpecs, test: testSpecs },
     { name: "walk-forward", tuneLabel: "WALK-FORWARD TRAIN (hours 0–24)", testLabel: "WALK-FORWARD TEST (hours 24–72)", tune: wfTrain, test: wfTest },
@@ -330,9 +340,9 @@ async function termsCommand(ev: Evaluator, entries: PoolEntry[], trainSpecs: Sce
 
 async function main(): Promise<void> {
   const cmd = process.argv[2];
-  if (!cmd || !["eval", "train", "walkforward", "ablate", "robust", "flow", "terms"].includes(cmd)) {
+  if (!cmd || !["eval", "train", "walkforward", "ablate", "robust", "flow", "terms", "support"].includes(cmd)) {
     throw new Error(
-      "usage: backtest <eval|train|walkforward|ablate|robust|flow|terms> [--params <json|file>] [--terms <json|file>] [--random n] [--gens n] [--freeze f,…] [--rug-budget pp] [--reserves bps,…] [--sweep sol,…] [--workers n]",
+      "usage: backtest <eval|train|walkforward|ablate|robust|flow|terms|support> [--params <json|file>] [--terms <json|file>] [--random n] [--gens n] [--freeze f,…] [--rug-budget pp] [--reserves bps,…] [--sweep sol,…] [--workers n]",
     );
   }
   const entries = loadIndex();
@@ -358,16 +368,47 @@ async function main(): Promise<void> {
       const te = await report(ev, "TEST", testSpecs, best);
       save("train", { params: best, train: tr, test: te });
     } else if (cmd === "walkforward") {
-      const { wfTrain, wfTest } = walkForward(entries);
+      const { wfTrain, wfTest } = walkForward(entries, say);
       const best = await tune(ev, wfTrain, params, "walk-forward", frozen);
       const tr = await report(ev, "WALK-FORWARD TRAIN (hours 0–24)", wfTrain, best);
       const te = await report(ev, "WALK-FORWARD TEST (hours 24–72)", wfTest, best);
       save("walkforward", { params: best, train: tr, test: te });
     } else if (cmd === "terms") {
       await termsCommand(ev, entries, trainSpecs, testSpecs);
+    } else if (cmd === "support") {
+      // Tuning happens on walk-forward TRAIN (every pool's first 24 h) only; TRAIN/TEST/walk-forward TEST are read-outs.
+      // `--compare name=file.json,…` skips the tuning and reads out the named policies against the previous one.
+      const { wfTrain, wfTest } = walkForward(entries, say);
+      say(`\nprevious policy (profit-share era defaults):\n\n\`\`\`json\n${fmtParams(PREVIOUS)}\n\`\`\``);
+      const named: [string, StrategyParams][] = [["previous", PREVIOUS]];
+      const compareFlag = flag("compare");
+      if (compareFlag) {
+        for (const entry of compareFlag.split(",")) {
+          const [name, file] = entry.split("=") as [string, string];
+          const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+          const p = withParams(DEFAULT_PARAMS, (parsed.params as Record<string, unknown> | undefined) ?? parsed);
+          say(`\n${name}:\n\n\`\`\`json\n${fmtParams(p)}\n\`\`\``);
+          named.push([name, p]);
+        }
+      } else {
+        const allButSupport = Object.keys(FEATURES).filter((f) => f !== "support");
+        const allButSells = allButSupport.filter((f) => f !== "guardrail" && f !== "strong");
+        const supportOnly = await tune(ev, wfTrain, { ...PREVIOUS, ...params }, "support knobs (walk-forward TRAIN)", allButSupport, true);
+        const supportRamp = await tune(ev, wfTrain, supportOnly, "support + sell ramp (walk-forward TRAIN)", allButSells, true);
+        named.push(["support", supportOnly], ["support + ramp", supportRamp]);
+      }
+      const splits: [string, ScenarioSpec[]][] = [
+        ["WALK-FORWARD TRAIN (hours 0–24, in-sample)", wfTrain],
+        ["WALK-FORWARD TEST (hours 24–72)", wfTest],
+        ["TRAIN (72 h)", trainSpecs],
+        ["TEST (72 h)", testSpecs],
+      ];
+      const compared: Record<string, unknown> = {};
+      for (const [label, specs] of splits) compared[label] = await compareNamed(ev, label, specs, named);
+      save(compareFlag ? "support-compare" : "support", { policies: Object.fromEntries(named), compared });
     } else if (cmd === "flow") {
       say(`\npolicy:\n\n\`\`\`json\n${fmtParams(params)}\n\`\`\``);
-      const { wfTest } = walkForward(entries);
+      const { wfTest } = walkForward(entries, say);
       const splits: [string, ScenarioSpec[]][] = [
         ["TRAIN", trainSpecs],
         ["TEST", testSpecs],

@@ -50,7 +50,7 @@ function backersBoard(store: Store, window: Window, since: number): Entry[] {
     const dep = BigInt(d.amount);
     const raised = BigInt(l.snap.raised);
     let earned = 0n;
-    // Launched (live or wound down): the accumulator holds fee share, vault profit share and any wind-down payout.
+    // Launched (live or wound down): the accumulator holds the creator-fee share, backer payouts and any wind-down payout.
     if (l.snap.status !== "raising" && raised > 0n) {
       earned =
         windowAgg === null

@@ -11,7 +11,7 @@ const AGENT_STATUS_DEADLINE_MS = 800;
 
 export const metadata: Metadata = {
   title: "Agents",
-  description: `The vault agent's status, rules, per-vault health and every decision, live from ${CLUSTER_NAME}.`,
+  description: `The vault agent's status, rules, per-vault health, every decision and what it learned, live from ${CLUSTER_NAME}.`,
 };
 
 export default async function AgentsPage() {

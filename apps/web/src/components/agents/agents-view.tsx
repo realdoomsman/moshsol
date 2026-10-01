@@ -17,6 +17,7 @@ import { EmptyState, ErrorState } from "../ui/empty-state";
 import { Table, TD, TH, THead, TR } from "../ui/table";
 import { DecisionLog, useDecisionLog } from "./decision-log";
 import { vaultHealth } from "./health";
+import { ResearchNotes } from "./research";
 import { RulesSheet } from "./rules";
 import { VaultHealthList } from "./vault-health";
 
@@ -198,7 +199,8 @@ export function AgentsView({ aside }: { aside: ReactNode }) {
           <div className="grid gap-3">
             <h1 className="display-m text-ink">The vault agent, in the open.</h1>
             <p className="body-l max-w-[60ch] text-ink-2">
-              A rate-limited agent trades each vault against the swing, inside limits the program enforces.{" "}
+              A rate-limited agent sells each vault slowly into strength and buys back dips with what it sold, inside limits the program
+              enforces. Proceeds stay in the vault; once it has grown, the agent may pay backers back.{" "}
               <Link href="/docs/agents" className="whitespace-nowrap text-ink underline decoration-ink-3/60 underline-offset-2 hover:decoration-ink">
                 How it works ›
               </Link>
@@ -248,6 +250,15 @@ export function AgentsView({ aside }: { aside: ReactNode }) {
 
       <Section id="trades" title="Agent trades" className="order-5 lg:order-none">
         <AgentTrades now={now} />
+      </Section>
+
+      <Section
+        id="research"
+        title="What the agent learned"
+        className="order-6 lg:order-none"
+        aside={<span className="small text-ink-3">An optional language model writes these notes; it never decides trades</span>}
+      >
+        <ResearchNotes now={now} />
       </Section>
     </div>
   );

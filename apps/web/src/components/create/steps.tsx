@@ -1,10 +1,11 @@
 "use client";
 
-import { LIMITS, PUMP_VENUE_FEE_BPS, pumpTermsOf } from "@holdfast/sdk";
+import { LIMITS, PUMP_VENUE_FEE_BPS } from "@holdfast/sdk";
 import type { PublicKey } from "@solana/web3.js";
 import { ChevronDown, Upload } from "lucide-react";
 import { useId, useRef, useState, type ReactNode } from "react";
 import { fmtLamports } from "@/lib/format";
+import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import type { PlatformInfo } from "@/lib/types";
 import { ClampGlyph } from "../brand/glyphs";
 import { Button } from "../ui/button";
@@ -78,7 +79,7 @@ export function StepToken({
   onImage: (file: File | null) => void;
 }) {
   const { draft, set, err } = ctx;
-  const hasLinks = !!(draft.twitter || draft.telegram || draft.website || err("twitter") || err("telegram") || err("website"));
+  const hasLinks = !!(draft.twitter || draft.telegram || err("twitter") || err("telegram"));
   const [linksOpen, setLinksOpen] = useState(hasLinks);
   const linksId = useId();
   const showLinks = linksOpen || hasLinks;
@@ -162,12 +163,11 @@ export function StepToken({
           Add links <span className="text-ink-3">(optional)</span>
         </button>
         {showLinks ? (
-          <div id={linksId} className="grid gap-4 sm:grid-cols-3">
+          <div id={linksId} className="grid gap-4 sm:grid-cols-2">
             {(
               [
                 { key: "twitter", label: "X", ph: "@handle" },
                 { key: "telegram", label: "Telegram", ph: "t.me/group" },
-                { key: "website", label: "Website", ph: "example.com" },
               ] as const
             ).map(({ key, label, ph }) => (
               <Field key={key} label={label} error={err(key)}>
@@ -435,14 +435,14 @@ export function StepVault({
             .{" "}
             {params.holdfastCurveEnabled ? (
               <>
-                Backers earn <strong className="num font-semibold">{params.backerFeeShareBps / 100}%</strong> of every trade fee and 100%
-                of the vault agent&rsquo;s realized profit.
+                Backers earn <strong className="num font-semibold">{params.backerFeeShareBps / 100}%</strong> of every trade fee. When the
+                vault is {fmtMult(pumpSplit(params).payoutMult)} its start and the chart is strong, the vault agent may pay them back.
               </>
             ) : (
               <>
                 The token is created on pump.fun at launch; backers earn{" "}
-                <strong className="num font-semibold">{100 - params.burnShareBps / 100}%</strong> of the vault agent&rsquo;s realized
-                profit, the rest buys and burns the Holdfast token.
+                <strong className="num font-semibold">{pumpSplit(params).backerPct}%</strong> of its pump.fun creator fees. When the vault
+                is {fmtMult(pumpSplit(params).payoutMult)} its start and the chart is strong, the vault agent may pay them back.
               </>
             )}
           </p>
@@ -595,11 +595,11 @@ export function StepReview({
 }) {
   const { draft, v, params } = ctx;
   const durationSecs = durationSecsOf(draft);
-  const links = [draft.twitter, draft.telegram, draft.website].filter((l) => l.trim());
+  const links = [draft.twitter, draft.telegram].filter((l) => l.trim());
   const errorFields = Object.keys(v.errors) as DraftField[];
   const platformShare = params ? 10_000 - params.backerFeeShareBps - params.creatorFeeShareBps : null;
-  // What `create_launch_pump` freezes: no trade-fee split, creator share 0, the burn share.
-  const terms = params ? (params.holdfastCurveEnabled ? params : pumpTermsOf(params)) : null;
+  // What `create_launch_pump` freezes: the creator-fee split, the payback rule, the vault floor.
+  const split = pumpSplit(params);
   const mins = (s: number) => (s % 3_600 === 0 ? `${s / 3_600} h` : s % 60 === 0 ? `${s / 60} min` : `${s} s`);
 
   return (
@@ -655,11 +655,13 @@ export function StepReview({
               <>
                 <Row label="Venue">pump.fun token · trades happen on pump.fun ({PUMP_VENUE_FEE_BPS / 100}% venue fee), 0% trade fee on Holdfast</Row>
                 <Row label="pump.fun creator fees">
-                  {terms!.burnShareBps / 100}% buyback &amp; burn · {100 - terms!.burnShareBps / 100}% vault
+                  {split.vaultPct}% vault · {split.burnPct}% buyback &amp; burn · {split.backerPct}% backers
                 </Row>
-                <Row label="Agent profit">
-                  {terms!.burnShareBps / 100}% buyback &amp; burn · {100 - terms!.burnShareBps / 100}% backers
+                <Row label="Backer payback">
+                  vault at {fmtMult(split.payoutMult)} its start and a strong chart · principal first, then {split.payoutSharePct}% of the
+                  vault every {fmtInterval(split.payoutIntervalHours)}
                 </Row>
+                <Row label="Vault floor">{split.minVaultSol} SOL never paid out or spent</Row>
                 <Row label="Creator share">0% — you earn through the vault like every backer</Row>
               </>
             )}

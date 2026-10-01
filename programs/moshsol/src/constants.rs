@@ -38,10 +38,31 @@ pub const MIN_EMA_PERIOD_SECS: u32 = 300;
 pub const MAX_EMA_PERIOD_SECS: u32 = 7 * 86_400;
 pub const MIN_VIRTUAL_SOL: u64 = 1_000_000_000; // 1 SOL
 pub const MAX_VIRTUAL_SOL: u64 = 1_000_000_000_000; // 1000 SOL
-/// `burn_share_bps` (share of creator fees and agent profit that goes to the buyback-and-burn
+/// `burn_share_bps` (share of a pump launch's creator fees that goes to the buyback-and-burn
 /// pool) can never exceed half.
 pub const MAX_BURN_SHARE_BPS: u16 = 5_000;
-pub const DEFAULT_BURN_SHARE_BPS: u16 = 2_500;
+pub const DEFAULT_BURN_SHARE_BPS: u16 = 1_500;
+/// `creator_fee_vault_bps` (share of creator fees that becomes vault SOL, the agent's capital)
+/// can never exceed 90%; what neither the vault nor the burn pool takes goes to backers.
+pub const MAX_CREATOR_FEE_VAULT_BPS: u16 = 9_000;
+pub const DEFAULT_CREATOR_FEE_VAULT_BPS: u16 = 7_500;
+/// Backer payback (`payout_backers`): the vault must hold at least `payout_mult_bps` × its
+/// initial SOL in liquid SOL (never less than 1×), pays at most `payout_share_bps` of it per
+/// dividend (never more than half), never more than once per `payout_interval_secs` (never
+/// less than an hour), and never below `min_vault_sol` (never less than 0.05 SOL, the fee /
+/// rent reserve agent buys also keep).
+pub const MIN_PAYOUT_MULT_BPS: u32 = 10_000;
+pub const DEFAULT_PAYOUT_MULT_BPS: u32 = 50_000;
+pub const MAX_PAYOUT_SHARE_BPS: u16 = 5_000;
+pub const DEFAULT_PAYOUT_SHARE_BPS: u16 = 1_500;
+pub const MIN_PAYOUT_INTERVAL_SECS: u32 = 3_600;
+pub const DEFAULT_PAYOUT_INTERVAL_SECS: u32 = 14_400;
+pub const MIN_MIN_VAULT_SOL: u64 = 50_000_000;
+pub const DEFAULT_MIN_VAULT_SOL: u64 = 100_000_000;
+/// `wind_down`: tokens held outside the venue and vault may be at most `dead_holders_bps` of
+/// the supply (never more than 20%).
+pub const MAX_DEAD_HOLDERS_BPS: u16 = 2_000;
+pub const DEFAULT_DEAD_HOLDERS_BPS: u16 = 500;
 /// `buyback_burn` guards: no dust-sized buys, at most this share of the Holdfast token venue's
 /// quote reserves per call, and at least this long between calls per launch.
 pub const MIN_BUYBACK_LAMPORTS: u64 = 1_000_000; // 0.001 SOL
@@ -68,5 +89,5 @@ pub const MAX_PROOF_LEN: usize = 24;
 /// `wind_down` needs the launch to have been live this long, so nobody can wind a launch down
 /// before the market had a chance to form.
 pub const WIND_DOWN_MIN_AGE_SECS: i64 = 3 * 86_400;
-/// ...and no public or agent trade for this long.
+/// ...and no vault trade for this long.
 pub const WIND_DOWN_IDLE_SECS: i64 = 86_400;

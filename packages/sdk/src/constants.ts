@@ -34,6 +34,23 @@ export const LIMITS = {
   maxProofLen: 24,
   maxRaiseLamports: 100_000n * 1_000_000_000n,
   maxBurnShareBps: 5_000,
+  maxCreatorFeeVaultBps: 9_000,
+  minPayoutMultBps: 10_000,
+  maxPayoutShareBps: 5_000,
+  minPayoutIntervalSecs: 3_600,
+  maxDeadHoldersBps: 2_000,
+  minMinVaultSol: 50_000_000n,
+} as const;
+
+/** Default payback terms (programs/moshsol/src/constants.rs); what `migrate_*` backfills. */
+export const PAYBACK_DEFAULTS = {
+  burnShareBps: 1_500,
+  creatorFeeVaultBps: 7_500,
+  payoutMultBps: 50_000,
+  payoutShareBps: 1_500,
+  payoutIntervalSecs: 14_400,
+  deadHoldersBps: 500,
+  minVaultSol: 100_000_000n,
 } as const;
 
 /** `buyback_burn` guards (programs/moshsol/src/constants.rs). */
@@ -53,5 +70,5 @@ export const PUMP_VENUE_FEE_BPS = 125;
 
 /** `wind_down` opens once a launch has been live this long… */
 export const WIND_DOWN_MIN_AGE_SECS = 3 * 86_400;
-/** …and saw no public or agent trade for this long (plus no tokens outside the curve and vault). */
+/** …and saw no vault trade for this long (plus at most `terms.deadHoldersBps` of supply outside the venue and vault). */
 export const WIND_DOWN_IDLE_SECS = 86_400;

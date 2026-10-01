@@ -3,6 +3,7 @@
 import { fmtPrice, lamportsToSol } from "@holdfast/sdk";
 import { useVenueCurve } from "@/lib/chain";
 import { fmtSolValue, fmtTokens } from "@/lib/format";
+import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { VENUE_LABEL, venueKindOf } from "@/lib/launch";
 import type { LaunchSummary } from "@/lib/types";
 import { NumberTicker } from "../ui/number-ticker";
@@ -12,17 +13,21 @@ const sol = (v: number) => `${fmtSolValue(v)} SOL`;
 
 /**
  * Token stat row (§4.5): seven 1px-ruled cells, `label` over `num-l`, values flash on change. The
- * last cell is "Paid to backers" — fee share, vault agent profit and any wind-down payout so far.
- * Pump launches show the venue's liquidity (the indexer prices them from pump.fun's reserves) in
- * place of the Holdfast curve's real SOL. Detail page: real small values always show (§5.3
- * thresholds only gate headline slots).
+ * last cell is "Paid to backers" — their share of creator fees, backer payback and any wind-down
+ * payout so far. Pump launches show the venue's liquidity (the indexer prices them from pump.fun's
+ * reserves) in place of the Holdfast curve's real SOL. Detail page: real small values always show
+ * (§5.3 thresholds only gate headline slots).
  */
 export function StatStrip({ launch: l, className }: { launch: LaunchSummary; className?: string }) {
   const pump = l.venue === "pump";
   const venue = useVenueCurve(l);
   const venueLabel = VENUE_LABEL[venueKindOf(l)];
   const backerPct = l.terms.backerFeeShareBps / 100;
-  const profitPct = 100 - l.terms.burnShareBps / 100;
+  const split = pumpSplit(l.terms);
+  const payback = `When the vault's SOL is ${fmtMult(split.payoutMult)} what went in at launch and the chart is strong, the vault agent may pay backers back: principal first, then ${split.payoutSharePct}% of the vault every ${fmtInterval(split.payoutIntervalHours)}. Buying back dips always comes first.`;
+  // Absent from an indexer that predates the payback model.
+  const initialSol = lamportsToSol(l.initialVaultSol ?? "0");
+  const wentIn = initialSol > 0 ? `What went in at launch (${fmtSolValue(initialSol)} SOL)` : "What went in at launch";
   return (
     <StatRow className={className}>
       <Stat label="Price" value={<NumberTicker value={l.priceSol} format={(v) => `${fmtPrice(v)} SOL`} />} />
@@ -37,14 +42,14 @@ export function StatStrip({ launch: l, className }: { launch: LaunchSummary; cla
       ) : (
         <Stat
           label="Liquidity"
-          rule="SOL in the Holdfast bonding curve; sellers are paid from it. It never migrates and admin_withdraw_vault can't touch it. A wind-down (no tokens left outside the curve and vault) credits what's left to backers."
+          rule={`SOL in the Holdfast bonding curve; sellers are paid from it. It never migrates and admin_withdraw_vault can't touch it. A wind-down (a dead launch: no vault trade for a day and at most ${split.deadHoldersPct}% of supply held outside the curve and vault) credits what's left to backers.`}
           value={<NumberTicker value={lamportsToSol(l.realSol)} format={sol} />}
           sub="in the curve"
         />
       )}
       <Stat
         label="Vault"
-        rule="Bought at launch with the raise. Only the vault agent trades it, within on-chain limits. The platform multisig can withdraw it with admin_withdraw_vault; every withdrawal is listed on this page."
+        rule={`${wentIn} plus everything the vault agent has sold since; the agent's sale proceeds stay here. Only the agent trades it, within on-chain limits, and it keeps at least ${split.minVaultSol} SOL for fees. The platform multisig can withdraw it with admin_withdraw_vault; every withdrawal is listed on this page.`}
         value={<NumberTicker value={lamportsToSol(l.vaultSol)} format={sol} />}
         sub={`+ ${fmtTokens(l.vaultTokens)} $${l.symbol}`}
       />
@@ -59,11 +64,17 @@ export function StatStrip({ launch: l, className }: { launch: LaunchSummary; cla
         className="max-md:col-span-2"
         rule={
           pump
-            ? `${profitPct}% of the vault agent's realized profit (the other ${100 - profitPct}% buys and burns the Holdfast token) and any wind-down payout, pro rata to what backers deposited. Public trades happen on pump.fun; the creator fees pump.fun pays go to the vault and the buyback pool.`
-            : `${backerPct}% of every trading fee, 100% of the vault agent's realized profit and any wind-down payout, pro rata to what backers deposited.`
+            ? `${split.backerPct}% of the creator fees pump.fun pays this launch (${split.vaultPct}% go to the vault, ${split.burnPct}% buy and burn the Holdfast token), any backer payback and any wind-down payout, pro rata to what backers deposited. ${payback}`
+            : `${backerPct}% of every trading fee on the Holdfast curve, any backer payback and any wind-down payout, pro rata to what backers deposited. ${payback}`
         }
         value={<NumberTicker value={lamportsToSol(l.backerFeesAccrued)} format={sol} />}
-        sub={l.profitSharedSol > 0 ? `${fmtSolValue(l.profitSharedSol)} SOL from vault profit` : undefined}
+        sub={
+          (l.backersRepaidSol ?? 0) + (l.backerPayoutsSol ?? 0) > 0
+            ? `${fmtSolValue(l.backersRepaidSol ?? 0)} SOL principal · ${fmtSolValue(l.backerPayoutsSol ?? 0)} SOL dividends`
+            : l.profitSharedSol > 0
+              ? `${fmtSolValue(l.profitSharedSol)} SOL under the old profit split`
+              : undefined
+        }
       />
     </StatRow>
   );

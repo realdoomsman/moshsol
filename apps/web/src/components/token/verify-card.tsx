@@ -64,7 +64,10 @@ function AccountRow({ label, address }: { label: string; address: string }) {
  * collapsed to "5 checks passed · checked 5s ago". A failed check turns the summary and its row
  * `warn` with the reason, and opens the card; it is never hidden. Pump launches verify the same
  * mint facts (pump.fun revokes both authorities and mints the same fixed supply) plus the vault ATA
- * and the venue's token account; before `launch_pump` there is no mint yet, so only the accounts show.
+ * and the venue's token account; before `launch_pump` there is no mint yet (the token is created and
+ * the bundle bought in one instruction at launch), so only the accounts show. The two static rows
+ * are program rules, not chain reads: terms are frozen at creation and the vault only moves through
+ * the program's own instructions.
  */
 export function VerifyCard({ launch: l, className }: { launch: LaunchSummary; className?: string }) {
   const launchKey = new PublicKey(l.address);
@@ -151,7 +154,7 @@ export function VerifyCard({ launch: l, className }: { launch: LaunchSummary; cl
           <span className="h3 text-ink">Verify on-chain</span>
           <span className={cn("small num", failed.length ? "text-warn" : "text-ink-2")}>
             {!hasMint
-              ? "The token is created on pump.fun at launch"
+              ? "Token created on pump.fun at launch; the bundle buys in the same instruction"
               : !settled && !failed.length
                 ? "Checking…"
                 : failed.length
@@ -179,6 +182,13 @@ export function VerifyCard({ launch: l, className }: { launch: LaunchSummary; cl
               <span className="flex flex-wrap justify-between gap-x-3">
                 <span className="text-ink-2">Fees &amp; limits</span>
                 <span className="text-ink">Frozen at creation</span>
+              </span>
+            </li>
+            <li className="small grid grid-cols-[16px_minmax(0,1fr)] items-start gap-2.5 border-t border-line py-2.5">
+              <VerifyGlyph className="mt-0.5 text-accent-ink" />
+              <span className="flex flex-wrap justify-between gap-x-3">
+                <span className="text-ink-2">Vault moves only by</span>
+                <span className="text-ink">Agent trades, backer payback, wind-down, admin withdraw</span>
               </span>
             </li>
           </ul>

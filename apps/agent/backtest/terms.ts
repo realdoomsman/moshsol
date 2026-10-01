@@ -1,6 +1,6 @@
 import { DEFAULT_PARAMS } from "../src/strategy";
 import { modelStats, type Evaluator, type ModelStats } from "./evaluate";
-import { endSol, median, value } from "./metrics";
+import { median, value } from "./metrics";
 import { SearchSpace, cmaes, randomSearch, type Bounds } from "./optimize";
 import { PRODUCTION_TERMS, type SimTerms } from "./program";
 import type { ScenarioSpec } from "./scenarios";
@@ -259,7 +259,7 @@ export function vsReserve(runs: RunResult[], ref: RunResult[]): Record<string, n
   const byModel: Record<string, number[]> = {};
   runs.forEach((r, i) => {
     const q = ref[i]!;
-    (byModel[r.model] ??= []).push((value(endSol(r), r.tokens1, r.vwap24) / value(endSol(q), q.tokens1, q.vwap24) - 1) * 100);
+    (byModel[r.model] ??= []).push((value(r.sol1, r.tokens1, r.vwap24) / value(q.sol1, q.tokens1, q.vwap24) - 1) * 100);
   });
   return Object.fromEntries(Object.entries(byModel).map(([m, xs]) => [m, median(xs)]));
 }

@@ -7,6 +7,7 @@ import { useState } from "react";
 import { SITE_URL } from "@/lib/env";
 import { fmtLamports } from "@/lib/format";
 import { launchHref } from "@/lib/launch";
+import { fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { useMounted } from "@/lib/hooks";
 import { useLaunch } from "@/lib/queries";
 import { ClampLock } from "../brand/clamp-lock-animation";
@@ -34,13 +35,14 @@ export function CreateSuccess({ id, signature }: { id: string; signature: string
   const l = launch.data;
   const url = `${SITE_URL}${l ? launchHref(l) : `/launch/${id}`}`;
   const mine = mounted && !!l && publicKey?.toBase58() === l.creator;
+  const payback = l ? `a vault agent holds the bundle and may pay them back once it's ${fmtMult(pumpSplit(l.terms).payoutMult)}` : "";
   const tweet = !l
     ? ""
     : l.status === "live"
-      ? `$${l.symbol} is live on @holdfast. Backers bought first and get 100% of the vault agent's profit:`
+      ? `$${l.symbol} is live on @holdfast. Backers bought first; ${payback}:`
       : mine
-        ? `I just opened a raise on @holdfast: $${l.symbol}. Backers buy first and share the profit. Back it:`
-        : `The $${l.symbol} raise is open on @holdfast. Backers buy first and share the profit. Back it:`;
+        ? `I just opened a raise on @holdfast: $${l.symbol}. Backers buy first; ${payback}. Back it:`
+        : `The $${l.symbol} raise is open on @holdfast. Backers buy first; ${payback}. Back it:`;
 
   const copy = async () => {
     await navigator.clipboard.writeText(url);
@@ -58,7 +60,7 @@ export function CreateSuccess({ id, signature }: { id: string; signature: string
         : `${whose} raise is open.`;
   const subline =
     l?.status === "live"
-      ? "The bundle bought at launch sits in the vault, traded only by the vault agent."
+      ? "The bundle bought at launch sits in the vault, traded only by the vault agent; what it sells stays there."
       : l?.status === "refunding"
         ? "Backers can claim a full refund from the launch page."
         : "Share it with backers. When the raise closes above its minimum, the bundle buys first.";

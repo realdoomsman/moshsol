@@ -44,9 +44,9 @@ export function InstructionList({ rows }: { rows: InstructionRow[] }) {
       <div className="grid min-h-12 items-center gap-x-4 gap-y-1 bg-accent-wash px-4 py-3 md:grid-cols-[minmax(0,11rem)_minmax(0,1fr)]">
         <span className="label text-accent-ink">Vault exits</span>
         <span className="small text-accent-ink">
-          Agent trades on the launch&rsquo;s own curve, <span className="mono">wind_down</span> (to backers) and{" "}
-          <span className="mono">admin_withdraw_vault</span> (platform admin → fee recipient). Each one is on-chain and shown on the
-          launch page.
+          Agent trades on the launch&rsquo;s venue, <span className="mono">payout_backers</span> (to backers, principal first),{" "}
+          <span className="mono">wind_down_pump</span> (all vault SOL to backers) and <span className="mono">admin_withdraw_vault</span>{" "}
+          (platform admin → fee recipient). Each one is on-chain and shown on the launch page.
         </span>
       </div>
     </div>

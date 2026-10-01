@@ -1,7 +1,8 @@
-import { lookup } from "node:dns/promises";
+import dns from "node:dns";
 import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { Agent, fetch, type Response } from "undici";
 import type { MetaUpdate } from "./db";
 import { cleanImageUrl, cleanSocial, cleanText, isRecord, parsePubkeyList, ValidationError } from "./sanitize";
 
@@ -40,14 +41,29 @@ function isPrivateIp(ip: string): boolean {
   return PRIVATE.check(ip, net.isIPv6(ip) ? "ipv6" : "ipv4");
 }
 
-/** Rejects hosts that resolve to loopback/private/link-local ranges (SSRF guard). */
-async function assertPublicHost(url: URL): Promise<void> {
+/** Pre-connect check for IP-literal hosts (hostnames are vetted by `pinnedLookup`, which `net` skips for literals). */
+function assertPublicLiteral(url: URL): void {
   const host = url.hostname.replace(/^\[|\]$/g, "");
-  const addrs = net.isIP(host) ? [host] : (await lookup(host, { all: true })).map((a) => a.address);
-  if (addrs.length === 0 || addrs.some(isPrivateIp)) {
-    throw new UnfetchableUriError(`metadata host ${url.hostname} is not publicly routable`);
-  }
+  if (net.isIP(host) && isPrivateIp(host)) throw new UnfetchableUriError(`metadata host ${url.hostname} is not publicly routable`);
 }
+
+/**
+ * `net.connect` lookup that vets every resolved address and hands the socket exactly those addresses, so the
+ * host checked is the host connected to (no resolve-then-fetch window for DNS rebinding). Node asks for all
+ * addresses (`options.all`) when it auto-selects the family, else for one.
+ */
+const pinnedLookup: net.LookupFunction = (hostname, options, callback) => {
+  dns.lookup(hostname, { ...options, all: true }, (err, addrs) => {
+    if (err) return callback(err, []);
+    if (addrs.length === 0 || addrs.some((a) => isPrivateIp(a.address))) {
+      return callback(new UnfetchableUriError(`metadata host ${hostname} is not publicly routable`), []);
+    }
+    if (options.all) callback(null, addrs);
+    else callback(null, addrs[0]!.address, addrs[0]!.family);
+  });
+};
+
+const dispatcher = new Agent({ connect: { lookup: pinnedLookup, timeout: TIMEOUT_MS } });
 
 async function readCapped(res: Response): Promise<string> {
   const declared = Number(res.headers.get("content-length") ?? "0");
@@ -81,8 +97,15 @@ async function fetchRemoteJson(uri: string): Promise<unknown> {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new UnfetchableUriError(`unsupported metadata URI scheme ${url.protocol}`);
     }
-    await assertPublicHost(url);
-    const res = await fetch(url, { signal, redirect: "manual", headers: { accept: "application/json" } });
+    assertPublicLiteral(url);
+    let res: Response;
+    try {
+      res = await fetch(url, { signal, dispatcher, redirect: "manual", headers: { accept: "application/json" } });
+    } catch (err) {
+      // undici wraps connect errors (our lookup rejection included) in a TypeError("fetch failed").
+      if (err instanceof Error && err.cause instanceof UnfetchableUriError) throw err.cause;
+      throw err;
+    }
     const location = res.headers.get("location");
     if (res.status >= 300 && res.status < 400 && location) {
       await res.body?.cancel();

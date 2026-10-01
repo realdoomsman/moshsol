@@ -55,7 +55,7 @@ export function SiteFooter() {
             <Link href="/" aria-label="Holdfast home" className="w-fit rounded-xs text-ink">
               <Lockup size={20} />
             </Link>
-            <p className="small max-w-[34ch] text-ink-3">Backers buy first and share the profit. Every vault move is on-chain.</p>
+            <p className="small max-w-[34ch] text-ink-3">Backers make the first buy; a vault agent holds it. Every vault move is on-chain.</p>
             <div className="grid gap-1">
               <span className="label text-ink-3">Program</span>
               <Address address={PROGRAM_ID.toBase58()} chars={6} />

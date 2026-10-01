@@ -27,10 +27,10 @@ import {
 import { ChartCandlestick, ChartLine, Maximize2, Minimize2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Timeframe } from "@/lib/api";
-import { fmtSolValue } from "@/lib/format";
+import { fmtSolValue, fmtUsd, solUsdOf } from "@/lib/format";
 import { useLocalStorage, useMounted, useNow } from "@/lib/hooks";
 import { launchId } from "@/lib/launch";
-import { useCandles, useTrades } from "@/lib/queries";
+import { useCandles, useStats, useTrades } from "@/lib/queries";
 import type { Candle, LaunchSummary } from "@/lib/types";
 import { AgentGlyph } from "../brand/glyphs";
 import { IconButton } from "../ui/button";
@@ -57,7 +57,9 @@ const LINE_BELOW = 12;
 const SPARSE_BARS = 40;
 const SUPPLY = 1_000_000_000;
 
-type Unit = "mcap" | "price";
+/** What the y-axis measures: market cap in USD (default while a SOL price exists), market cap in SOL, or token price in SOL. */
+type Unit = "usd" | "mcap" | "price";
+const fmtSolMcap = (v: number) => `${fmtSolValue(v)} SOL`;
 type ChartType = "auto" | "line" | "candles";
 interface Overlays {
   band: boolean;
@@ -365,13 +367,14 @@ function Legend({ k, v, className }: { k: string; v: string; className?: string 
 }
 
 /**
- * Token chart (§4.5): price or market cap, candles or line, with the protocol overlays on by
- * default — the EMA band the vault agent trades against, agent trade markers, and the vault's
- * average cost (the line the agent never sells below). Legend = crosshair readout.
+ * Token chart (§4.5): market cap in USD (or SOL without a price) or token price, candles or line,
+ * with the protocol overlays on by default — the EMA band the vault agent trades against, agent
+ * trade markers, and the vault's average cost (the line the agent never sells below). Every
+ * overlay converts with the same scale as the candles. Legend = crosshair readout.
  */
 export function PriceChart({ launch: l, zones, className }: { launch: LaunchSummary; zones: AgentZones; className?: string }) {
   const [tfChoice, setTfChoice] = useLocalStorage<string | null>("holdfast:chart-tf", null);
-  const [unit, setUnit] = useLocalStorage<Unit>("holdfast:chart-unit", "price");
+  const [unitChoice, setUnit] = useLocalStorage<Unit>("holdfast:chart-unit", "usd");
   const [typeChoice, setTypeChoice] = useLocalStorage<ChartType>("holdfast:chart-type", "auto");
   const [overlays, setOverlays] = useLocalStorage<Overlays>("holdfast:chart-overlays", { band: true, agent: true, cost: true });
   const id = launchId(l);
@@ -390,8 +393,12 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
   const [ready, setReady] = useState(false);
   const [hover, setHover] = useState<number | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
-  const mult = unit === "mcap" ? SUPPLY : 1;
-  const fmt = unit === "mcap" ? fmtSolValue : fmtPrice;
+  // The launch's own USD rate (what the indexer priced it with) or the platform's; null leaves market cap in SOL.
+  const stats = useStats();
+  const solUsd = solUsdOf(l) ?? stats.data?.solUsd ?? null;
+  const unit: Unit = unitChoice === "usd" && solUsd === null ? "mcap" : unitChoice;
+  const mult = unit === "usd" ? SUPPLY * (solUsd ?? 0) : unit === "mcap" ? SUPPLY : 1;
+  const fmt = unit === "usd" ? fmtUsd : unit === "mcap" ? fmtSolMcap : fmtPrice;
   const barCount = candles.data?.candles.length ?? 0;
   const type: Exclude<ChartType, "auto"> = typeChoice === "auto" ? (barCount < LINE_BELOW ? "line" : "candles") : typeChoice;
   const band = l.terms.agentBandBps / 10_000;
@@ -499,7 +506,7 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
   useEffect(() => {
     const r = refs.current;
     if (!r) return;
-    const priceFormat = { type: "custom" as const, formatter: fmt, minMove: unit === "mcap" ? 0.0001 : 1e-12 };
+    const priceFormat = { type: "custom" as const, formatter: fmt, minMove: unit === "price" ? 1e-12 : unit === "usd" ? 0.01 : 0.0001 };
     for (const s of [r.candles, r.area, r.ema, r.bandLow, r.bandHigh]) s.applyOptions({ priceFormat });
   }, [unit, fmt, ready]);
 
@@ -707,8 +714,9 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
           value={unit}
           onChange={setUnit}
           items={[
-            { value: "price", label: "Price" },
-            { value: "mcap", label: "Mcap" },
+            ...(solUsd !== null ? [{ value: "usd" as const, label: "Mcap $" }] : []),
+            { value: "mcap", label: "Mcap SOL" },
+            { value: "price", label: "Price SOL" },
           ]}
         />
         <div className="max-sm:hidden">
@@ -805,7 +813,7 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
                   <Legend k="C" v={fmt(shown.close)} />
                 </>
               ) : (
-                <Legend k={unit === "mcap" ? "Mcap" : "Price"} v={fmt(shown.close)} />
+                <Legend k={unit === "price" ? "Price" : "Mcap"} v={fmt(shown.close)} />
               )}
               {change !== null ? (
                 <span className={change > 0 ? "text-up" : change < 0 ? "text-down" : "text-ink-2"}>

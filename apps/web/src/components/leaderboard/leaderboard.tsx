@@ -20,6 +20,7 @@ import { fmtSolColumn, fmtSolValue } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { launchHref } from "@/lib/launch";
 import { useFallbackInterval } from "@/lib/live";
+import { pumpSplit } from "@/lib/pump-terms";
 import { useLaunches, usePlatform, useStats } from "@/lib/queries";
 import { clearsHeadline } from "@/lib/thresholds";
 import type { LaunchSummary } from "@/lib/types";
@@ -86,7 +87,7 @@ function launchesBoard(byAddress: Map<string, LaunchSummary>): Board<LaunchEntry
       { label: "Trades", align: "right", cell: (e) => e.trades },
       { label: "Mcap change", align: "right", cell: (e) => <Change value={e.mcapChangePct} /> },
       {
-        label: "Backer fees paid",
+        label: "Paid to backers",
         align: "right",
         cell: (e) => {
           const l = byAddress.get(e.address);
@@ -106,11 +107,11 @@ function launchesBoard(byAddress: Map<string, LaunchSummary>): Board<LaunchEntry
 }
 
 const BACKERS: Board<BackerEntry> = {
-  empty: "No backer earned fees",
+  empty: "No backer was paid",
   wallet: (e) => e.wallet,
   columns: [
     { label: "Backer", cell: walletCell },
-    { label: "Fees earned", align: "right", cell: (e) => <span className="text-accent-ink">{sol(e.feesEarnedSol)}</span> },
+    { label: "Earned", align: "right", cell: (e) => <span className="text-accent-ink">{sol(e.feesEarnedSol)}</span> },
     { label: "Launches backed", align: "right", cell: (e) => e.launchesBacked },
     { label: "Deposited", align: "right", cell: (e) => sol(e.depositedSol) },
   ],
@@ -266,6 +267,7 @@ function BoardTable<E extends { rank: number }>({
 function HeroStrip() {
   const stats = useStats();
   const platform = usePlatform();
+  const params = platform.data?.params;
   const backers = useQuery(leaderboardQuery("backers", "all"));
   const paid = stats.data?.backerFeesAccruedSol;
   const count = backers.data?.entries.length;
@@ -276,10 +278,16 @@ function HeroStrip() {
         stat="backerFeesSol"
         value={paid}
         label="Paid to backers"
-        rule="Backer fees accrued across every launch since the first one, paid pro-rata to deposits."
+        rule="Everything credited to backers across every launch: their cut of venue fees, backer payback and wind-down payouts, pro-rata to deposits."
         format={(v) => `${fmtSolValue(v)} SOL`}
         size="xl"
-        context={{ backerFeeShareBps: platform.data?.params.backerFeeShareBps }}
+        context={
+          params
+            ? params.holdfastCurveEnabled
+              ? { backerFeeShareBps: params.backerFeeShareBps, payoutMultBps: params.payoutMultBps }
+              : { backerCreatorFeePct: pumpSplit(params).backerPct, payoutMultBps: params.payoutMultBps }
+            : {}
+        }
       />
       {showCount && count !== undefined ? (
         <Stat label="Backers paid" value={count >= LEADERBOARD_LIMIT ? `${LEADERBOARD_LIMIT}+` : count} size="xl" />

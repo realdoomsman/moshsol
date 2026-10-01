@@ -13,8 +13,9 @@ import { venueFeeBps, type AgentTerms, type MarketState } from "../src/strategy"
  * launch's fields, every trade prices the EMA and books volume). A pump launch's reserves are its
  * pump.fun bonding curve (`virtualSol` = the curve's virtual offset, `realSol` = real SOL reserves,
  * `tokenReserve` = virtual token reserves, as `curveStateOf`): the venue keeps a 1.25% fee on every
- * trade including the agent's, public trades never touch the launch (no EMA sample, no volume), and
- * the agent's realized profit splits `burnShareBps` to the buyback pool and the rest to backers.
+ * trade including the agent's, and public trades never touch the launch (no EMA sample, no volume).
+ * On both venues every lamport an agent sell receives stays in the vault as liquid SOL (no profit
+ * share), and no agent buy may take the vault below `minVaultSol` (`VaultFloor`).
  */
 
 export interface SimTerms extends AgentTerms {
@@ -22,18 +23,12 @@ export interface SimTerms extends AgentTerms {
   /** Holdfast curve trade fee; 0 on pump launches (`LaunchTerms::pump`), whose venue fee never reaches the launch. */
   tradeFeeBps: bigint;
   launchFeeBps: bigint;
-  /** Share of realized agent profit booked to the buyback pool (pump launches; 0 on Holdfast launches). */
-  burnShareBps: bigint;
 }
 
 export interface Chain extends MarketState {
   terms: SimTerms;
   /** All trade fees charged so far (Holdfast: backers + creator + platform; pump: kept by the venue). */
   feesSol: bigint;
-  /** Realized agent-sell profit credited to backers so far (`VaultProfitShared` amounts net of the pool share). */
-  profitShared: bigint;
-  /** Realized agent-sell profit booked to the launch's buyback pool (`Launch.buyback_pool_sol`). */
-  buybackPoolSol: bigint;
   lastPublicTradeSlot: number;
   lastAgentTradeSlot: number;
 }
@@ -42,6 +37,7 @@ export type ProgramError =
   | "SameSlotTrade"
   | "ZeroAmount"
   | "InsufficientVault"
+  | "VaultFloor"
   | "InsufficientLiquidity"
   | "Slippage"
   | "AgentWindowLimit"
@@ -180,7 +176,6 @@ export function launch(s: LaunchSetup, now: bigint): Chain {
     bundleTokens: tokens,
     agentSolReceived: 0n,
     agentTokensSold: 0n,
-    buybackSol: 0n,
     windowStart: now,
     windowBuyCap: 0n,
     windowSolSpent: 0n,
@@ -194,8 +189,6 @@ export function launch(s: LaunchSetup, now: bigint): Chain {
     volumeSol: spent,
     tradeCount: 1,
     feesSol: 0n,
-    profitShared: 0n,
-    buybackPoolSol: 0n,
     // The simulated slot clock starts at 0; -1 = no trade yet (the program starts at 0 on a chain far past slot 0).
     lastPublicTradeSlot: -1,
     lastAgentTradeSlot: -1,
@@ -273,6 +266,7 @@ export function agentBuy(chain: Chain, solIn: bigint, minTokensOut: bigint, now:
     const t = l.terms;
     require(solIn > 0n, "ZeroAmount");
     require(solIn <= l.vaultSol, "InsufficientVault");
+    require(l.vaultSol - solIn >= t.minVaultSol, "VaultFloor");
     require(l.windowSolSpent + solIn <= l.windowBuyCap, "AgentWindowLimit");
     const before = spot(l);
     require(before <= (l.emaPrice / BPS) * (BPS - t.bandBps), "AgentBuyNotDip");
@@ -285,10 +279,10 @@ export function agentBuy(chain: Chain, solIn: bigint, minTokensOut: bigint, now:
     require(tokens >= minTokensOut, "Slippage");
     const [costSol, costTokens] = l.vaultTokens > 0n ? [l.vaultCostSol, l.vaultTokens] : [l.bundleSol, l.bundleTokens];
     if (!(solIn * costTokens <= tokens * costSol)) {
+      // Buy-back path: below the average agent sell price by the band, paid from vault SOL like any buy.
       const belowAvgSell =
         l.agentTokensSold > 0n && solIn * l.agentTokensSold * BPS <= tokens * l.agentSolReceived * (BPS - t.bandBps);
-      require(belowAvgSell && solIn <= l.buybackSol, "AgentAboveCostBasis");
-      l.buybackSol -= solIn;
+      require(belowAvgSell, "AgentAboveCostBasis");
     }
     l.realSol += net;
     l.tokenReserve -= tokens;
@@ -308,9 +302,8 @@ export function agentBuy(chain: Chain, solIn: bigint, minTokensOut: bigint, now:
 
 /**
  * agent.rs `agent_sell` / pump_agent.rs `agent_sell_pump`: returns the fill in lamports (net of the venue's
- * fee). The sold tokens' average cost (removed from the basis rounded down, charged against the fill
- * rounded up) returns to the vault and the buy-back budget; the realized profit above it goes
- * `burnShareBps` to the buyback pool and the rest to backers.
+ * fee). The sold tokens' average cost leaves the basis (rounded down) and the whole fill returns to
+ * vault SOL: proceeds are the vault's capital for buying the next dip, not a profit to distribute.
  */
 export function agentSell(chain: Chain, tokensIn: bigint, minSolOut: bigint, now: bigint, slot: number): TxResult {
   return transact(chain, (l) => {
@@ -331,24 +324,17 @@ export function agentSell(chain: Chain, tokensIn: bigint, minSolOut: bigint, now
     require(sol * l.vaultTokens * BPS >= tokensIn * l.vaultCostSol * (BPS + t.bandBps), "AgentBelowCostBasis");
     // state.rs `vault_cost_of`: the sold tokens' share of the basis, rounded up.
     const cost = (l.vaultCostSol * tokensIn + l.vaultTokens - 1n) / l.vaultTokens;
-    const profit = sol > cost ? sol - cost : 0n;
-    const kept = sol - profit;
     l.vaultCostSol -= cost;
     l.realSol -= gross;
     l.tokenReserve += tokensIn;
     l.feesSol += fee;
     l.vaultTokens -= tokensIn;
-    l.vaultSol += kept;
-    // state.rs `credit_buyback_pool`, then `credit_backers` with the rest.
-    const pool = bps(profit, t.burnShareBps);
-    l.buybackPoolSol += pool;
-    l.profitShared += profit - pool;
+    l.vaultSol += sol;
     require(moveBps(before, spot(l)) <= t.maxImpactBps, "AgentPriceImpact");
     l.windowTokensSold += tokensIn;
     l.agentSells += 1;
     l.agentSolReceived += sol;
     l.agentTokensSold += tokensIn;
-    l.buybackSol += kept;
     l.volumeSol += sol;
     l.tradeCount += 1;
     return sol;
@@ -365,14 +351,14 @@ export const PRODUCTION_TERMS: SimTerms = {
   venue: "holdfast",
   tradeFeeBps: 100n,
   launchFeeBps: 100n,
-  burnShareBps: 0n,
   bandBps: 200n,
   maxImpactBps: 300n,
   buyBpsPerWindow: 1_000n,
   sellBpsPerWindow: 500n,
   windowSecs: 3_600n,
   emaPeriodSecs: 1_800n,
+  minVaultSol: 100_000_000n,
 };
 
-/** The same agent terms frozen by `create_launch_pump` (`LaunchTerms::pump`: no trade fee, the platform's 25% burn share). */
-export const PUMP_TERMS: SimTerms = { ...PRODUCTION_TERMS, venue: "pump", tradeFeeBps: 0n, burnShareBps: 2_500n };
+/** The same agent terms frozen by `create_launch_pump` (`LaunchTerms::pump`: no trade fee). */
+export const PUMP_TERMS: SimTerms = { ...PRODUCTION_TERMS, venue: "pump", tradeFeeBps: 0n };

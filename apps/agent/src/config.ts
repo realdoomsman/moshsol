@@ -3,6 +3,8 @@ import { DEFAULT_PRIORITY_FEE, type PriorityFeeBounds } from "@holdfast/sdk";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadNarratorConfig, type NarratorConfig } from "./narrate";
+import { loadResearchConfig, type ResearchConfig } from "./research";
 import { DEFAULT_PARAMS, withParams, type StrategyParams } from "./strategy";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -29,6 +31,12 @@ export interface AgentConfig {
   altFile: string;
   /** `AGENT_ALT`: use this lookup table instead of creating/remembering one. */
   alt: PublicKey | null;
+  /** SQLite file for the activity feed and the research history (`AGENT_DB`). */
+  dbFile: string;
+  /** Optional AI narration of decisions (`AI_API_URL` / `AI_API_KEY` / `AI_MODEL`); null = off. */
+  narrator: NarratorConfig | null;
+  /** Optional periodic parameter research (`RESEARCH_INTERVAL_MIN` > 0); null = off. */
+  research: ResearchConfig | null;
 }
 
 function pubkey(name: string): PublicKey | null {
@@ -99,6 +107,9 @@ export function loadConfig(): AgentConfig {
     crankMs: int("CRANK_MS", 60_000, 1_000, 86_400_000),
     altFile: path.resolve(REPO_ROOT, process.env.ALT_FILE?.trim() || "apps/agent/.alt.json"),
     alt: pubkey("AGENT_ALT"),
+    dbFile: path.resolve(REPO_ROOT, process.env.AGENT_DB?.trim() || "apps/agent/.agent.db"),
+    narrator: loadNarratorConfig(),
+    research: loadResearchConfig(),
   };
 }
 

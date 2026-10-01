@@ -302,7 +302,7 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <Stat
                   label="Claimable"
-                  rule="Backer earnings (fee share, vault agent profit, wind-down payouts) plus creator fees you can claim right now."
+                  rule="Backer earnings (your cut of venue fees, backer payback, wind-down payouts) plus creator fees you can claim right now."
                   tone={split.totalClaimable > 0n ? "accent" : undefined}
                   value={quiet(split.totalClaimable > 0n, `${fmtLamports(split.totalClaimable)} SOL`)}
                   sub={claimCount > 0 ? `${claimCount} ${claimCount === 1 ? "position" : "positions"}` : undefined}
@@ -323,7 +323,7 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
               />
               <Stat
                 label="Creator fees claimable"
-                rule="Your creator share of trade fees on the launches you created, not yet claimed."
+                rule="Your creator share of trade fees on the Holdfast-curve launches you created, not yet claimed. pump.fun launches pay the creator nothing."
                 value={quiet(split.creatorClaimable > 0n, `${fmtLamports(split.creatorClaimable)} SOL`)}
                 sub={`${data.created.length} created`}
               />

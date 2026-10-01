@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { ArweaveStore } from "./arweave";
-import { cleanSocial, cleanText, parsePubkeyList, ValidationError } from "./sanitize";
+import { cleanSocial, cleanText, parsePubkey, parsePubkeyList, ValidationError } from "./sanitize";
 
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_URI_LEN = 200;
@@ -37,11 +37,14 @@ interface UploadFields {
   description: string | null;
   twitter: string | null;
   telegram: string | null;
-  website: string | null;
+  /** The launch address the metadata belongs to (`launch`, the wizard always sends it): its `website` is the launch page. */
+  launch: string | null;
   whitelist: string[] | null;
 }
 
 function validateFields(raw: Record<string, string>): UploadFields {
+  const launch = raw.launch?.trim() || null;
+  if (launch && !parsePubkey(launch)) throw new ValidationError("launch must be the base58 launch address");
   const name = cleanText(raw.name, "name", 32, { bytes: true });
   if (!name) throw new ValidationError("name is required");
   const symbol = cleanText(raw.symbol, "symbol", 10, { bytes: true });
@@ -62,18 +65,20 @@ function validateFields(raw: Record<string, string>): UploadFields {
     description: cleanText(raw.description, "description", 1000, { multiline: true }),
     twitter: cleanSocial(raw.twitter, "twitter"),
     telegram: cleanSocial(raw.telegram, "telegram"),
-    website: cleanSocial(raw.website, "website"),
+    launch,
     whitelist,
   };
 }
 
 /**
  * `POST /api/upload` (multipart): stores the image + a Metaplex-style JSON and returns their public URIs:
- * under FILES_DIR rooted at PUBLIC_URL, or on Arweave when `arweave` is set (STORAGE=arweave).
+ * under FILES_DIR rooted at PUBLIC_URL, or on Arweave when `arweave` is set (STORAGE=arweave). The JSON's
+ * `extensions.website` is the launch's own page (`<siteUrl>/launch/<launch>`), never a creator-supplied URL
+ * (a `website` field is ignored).
  */
 export function registerUpload(
   app: FastifyInstance,
-  opts: { filesDir: string; publicUrl: string; arweave: ArweaveStore | null },
+  opts: { filesDir: string; publicUrl: string; siteUrl: string; arweave: ArweaveStore | null },
 ): void {
   app.post("/api/upload", async (req, reply) => {
     if (!req.isMultipart()) throw new ValidationError("expected multipart/form-data");
@@ -94,9 +99,9 @@ export function registerUpload(
     const fields = validateFields(raw);
 
     const extensions: Record<string, string> = {};
+    if (fields.launch) extensions.website = `${opts.siteUrl}/launch/${fields.launch}`;
     if (fields.twitter) extensions.twitter = fields.twitter;
     if (fields.telegram) extensions.telegram = fields.telegram;
-    if (fields.website) extensions.website = fields.website;
     const metadataFor = (imageUrl: string) => ({
       name: fields.name,
       symbol: fields.symbol,

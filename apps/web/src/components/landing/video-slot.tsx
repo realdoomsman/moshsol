@@ -5,8 +5,8 @@ import { CLUSTER_NAME, type Cluster } from "@/lib/env";
 import { cn } from "../ui/cn";
 import { DemoVideo, type DemoSource } from "./demo-video";
 
-/** The four product-loop recordings (§3.9), set up by `scripts/src/record-demos.ts` (`pnpm record:demos`). */
-export type DemoName = "back-a-raise" | "the-lock" | "agent-defends" | "claim";
+/** The product-loop recordings (§3.9), set up by `scripts/src/record-demos.ts` (`pnpm record:demos`), plus the hero's launch recording. */
+export type DemoName = "launch-in-a-minute" | "back-a-raise" | "the-bundle" | "agent-defends" | "claim";
 
 const DIR = join(process.cwd(), "public", "videos");
 

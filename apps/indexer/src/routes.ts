@@ -8,10 +8,12 @@ import {
   type LaunchJson,
   type MoshClient,
 } from "@holdfast/sdk";
-import { PublicKey } from "@solana/web3.js";
+import { PublicKey, type Connection } from "@solana/web3.js";
 import type { FastifyInstance } from "fastify";
+import { TtlCache } from "./cache";
 import { DEFAULT_PUBKEY, type LaunchDbRow, type SnapshotLaunchDbRow, type Store, type TradeDbRow } from "./db";
 import type { SolPrice } from "./price";
+import { Limiter, sweepLimiters } from "./ratelimit";
 import { parsePubkey, ValidationError } from "./sanitize";
 import { allSummaries, summaryOf } from "./summaries";
 import { activityFromRow, holderTarget, type ChainSync } from "./sync";
@@ -152,6 +154,29 @@ export function requireLaunch(store: Store, idRaw: string): SnapshotLaunchDbRow 
   return row as SnapshotLaunchDbRow;
 }
 
+/** `GET /api/portfolio/:wallet` requests per minute per client IP (on top of the global budget). */
+const PORTFOLIO_LIMIT_PER_MIN = 60;
+/** How long a wallet's token balances are reused before the chain is asked again. */
+const PORTFOLIO_TTL_MS = 10_000;
+
+/** Non-zero token balances by mint. Holdfast launches are Token-2022 mints, pump launches SPL Token mints. */
+async function fetchTokenBalances(connection: Connection, owner: PublicKey): Promise<Map<string, bigint>> {
+  const [token2022Accounts, tokenAccounts] = await Promise.all([
+    connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_2022_PROGRAM_ID }, "confirmed"),
+    connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_PROGRAM_ID }, "confirmed"),
+  ]);
+  const balances = new Map<string, bigint>();
+  for (const { account } of [...token2022Accounts.value, ...tokenAccounts.value]) {
+    const info: unknown = account.data.parsed?.info;
+    if (typeof info !== "object" || info === null || !("mint" in info) || !("tokenAmount" in info)) continue;
+    const { mint, tokenAmount } = info;
+    if (typeof mint !== "string" || typeof tokenAmount !== "object" || tokenAmount === null) continue;
+    const amount = "amount" in tokenAmount && typeof tokenAmount.amount === "string" ? BigInt(tokenAmount.amount) : 0n;
+    if (amount > 0n) balances.set(mint, (balances.get(mint) ?? 0n) + amount);
+  }
+  return balances;
+}
+
 export function registerRoutes(app: FastifyInstance, { store, client, sync, price }: RouteDeps): void {
   const connection = client.connection;
   const launchRow = (idRaw: string) => requireLaunch(store, idRaw);
@@ -201,6 +226,12 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
         maxWalletDepositLamports: pr.maxWalletDepositLamports.toString(),
         holdfastCurveEnabled: pr.holdfastCurveEnabled,
         burnShareBps: pr.burnShareBps,
+        creatorFeeVaultBps: pr.creatorFeeVaultBps,
+        payoutMultBps: pr.payoutMultBps,
+        payoutShareBps: pr.payoutShareBps,
+        payoutIntervalSecs: pr.payoutIntervalSecs,
+        deadHoldersBps: pr.deadHoldersBps,
+        minVaultSol: pr.minVaultSol.toString(),
         buybackMint: pr.buybackMint.toBase58(),
       },
     };
@@ -285,23 +316,31 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
     return { candles: buildCandles(row, store.candlePoints(row.address), tf) };
   });
 
+  // From the indexed deposit/refund/claim ledger (the users route does the same per wallet); no RPC scan per request.
   app.get<{ Params: { id: string } }>("/api/launches/:id/backers", async (req) => {
     const row = launchRow(req.params.id);
     const snap = JSON.parse(row.snapshot) as LaunchJson;
     const raised = BigInt(snap.raised);
     const acc = BigInt(snap.accFeePerShare);
-    const accounts = await client.fetchBackersForLaunch(new PublicKey(row.address));
-    const backers = accounts.map(({ account }) => {
-      const deposited = BigInt(account.deposited.toString());
-      const feesClaimed = BigInt(account.feesClaimed.toString());
-      return {
-        owner: account.owner.toBase58(),
+    const refunded = new Map<string, bigint>();
+    const claimed = new Map<string, bigint>();
+    for (const e of store.launchBackerEvents(row.address)) {
+      (e.type === "refund" ? refunded : claimed).set(e.actor, BigInt(e.amount));
+    }
+    const backers = [];
+    for (const b of store.launchBackers(row.address)) {
+      const deposited = BigInt(b.amount) - (refunded.get(b.backer) ?? 0n);
+      // A refunded backer's account is closed on chain; it is no longer a backer.
+      if (deposited <= 0n) continue;
+      const feesClaimed = claimed.get(b.backer) ?? 0n;
+      backers.push({
+        owner: b.backer,
         deposited: deposited.toString(),
         feesClaimed: feesClaimed.toString(),
         claimable: backerClaimable(deposited, acc, feesClaimed).toString(),
         shareBps: raised > 0n ? Number((deposited * 10_000n) / raised) : 0,
-      };
-    });
+      });
+    }
     backers.sort((a, b) => cmpBig(b.deposited, a.deposited));
     return { backers };
   });
@@ -338,26 +377,42 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
     return { events: store.launchActivity(row.address, type, before, limit).map(activityFromRow) };
   });
 
-  app.get<{ Params: { wallet: string } }>("/api/portfolio/:wallet", async (req) => {
+  // Token balances are the only chain reads left on the API; they are cached per wallet (shared in flight) and
+  // the route has its own tighter per-IP budget so a client can't burn RPC credits by rotating wallets.
+  const portfolioLimiter = new Limiter(PORTFOLIO_LIMIT_PER_MIN);
+  sweepLimiters(app, [portfolioLimiter]);
+  const tokenBalances = new TtlCache<Map<string, bigint>>(PORTFOLIO_TTL_MS);
+  app.get<{ Params: { wallet: string } }>("/api/portfolio/:wallet", async (req, reply) => {
+    const over = portfolioLimiter.hit(req.ip, Date.now());
+    if (over) {
+      if (over.first) req.log.warn({ ip: req.ip, perMin: PORTFOLIO_LIMIT_PER_MIN }, "portfolio rate limit hit");
+      return reply
+        .code(429)
+        .header("Retry-After", String(over.wait))
+        .send({ error: `rate limit exceeded (${PORTFOLIO_LIMIT_PER_MIN} portfolio requests/min); retry in ${over.wait}s` });
+    }
     const owner = pubkeyParam(req.params.wallet, "wallet");
     const wallet = owner.toBase58();
-    // Holdfast launches are Token-2022 mints, pump launches SPL Token mints.
-    const [backerAccounts, token2022Accounts, tokenAccounts] = await Promise.all([
-      client.fetchBackersOf(owner),
-      connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_2022_PROGRAM_ID }, "confirmed"),
-      connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_PROGRAM_ID }, "confirmed"),
-    ]);
+    const balances = await tokenBalances.get(wallet, () => fetchTokenBalances(connection, owner));
     const all = allSummaries(store, price);
     const byAddress = new Map(all.map((s) => [s.address, s]));
     const byMint = new Map(all.filter((s) => s.mint !== DEFAULT_PUBKEY).map((s) => [s.mint, s]));
     const now = Math.floor(Date.now() / 1000);
 
+    const refundedByLaunch = new Map<string, bigint>();
+    const claimedByLaunch = new Map<string, bigint>();
+    for (const t of store.walletEventTotals(wallet)) {
+      if (t.type === "refund") refundedByLaunch.set(t.launch, BigInt(t.amount));
+      if (t.type === "backer_claim") claimedByLaunch.set(t.launch, BigInt(t.amount));
+    }
     const backed = [];
-    for (const { account } of backerAccounts) {
-      const launch = byAddress.get(account.launch.toBase58());
+    for (const d of store.walletDeposits(wallet)) {
+      const launch = byAddress.get(d.launch);
       if (!launch) continue;
-      const deposited = BigInt(account.deposited.toString());
-      const feesClaimed = BigInt(account.feesClaimed.toString());
+      const deposited = BigInt(d.amount) - (refundedByLaunch.get(d.launch) ?? 0n);
+      // Refunded: the backer account is closed on chain.
+      if (deposited <= 0n) continue;
+      const feesClaimed = claimedByLaunch.get(d.launch) ?? 0n;
       const raised = BigInt(launch.raised);
       const share = (v: string) => (raised > 0n ? (BigInt(v) * deposited) / raised : 0n);
       const failedRaise = launch.status === "raising" && now >= launch.raiseDeadline && raised < BigInt(launch.raiseMin);
@@ -381,15 +436,6 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
         creatorFeesClaimed: l.creatorFeesClaimed,
       }));
 
-    const balances = new Map<string, bigint>();
-    for (const { account } of [...token2022Accounts.value, ...tokenAccounts.value]) {
-      const info: unknown = account.data.parsed?.info;
-      if (typeof info !== "object" || info === null || !("mint" in info) || !("tokenAmount" in info)) continue;
-      const { mint, tokenAmount } = info;
-      if (typeof mint !== "string" || typeof tokenAmount !== "object" || tokenAmount === null) continue;
-      const amount = "amount" in tokenAmount && typeof tokenAmount.amount === "string" ? BigInt(tokenAmount.amount) : 0n;
-      if (amount > 0n) balances.set(mint, (balances.get(mint) ?? 0n) + amount);
-    }
     const holdings = [];
     for (const [mint, amount] of balances) {
       const launch = byMint.get(mint);
@@ -422,6 +468,8 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
       volume24hSol: store.volumeSince(Math.floor(Date.now() / 1000) - 86_400),
       backerFeesAccruedSol: sum((l) => lamportsToSol(l.backerFeesAccrued)),
       profitSharedSol: sum((l) => l.profitSharedSol),
+      backersRepaidSol: sum((l) => l.backersRepaidSol),
+      backerPayoutsSol: sum((l) => l.backerPayoutsSol),
       agentTrades: sum((l) => l.agentBuys + l.agentSells),
       vaultSol: sum((l) => lamportsToSol(l.vaultSol)),
       vaultTokensValueSol: sum((l) => tokensToUi(l.vaultTokens) * l.priceSol),

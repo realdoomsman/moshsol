@@ -3,8 +3,9 @@ import { pctFromBps } from "../band/model";
 import { cn } from "../ui/cn";
 
 /**
- * Backers (accent) · Creator (ink-3) · Platform (line-2), split by 2px gaps of ground: weight falls
- * on the backers' share, the rest steps down in brightness with its size.
+ * Legacy Holdfast-curve launches only (pump.fun launches have no trade-fee split: creator fees go
+ * vault / burn / backers). Backers (accent) · Creator (ink-3) · Platform (line-2), split by 2px gaps
+ * of ground: weight falls on the backers' share, the rest steps down in brightness with its size.
  */
 export function SplitBar({ params: p, className }: { params: PlatformInfo["params"]; className?: string }) {
   const platformBps = 10_000 - p.backerFeeShareBps - p.creatorFeeShareBps;
@@ -28,8 +29,8 @@ export function SplitBar({ params: p, className }: { params: PlatformInfo["param
         ))}
       </div>
       <figcaption className="small mt-3 text-ink-3">
-        Of the {pctFromBps(p.tradeFeeBps)} fee on every public trade, frozen into each launch at creation. Vault-agent trades pay no
-        fee.
+        Of the {pctFromBps(p.tradeFeeBps)} fee on every public trade on the Holdfast curve, frozen into each legacy launch at creation.
+        Vault-agent trades pay no fee; pump.fun launches have no trade-fee split.
       </figcaption>
     </figure>
   );

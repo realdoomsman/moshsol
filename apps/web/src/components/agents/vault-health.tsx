@@ -5,6 +5,7 @@ import { Search } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { fmtLamports, fmtTokens } from "@/lib/format";
+import { fmtMult } from "@/lib/pump-terms";
 import { launchHref } from "@/lib/launch";
 import { BandMeter } from "../token/band-meter";
 import { StatusDot } from "../ui/chip";
@@ -14,6 +15,7 @@ import { Input } from "../ui/input";
 import { Segmented } from "../ui/tabs";
 import { Table, TD, TH, THead, TR } from "../ui/table";
 import { TokenAvatar } from "../ui/token-avatar";
+import { RuleTooltip } from "../ui/tooltip";
 import { ActionChip } from "./decision-log";
 import type { VaultHealth } from "./health";
 
@@ -118,6 +120,7 @@ export function VaultHealthList({ rows, now, loading }: { rows: VaultHealth[]; n
                     <span className="small num shrink-0 text-right text-ink-2">
                       {fmtLamports(h.row.vaultSol)} SOL
                       <span className="block text-ink-3">{fmtTokens(h.row.vaultTokens)} tokens</span>
+                      {typeof h.launch?.payoutMultiple === "number" ? <span className="block text-ink-3">{fmtMult(h.launch.payoutMultiple)} of start</span> : null}
                     </span>
                   </div>
                   <Status h={h} />
@@ -144,7 +147,9 @@ export function VaultHealthList({ rows, now, loading }: { rows: VaultHealth[]; n
             <Table label="Live vaults" className="hidden lg:block">
               <THead>
                 <TH>Vault</TH>
-                <TH align="right">Holds</TH>
+                <TH align="right">
+                  <RuleTooltip rule="Vault SOL and tokens, and the liquid SOL as a multiple of what went in at launch (the payback rule's measure).">Holds</RuleTooltip>
+                </TH>
                 <TH>Band</TH>
                 <TH>Buy budget</TH>
                 <TH>Sell budget</TH>
@@ -168,6 +173,7 @@ export function VaultHealthList({ rows, now, loading }: { rows: VaultHealth[]; n
                     <TD align="right" className="py-2">
                       {fmtLamports(h.row.vaultSol)} SOL
                       <span className="block text-ink-3">{fmtTokens(h.row.vaultTokens)} tokens</span>
+                      {typeof h.launch?.payoutMultiple === "number" ? <span className="block text-ink-3">{fmtMult(h.launch.payoutMultiple)} of start</span> : null}
                     </TD>
                     <TD>
                       <div className="w-40">

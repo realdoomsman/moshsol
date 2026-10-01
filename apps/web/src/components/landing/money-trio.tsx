@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { fmtLamports } from "@/lib/format";
-import { pumpSplit } from "@/lib/pump-terms";
+import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import type { PlatformInfo } from "@/lib/types";
 import { Term } from "../glossary";
 
@@ -10,19 +10,24 @@ import { Term } from "../glossary";
  */
 export function MoneyTrio({ params }: { params: PlatformInfo["params"] | null }) {
   const s = pumpSplit(params);
-  const createFee = params ? `${fmtLamports(params.createFeeLamports)} SOL` : "a small";
+  const createFee = params ? `${fmtLamports(params.createFeeLamports)} SOL ` : "";
   const cards = [
     {
       id: "backers",
       title: "For backers",
       lines: [
         <>
-          {s.backerPct}% of the <Term k="vaultAgent" split={s} />
-          &rsquo;s realized profit, split by deposit (<Term k="backerEarnings" split={s} />). Claim any time.
+          {s.backerPct}% of pump.fun&rsquo;s creator fee on the launch, split by deposit (<Term k="backerEarnings" split={s} />). Claim any
+          time.
         </>,
-        <>100% of your SOL back if the raise misses its minimum or the creator cancels.</>,
         <>
-          The vault&rsquo;s SOL back if the coin dies and anyone runs the <Term k="windDown" split={s} />.
+          <Term k="payback" split={s}>Payback</Term> when the vault is {fmtMult(s.payoutMult)} its start and the chart is strong: your
+          principal first, then {s.payoutSharePct}% of the vault every {fmtInterval(s.payoutIntervalHours)}. Buying back dips always comes
+          first.
+        </>,
+        <>
+          100% of your SOL back if the raise misses its minimum or the creator cancels. If the coin dies, anyone can run the{" "}
+          <Term k="windDown" split={s} /> and all vault SOL goes to backers.
         </>,
       ],
       href: "/docs/for-backers",
@@ -34,11 +39,11 @@ export function MoneyTrio({ params }: { params: PlatformInfo["params"] | null })
       lines: [
         <>0% of fees to you, so there is no creator cut to dump on your holders.</>,
         <>
-          pump.fun&rsquo;s creator fee goes {s.backerPct}% into your launch&rsquo;s <Term k="vault" split={s} /> as market-making capital
-          and {s.burnPct}% to the <Term k="buybackPool" split={s} />.
+          pump.fun&rsquo;s creator fee goes {s.vaultPct}% into your launch&rsquo;s <Term k="vault" split={s} /> as agent capital,{" "}
+          {s.burnPct}% to the <Term k="buybackPool" split={s} /> and {s.backerPct}% to your backers.
         </>,
         <>
-          You pay the {s.launchFeePct}% launch fee and {createFee} create fee. Nothing else.
+          You pay the {s.launchFeePct}% launch fee and the {createFee}create fee. Nothing else.
         </>,
       ],
       href: "/docs/for-creators",
@@ -49,8 +54,8 @@ export function MoneyTrio({ params }: { params: PlatformInfo["params"] | null })
       title: "For the Holdfast token",
       lines: [
         <>
-          {s.burnPct}% of every vault agent profit and {s.burnPct}% of every pump.fun creator fee land in the{" "}
-          <Term k="buybackPool" split={s} />, which buys the Holdfast token and burns it.
+          {s.burnPct}% of every pump.fun creator fee lands in the <Term k="buybackPool" split={s} />, which buys the Holdfast token and
+          burns it.
         </>,
         <>Holdfast itself earns only the {s.launchFeePct}% launch fee and the create fee.</>,
         <>No price promises: what the token does is up to the market.</>,

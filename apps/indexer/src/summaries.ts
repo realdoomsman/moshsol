@@ -3,6 +3,54 @@ import type { LaunchDbRow, PumpEventAggDbRow, Store, TradeAggDbRow, VaultEventAg
 import type { SolPrice, SolUsd } from "./price";
 import type { LaunchSummary } from "./types";
 
+/** The vault-model fields of a summary derived from a launch snapshot (see API.md → LaunchSummary). */
+export type VaultModelFields = Pick<
+  LaunchSummary,
+  | "backersRepaidSol"
+  | "backerPayoutsSol"
+  | "payoutTargetSol"
+  | "payoutMultiple"
+  | "payoutShareBps"
+  | "payoutIntervalSecs"
+  | "creatorFeeVaultBps"
+  | "burnShareBps"
+  | "backerCreatorFeeBps"
+  | "minVaultSol"
+  | "creatorFeeSplit"
+>;
+
+/**
+ * Payback progress and the creator-fee split from the snapshot's frozen terms. Snapshots persisted before
+ * the vault-model upgrade lack the appended fields until their next refresh: they read as zero, never throw.
+ */
+export function vaultModelOf(snap: Pick<LaunchJson, "terms" | "vaultSol" | "creatorFeesCollected"> & Partial<LaunchJson>): VaultModelFields {
+  const t = snap.terms;
+  const initial = BigInt(snap.initialVaultSol ?? "0");
+  const liquid = BigInt(snap.vaultSol);
+  const target = (initial * BigInt(t.payoutMultBps ?? 0)) / 10_000n;
+  const fees = BigInt(snap.creatorFeesCollected);
+  const vaultBps = t.creatorFeeVaultBps ?? 0;
+  const feeVault = (fees * BigInt(vaultBps)) / 10_000n;
+  const feeBurn = (fees * BigInt(t.burnShareBps)) / 10_000n;
+  return {
+    backersRepaidSol: lamportsToSol(snap.backersRepaid ?? "0"),
+    backerPayoutsSol: lamportsToSol(snap.backerPayouts ?? "0"),
+    payoutTargetSol: lamportsToSol(target.toString()),
+    payoutMultiple: initial > 0n ? Number(liquid) / Number(initial) : 0,
+    payoutShareBps: t.payoutShareBps ?? 0,
+    payoutIntervalSecs: t.payoutIntervalSecs ?? 0,
+    creatorFeeVaultBps: vaultBps,
+    burnShareBps: t.burnShareBps,
+    backerCreatorFeeBps: Math.max(0, 10_000 - vaultBps - t.burnShareBps),
+    minVaultSol: (t.minVaultSol ?? "0").toString(),
+    creatorFeeSplit: {
+      vaultSol: lamportsToSol(feeVault.toString()),
+      burnSol: lamportsToSol(feeBurn.toString()),
+      backersSol: lamportsToSol((fees - feeVault - feeBurn).toString()),
+    },
+  };
+}
+
 function toSummary(
   store: Store,
   row: LaunchDbRow,
@@ -46,6 +94,8 @@ function toSummary(
     comments: row.comment_count,
     creatorName: row.creator_name,
     profitSharedSol: lamportsToSol(vault?.profit_shared ?? "0"),
+    ...vaultModelOf(snap),
+    payouts: { count: vault?.payouts ?? 0, lastAt: vault?.last_payout_ts ?? null },
     vaultWithdrawnSol: lamportsToSol(vault?.withdrawn_sol ?? "0"),
     vaultWithdrawnTokens: vault?.withdrawn_tokens ?? "0",
     woundDown:

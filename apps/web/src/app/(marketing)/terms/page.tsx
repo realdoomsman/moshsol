@@ -66,7 +66,8 @@ export default function TermsPage() {
                 Each launch&apos;s vault (the SOL and tokens its bundle and agent hold) is controlled by the program, and the
                 program gives the platform admin — a 2-of-3 Squads multisig — <B>the power to withdraw vault SOL and
                 tokens</B> to the platform&apos;s fee recipient at any time (<C>admin_withdraw_vault</C>). Every withdrawal is a
-                public on-chain event. Don&apos;t rely on vault funds staying in a vault, or on the vault agent ever buying.
+                public on-chain event. Don&apos;t rely on vault funds staying in a vault, on the vault agent ever buying, or on the
+                vault ever paying backers back.
               </P>
               <P>
                 The same multisig can upgrade the program and change platform parameters (live launches keep the terms

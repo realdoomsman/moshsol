@@ -9,6 +9,7 @@ import { useBackerAccount, useChainWhitelistRoot, useMoshClient, useSolBalance }
 import { fmtLamports, fmtTokens, pctOf } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { launchId, type Phase } from "@/lib/launch";
+import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { usePlatform } from "@/lib/queries";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
@@ -36,8 +37,8 @@ function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
 }
 
 /**
- * "What you get" (§4.5): the deposit's share of the backer pool (fee share of every trade plus the
- * backers' share of the vault agent's realized profit and any wind-down payout), the vault slice it
+ * "What you get" (§4.5): the deposit's share of the backer pool (a cut of the venue's fees, the
+ * backer payback once the vault is at its multiple, and any wind-down payout), the vault slice it
  * funds at launch, and the refund guarantee — recomputed live from the typed amount.
  */
 function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSummary; deposited: bigint; add: bigint | null; example: bigint }) {
@@ -53,7 +54,8 @@ function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSumm
   if (mine === 0n || total === 0n) return null;
   const share = pctOf(mine, total);
   const feePctOfTrade = ((l.terms.tradeFeeBps * l.terms.backerFeeShareBps) / 1_000_000) * (share / 100);
-  const profitPct = 100 - l.terms.burnShareBps / 100;
+  const split = pumpSplit(l.terms);
+  const payback = `When the vault's SOL is ${fmtMult(split.payoutMult)} what went in at launch and the chart is strong, the vault agent may pay backers back (principal first, then ${split.payoutSharePct}% of the vault every ${fmtInterval(split.payoutIntervalHours)}); buying back dips always comes first. If the launch dies, the vault's SOL is paid out to backers.`;
   const basis = add ? `for ${fmtLamports(mine)} SOL` : deposited > 0n ? "your deposit" : `e.g. ${fmtLamports(extra)} SOL`;
   return (
     <div className="grid gap-3 border-t border-line pt-4">
@@ -67,8 +69,8 @@ function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSumm
           <dd className="num text-right text-ink">{fmtPct(share)} of backer payouts</dd>
           <dd className="col-span-2 mt-0.5 text-ink-3">
             {pump
-              ? `Trades happen on pump.fun; ${profitPct}% of the vault agent's realized profit goes to backers (the rest buys and burns the Holdfast token), plus your share of any wind-down payout.`
-              : `≈ ${+feePctOfTrade.toPrecision(2)}% of every trade while it trades, plus your share of 100% of the vault agent's profit and of any wind-down payout.`}{" "}
+              ? `Trades happen on pump.fun; ${split.backerPct}% of the creator fees it pays this launch go to backers. ${payback}`
+              : `≈ ${+feePctOfTrade.toPrecision(2)}% of every trade while it trades. ${payback}`}{" "}
             One claim button. Shrinks as others back it.
           </dd>
         </div>
@@ -79,8 +81,8 @@ function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSumm
               {fmtTokens((bundle.bundleTokens * mine) / total)} ${l.symbol}
             </dd>
             <dd className="col-span-2 mt-0.5 text-ink-3">
-              + {fmtLamports((bundle.vaultSol * mine) / total)} SOL, held in the vault. Only the vault agent trades it; the platform
-              multisig can withdraw it (every withdrawal is shown on the launch page).
+              + {fmtLamports((bundle.vaultSol * mine) / total)} SOL, held in the vault. Only the vault agent trades it and its sale proceeds stay
+              there; the platform multisig can withdraw it (every withdrawal is shown on the launch page).
             </dd>
           </div>
         ) : null}

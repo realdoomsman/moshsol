@@ -8,7 +8,8 @@ use super::pay_out;
 use super::pump_venue::{venue_tokens, venue_view, VenueTrade};
 use crate::constants::*;
 use crate::errors::MoshError;
-use crate::events::{VaultWithdrawn, WoundDown};
+use crate::events::{BackersPaid, VaultWithdrawn, WoundDown};
+use crate::math;
 use crate::state::{Launch, LaunchStatus, Platform, Venue};
 
 #[derive(Accounts)]
@@ -43,11 +44,22 @@ fn require_dead(launch: &Launch, now: i64) -> Result<()> {
     Ok(())
 }
 
+/// Tokens outside the venue and the vault (`supply − held`; burned tokens aren't in the
+/// supply) may be at most `dead_holders_bps` of the supply.
+fn require_few_outside_holders(launch: &Launch, supply: u64, held: u64) -> Result<()> {
+    let outside = supply.checked_sub(held).ok_or(MoshError::MathOverflow)?;
+    require!(
+        outside <= math::bps(supply, launch.terms.dead_holders_bps)?,
+        MoshError::OutsideHolders
+    );
+    Ok(())
+}
+
 /// Permissionless end of a dead launch: once it has been live for `WIND_DOWN_MIN_AGE_SECS`, saw
-/// no trade for `WIND_DOWN_IDLE_SECS`, and every token in existence sits in the curve or the vault
-/// (checked on real balances, so burns don't block it), nobody else can be owed anything. The
-/// vault's tokens return to the curve, curve + vault SOL is credited to backers pro-rata
-/// (claimable with `claim_backer_fees`) and the launch stops trading for good.
+/// no trade for `WIND_DOWN_IDLE_SECS`, and at most `dead_holders_bps` of the supply sits outside
+/// the curve and the vault (checked on real balances, so burns don't block it). The vault's
+/// tokens return to the curve, curve + vault SOL is credited to backers pro-rata (claimable
+/// with `claim_backer_fees`) and the launch stops trading for good.
 pub fn wind_down(ctx: Context<WindDown>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let launch = &mut ctx.accounts.launch;
@@ -59,7 +71,7 @@ pub fn wind_down(ctx: Context<WindDown>) -> Result<()> {
         .amount
         .checked_add(returned)
         .ok_or(MoshError::MathOverflow)?;
-    require!(ctx.accounts.mint.supply == held, MoshError::OutsideHolders);
+    require_few_outside_holders(launch, ctx.accounts.mint.supply, held)?;
 
     let sol_to_backers = launch
         .real_sol
@@ -73,7 +85,6 @@ pub fn wind_down(ctx: Context<WindDown>) -> Result<()> {
     launch.vault_sol = 0;
     launch.vault_tokens = 0;
     launch.vault_cost_sol = 0;
-    launch.buyback_sol = 0;
     launch.credit_backers(sol_to_backers)?;
     launch.status = LaunchStatus::WoundDown;
 
@@ -130,18 +141,22 @@ pub struct WindDownPump<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// `wind_down` for a pump launch: same age and idle rules (idle = since the last agent trade
-/// sampled the venue; public trades and cranks don't move `last_trade_ts` there); "nobody
-/// else holds" reads the venue's own token
-/// account (bonding curve ATA, or the pool's base account once graduated; the venue accounts
-/// follow as remaining accounts) plus the vault. The vault's tokens are then sold into the
-/// venue with no impact cap — with no outside holder nobody can front-run or be hurt by it —
-/// and the proceeds plus vault SOL go to backers. The buyback pool stays for the crank.
+/// `wind_down` for a pump launch: same age, idle and outside-holder rules (idle = since the
+/// last agent trade sampled the venue; public trades and cranks don't move `last_trade_ts`
+/// there; "held" reads the venue's own token account — bonding curve ATA, or the pool's base
+/// account once graduated; the venue accounts follow as remaining accounts — plus the vault).
+/// The vault's tokens are then sold into the venue with no impact cap and the proceeds plus
+/// vault SOL go to backers. The sale is floored at `BUYBACK_MIN_FILL_BPS` of the fee-free
+/// constant-product quote from the reserves as they are (forwarded to the venue as its slippage
+/// floor and re-checked on the measured fill): a fill short of it fails the instruction, which
+/// anyone can retry. The reference is in-transaction, so what it rules out is the venue taking
+/// more than the venue fee; a pre-sell in the same bundle is already bounded by the
+/// outside-holder cap. The buyback pool stays for the crank.
 pub fn wind_down_pump<'info>(ctx: Context<'_, '_, 'info, 'info, WindDownPump<'info>>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let launch_key = ctx.accounts.launch.key();
     let r = ctx.remaining_accounts;
-    {
+    let floor = {
         let launch = &ctx.accounts.launch;
         require_dead(launch, now)?;
         let view = venue_view(launch, r)?;
@@ -150,8 +165,10 @@ pub fn wind_down_pump<'info>(ctx: Context<'_, '_, 'info, 'info, WindDownPump<'in
         let held = venue_tokens(launch, r)?
             .checked_add(in_vault)
             .ok_or(MoshError::MathOverflow)?;
-        require!(ctx.accounts.mint.supply == held, MoshError::OutsideHolders);
-    }
+        require_few_outside_holders(launch, ctx.accounts.mint.supply, held)?;
+        let quote = math::sol_out(view.quote_reserve, view.base_reserve, in_vault)?;
+        math::bps(quote, BUYBACK_MIN_FILL_BPS)?
+    };
 
     let launch_info = ctx.accounts.launch.to_account_info();
     let authority = ctx.accounts.pump_authority.to_account_info();
@@ -179,9 +196,10 @@ pub fn wind_down_pump<'info>(ctx: Context<'_, '_, 'info, 'info, WindDownPump<'in
     // Sweep the authority even with nothing to sell, so it ends empty.
     venue.absorb()?;
     let in_vault = crate::pump::token_amount(&vault_info)?;
-    let (received, sold) = if in_vault > 0 { venue.sell(in_vault, 0)? } else { (0, 0) };
+    let (received, sold) = if in_vault > 0 { venue.sell(in_vault, floor)? } else { (0, 0) };
     venue.settle()?;
     require!(sold == in_vault, MoshError::InsufficientLiquidity);
+    require!(received >= floor, MoshError::Slippage);
 
     let launch = &mut ctx.accounts.launch;
     let sol_to_backers = received
@@ -191,7 +209,6 @@ pub fn wind_down_pump<'info>(ctx: Context<'_, '_, 'info, 'info, WindDownPump<'in
     launch.vault_sol = 0;
     launch.vault_tokens = 0;
     launch.vault_cost_sol = 0;
-    launch.buyback_sol = 0;
     launch.credit_backers(sol_to_backers)?;
     launch.status = LaunchStatus::WoundDown;
     launch.last_trade_ts = now;
@@ -284,8 +301,6 @@ pub fn admin_withdraw_vault(ctx: Context<AdminWithdrawVault>, sol: u64, tokens: 
     }
     if sol > 0 {
         launch.vault_sol -= sol;
-        // The buy-back budget is part of vault SOL; it can't outlive it.
-        launch.buyback_sol = launch.buyback_sol.min(launch.vault_sol);
         pay_out(
             &launch.to_account_info(),
             &ctx.accounts.fee_recipient.to_account_info(),
@@ -301,6 +316,66 @@ pub fn admin_withdraw_vault(ctx: Context<AdminWithdrawVault>, sol: u64, tokens: 
         recipient: ctx.accounts.fee_recipient.key(),
         recipient_tokens: ctx.accounts.recipient_tokens.key(),
         timestamp: Clock::get()?.unix_timestamp,
+    });
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct PayoutBackers<'info> {
+    pub agent: Signer<'info>,
+    #[account(
+        seeds = [PLATFORM_SEED],
+        bump = platform.bump,
+        constraint = platform.agent_authority == agent.key() @ MoshError::Unauthorized
+    )]
+    pub platform: Box<Account<'info, Platform>>,
+    #[account(
+        mut,
+        seeds = [LAUNCH_SEED, launch.create_key.as_ref()],
+        bump = launch.bump,
+        constraint = launch.status == LaunchStatus::Live @ MoshError::NotLive,
+    )]
+    pub launch: Box<Account<'info, Launch>>,
+}
+
+/// Backer payback, cranked by the agent authority (so nobody can force a payout while the
+/// vault should be buying a dip; paused with the agent by `agents_paused`) and bounded
+/// on-chain: at most once per `payout_interval_secs` (the clock starts at launch), only while
+/// liquid vault SOL is at least `payout_mult_bps` × `initial_vault_sol`, never below
+/// `min_vault_sol`. The first payout repays the principal (`initial_vault_sol`) in full, every
+/// later one is `payout_share_bps` of vault SOL. The amount is credited to backers pro-rata
+/// through the fee accumulator (`claim_backer_fees`).
+pub fn payout_backers(ctx: Context<PayoutBackers>) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    require!(!ctx.accounts.platform.params.agents_paused, MoshError::AgentsPaused);
+    let launch = &mut ctx.accounts.launch;
+    let terms = launch.terms;
+    require!(
+        now >= launch.last_payout_ts.saturating_add(terms.payout_interval_secs as i64)
+            && launch.vault_sol >= launch.payout_target()?,
+        MoshError::PayoutNotDue
+    );
+    let principal = launch.backers_repaid < launch.initial_vault_sol;
+    let amount = if principal {
+        launch.initial_vault_sol - launch.backers_repaid
+    } else {
+        math::bps(launch.vault_sol, terms.payout_share_bps)?
+    };
+    require!(amount > 0, MoshError::ZeroAmount);
+    launch.pay_backers_from_vault(amount)?;
+    if principal {
+        launch.backers_repaid = launch.initial_vault_sol;
+    } else {
+        launch.backer_payouts = launch.backer_payouts.checked_add(amount).ok_or(MoshError::MathOverflow)?;
+    }
+    launch.last_payout_ts = now;
+    emit!(BackersPaid {
+        launch: launch.key(),
+        mint: launch.mint,
+        kind: if principal { 0 } else { 1 },
+        amount,
+        vault_sol_after: launch.vault_sol,
+        timestamp: now,
     });
     Ok(())
 }

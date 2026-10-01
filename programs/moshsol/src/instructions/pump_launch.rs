@@ -166,7 +166,6 @@ pub fn create_launch_pump(ctx: Context<CreateLaunchPump>, args: CreateLaunchPump
         agent_sol_spent: 0,
         agent_sol_received: 0,
         agent_tokens_sold: 0,
-        buyback_sol: 0,
         volume_sol: 0,
         trade_count: 0,
         last_public_trade_slot: 0,
@@ -182,6 +181,10 @@ pub fn create_launch_pump(ctx: Context<CreateLaunchPump>, args: CreateLaunchPump
         name: args.name.clone(),
         symbol: args.symbol.clone(),
         uri: args.uri.clone(),
+        initial_vault_sol: 0,
+        backers_repaid: 0,
+        backer_payouts: 0,
+        last_payout_ts: 0,
     });
 
     emit!(LaunchCreated {
@@ -277,7 +280,9 @@ pub struct LaunchPump<'info> {
 /// before any public trade can exist. Same callers and rules as `launch`: the creator once the
 /// minimum is met; anyone once the deadline passed or the raise is full. The raise minus the
 /// launch fee pays the create rent, the bundle (`1 - reserve` of the rest, capped at
-/// `bundle_supply_bps` of supply) and leaves the remainder as vault SOL.
+/// `bundle_supply_bps` of supply) and leaves the remainder as vault SOL; bundle + remainder is
+/// `initial_vault_sol`, the base of the backer payback target (lamports donated to the pump
+/// authority before launch become vault SOL on top, outside that base).
 pub fn launch_pump(ctx: Context<LaunchPump>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let launch_key = ctx.accounts.launch.key();
@@ -410,6 +415,8 @@ pub fn launch_pump(ctx: Context<LaunchPump>) -> Result<()> {
     require!(amount > 0, MoshError::InsufficientLiquidity);
     let (spent, tokens) = venue.buy_tokens(amount, budget)?;
     require!(tokens > 0 && spent <= budget, MoshError::InsufficientLiquidity);
+    // Lamports donated to the authority become vault SOL but are not part of the raise, so
+    // they stay out of `initial_vault_sol` (the base of the payback target).
     let left = remaining - spent + venue.donated.get();
 
     let curve = BondingCurve::load(&ctx.accounts.bonding_curve)?;
@@ -424,6 +431,8 @@ pub fn launch_pump(ctx: Context<LaunchPump>) -> Result<()> {
     launch.bundle_sol = spent;
     launch.bundle_tokens = tokens;
     launch.vault_cost_sol = spent;
+    launch.initial_vault_sol = remaining;
+    launch.last_payout_ts = now;
     launch.record_volume(spent);
     launch.ema_price = price;
     launch.last_trade_ts = now;

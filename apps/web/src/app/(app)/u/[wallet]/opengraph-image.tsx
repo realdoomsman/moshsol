@@ -3,6 +3,7 @@ import { ImageResponse } from "next/og";
 import { fmtSolValue } from "@/lib/format";
 import { OG as C, OgLockup } from "@/lib/og-brand";
 import { ogFonts } from "@/lib/og-fonts";
+import { imageDataUri } from "@/lib/og-image";
 import { parseMint } from "@/lib/server";
 import { usersApi, type UserProfile } from "@/lib/users";
 
@@ -12,20 +13,6 @@ export const contentType = "image/png";
 
 /** Formats the OG renderer can decode. */
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif"];
-
-async function imageDataUri(url: string | null): Promise<string | null> {
-  if (!url) return null;
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(3_000) });
-    const type = (res.headers.get("content-type") ?? "").split(";")[0].trim();
-    if (!res.ok || !IMAGE_TYPES.includes(type)) return null;
-    const bytes = Buffer.from(await res.arrayBuffer());
-    if (bytes.byteLength > 2 * 1024 * 1024) return null;
-    return `data:${type};base64,${bytes.toString("base64")}`;
-  } catch {
-    return null;
-  }
-}
 
 /** Same figure style as the launch card's footer: label over a 44px value. */
 function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
@@ -43,7 +30,7 @@ export default async function Image({ params }: { params: Promise<{ wallet: stri
   const key = parseMint(decodeURIComponent((await params).wallet));
   const wallet = key?.toBase58() ?? null;
   const user: UserProfile | null = wallet ? await usersApi.user(wallet).catch(() => null) : null;
-  const avatar = await imageDataUri(user?.avatar ?? null);
+  const avatar = await imageDataUri(user?.avatar ?? null, IMAGE_TYPES);
   const name = user?.name ?? (wallet ? shortAddr(wallet) : "Unknown wallet");
   const s = user?.stats;
 
@@ -104,7 +91,7 @@ export default async function Image({ params }: { params: Promise<{ wallet: stri
             <Stat label="Volume" value={`${fmtSolValue(s.volumeSol)} SOL`} />
           </>
         ) : (
-          <div style={{ display: "flex", fontSize: 30, color: C.ink2 }}>Backers buy first and share the profit.</div>
+          <div style={{ display: "flex", fontSize: 30, color: C.ink2 }}>Back a token before it launches. A vault agent holds the first buy.</div>
         )}
       </div>
     </div>,

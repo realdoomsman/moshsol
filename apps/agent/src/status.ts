@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import http from "node:http";
 import type { LaunchVenue } from "@holdfast/sdk";
+import type { ActivityItem } from "./activity";
 import type { FlowFeatures } from "./flow";
 
 /** One entry of `GET /status` → `decisions` (see the Agent status API contract). */
@@ -26,7 +27,7 @@ export interface Decision {
   flow: FlowFeatures;
 }
 
-export type CrankKind = "collect_fees" | "buyback_burn" | "graduate" | "wind_down";
+export type CrankKind = "collect_fees" | "buyback_burn" | "graduate" | "wind_down" | "payout";
 
 /**
  * One entry of `GET /status` → `cranks`: a permissionless instruction the agent cranked for a launch that met
@@ -69,11 +70,18 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-export async function startStatusServer(
-  host: string,
-  port: number,
-  snapshot: () => StatusSnapshot,
-): Promise<http.Server> {
+export interface StatusRoutes {
+  status(): StatusSnapshot;
+  /** Activity for a launch address or mint, newest first; null when the launch is unknown. */
+  activity(key: string): ActivityItem[] | null;
+  /** The research loop's snapshot (parameter tuning runs). */
+  research(): unknown;
+}
+
+const ACTIVITY_ROUTE = /^\/launches\/([^/]+)\/activity$/;
+
+/** `GET /status`, `GET /launches/:key/activity` and `GET /research`, JSON with permissive CORS. */
+export async function startStatusServer(host: string, port: number, routes: StatusRoutes): Promise<http.Server> {
   const server = http.createServer((req, res) => {
     if (req.method === "OPTIONS") {
       res.writeHead(204, CORS).end();
@@ -84,9 +92,15 @@ export async function startStatusServer(
       res.writeHead(status, { ...CORS, "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify(body));
     };
-    if (pathname !== "/status") send(404, { error: "not found" });
+    const activityKey = ACTIVITY_ROUTE.exec(pathname)?.[1];
+    if (pathname !== "/status" && pathname !== "/research" && activityKey === undefined) send(404, { error: "not found" });
     else if (req.method !== "GET") send(405, { error: "method not allowed" });
-    else send(200, snapshot());
+    else if (pathname === "/status") send(200, routes.status());
+    else if (pathname === "/research") send(200, routes.research());
+    else {
+      const items = routes.activity(decodeURIComponent(activityKey!));
+      send(items ? 200 : 404, items ? { items } : { error: "unknown launch" });
+    }
   });
   server.listen(port, host);
   await once(server, "listening");

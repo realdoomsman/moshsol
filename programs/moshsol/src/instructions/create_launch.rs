@@ -245,7 +245,6 @@ pub fn create_launch(ctx: Context<CreateLaunch>, args: CreateLaunchArgs) -> Resu
         bundle_tokens: 0,
         vault_cost_sol: 0,
         agent_tokens_sold: 0,
-        buyback_sol: 0,
         acc_fee_per_share: 0,
         backer_fees_accrued: 0,
         backer_fees_claimed: 0,
@@ -278,6 +277,10 @@ pub fn create_launch(ctx: Context<CreateLaunch>, args: CreateLaunchArgs) -> Resu
         name: String::new(),
         symbol: String::new(),
         uri: String::new(),
+        initial_vault_sol: 0,
+        backers_repaid: 0,
+        backer_payouts: 0,
+        last_payout_ts: 0,
     });
 
     emit!(LaunchCreated {

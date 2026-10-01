@@ -33,6 +33,9 @@ function randomFlow(r: Rng): FlowFeatures {
     volumeRatioRecent: 10 ** (r() * 2 - 1),
     vwapDevBps: 3_000 * (r() - 0.5),
     sinceTradeSecs: Math.floor(r() * 600),
+    sinceAgentTradeSecs: r() < 0.3 ? Infinity : Math.floor(r() * 3_600),
+    volume24hSol: 10 ** (r() * 4 - 1),
+    drawdown24h: r() * 0.8,
   };
 }
 
@@ -40,8 +43,8 @@ function randomFlow(r: Rng): FlowFeatures {
 // program checks (vault average cost, average agent sell price × (1 − band), the EMA band edges),
 // idle gaps move the EMA and roll windows, and the agent's own planned trades are applied so
 // buy-backs and cost-basis changes happen. At every step the plan, under random parameters and
-// sizing, must pass the program mirror on that exact state and clock, and every lamport the agent
-// sold for must be back in the vault, credited to backers as profit or booked to the buyback pool.
+// sizing, must pass the program mirror on that exact state and clock, every lamport the agent sold
+// for must be back in the vault (no profit share), and the vault never goes below its SOL floor.
 // Runs once per venue with the same policy: the pump mirror charges the venue's 1.25% on the agent's
 // own fills, which the planner's quotes must absorb.
 for (const terms of [PRODUCTION_TERMS, PUMP_TERMS]) {
@@ -53,8 +56,8 @@ function walks(terms: SimTerms): void {
   let plans = 0;
   let buys = 0;
   let sells = 0;
-  let profitShared = 0n;
-  let buybackPool = 0n;
+  let buybacks = 0;
+  let supportBuys = 0;
   for (let walk = 0; walk < 80; walk++) {
     const chain = launch(
       {
@@ -91,28 +94,23 @@ function walks(terms: SimTerms): void {
             ? agentBuy(probe, plan.amount, plan.minOut, now, market.slot())
             : agentSell(probe, plan.amount, plan.minOut, now, market.slot());
         assert.ok(res.ok, `walk ${walk} step ${step}: ${plan.action} ${plan.amount} rejected with ${res.ok ? "" : res.error}: ${plan.reason}`);
+        if (plan.kind === "buyback") buybacks++;
+        if (plan.support) supportBuys++;
         if (k === 0 && r() < 0.8) {
           Object.assign(chain, probe);
           if (plan.action === "buy") buys++;
           else sells++;
         }
       }
-      assert.equal(
-        chain.vaultSol + chain.agentSolSpent + chain.profitShared + chain.buybackPoolSol,
-        vaultSol0 + chain.agentSolReceived,
-        `walk ${walk} step ${step}: vault SOL + spent + profit shared + buyback pool ≠ start + received`,
-      );
+      assert.equal(chain.vaultSol + chain.agentSolSpent, vaultSol0 + chain.agentSolReceived, `walk ${walk} step ${step}: vault SOL + spent ≠ start + received`);
+      assert.ok(chain.vaultSol >= terms.minVaultSol || chain.agentSolSpent === 0n, `walk ${walk} step ${step}: vault SOL ${chain.vaultSol} under the floor after an agent buy`);
     }
-    profitShared += chain.profitShared;
-    buybackPool += chain.buybackPoolSol;
   }
-  // The walks must actually reach both sides, including buy-backs after sells and sells in profit. The same
+  // The walks must actually reach both sides, including buy-backs after sells and support-mode clips. The same
   // walk plans about half as often on the pump venue: its 1.25% fee is a haircut on every quote the cost rules see.
   const minPlans = terms.venue === "pump" ? 1_000 : 2_000;
   assert.ok(plans > minPlans && buys > 200 && sells > 200, `too few trades exercised: ${plans} plans, ${buys} buys, ${sells} sells`);
-  assert.ok(profitShared > 0n, "no agent sell realized a profit");
-  if (terms.venue === "pump") assert.ok(buybackPool > 0n, "no realized profit reached the buyback pool");
-  else assert.equal(buybackPool, 0n, "a Holdfast launch has no buyback pool share");
+  assert.ok(buybacks > 50 && supportBuys > 50, `too few buy-backs (${buybacks}) or support clips (${supportBuys}) exercised`);
 }
 
 /** Lamports for about `sol` SOL. */
@@ -151,7 +149,6 @@ function arbitraryStates(t: SimTerms): void {
       vaultCostSol: BigInt(Math.floor(Number(vaultTokens) * spot * Math.exp(0.04 * gauss(r)))),
       agentTokensSold: sold,
       agentSolReceived: received,
-      buybackSol: BigInt(Math.floor(Number(received) * r())),
       windowStart: now - BigInt(Math.floor(r() * 2 * Number(t.windowSecs))),
       windowBuyCap: buyCap,
       windowSolSpent: (buyCap * BigInt(Math.floor(r() * 1_000))) / 1_000n,

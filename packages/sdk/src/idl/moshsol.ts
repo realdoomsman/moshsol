@@ -1985,7 +1985,8 @@ export type Moshsol = {
     {
       "name": "migrateLaunch",
       "docs": [
-        "One-time per pre-pump launch after the upgrade: grows it to the current layout."
+        "One-time per pre-payback launch after the upgrade: grows it to the current layout and",
+        "backfills `initial_vault_sol` (see `LaunchV2::upgrade`)."
       ],
       "discriminator": [
         19,
@@ -2029,7 +2030,7 @@ export type Moshsol = {
         {
           "name": "launch",
           "docs": [
-            "its PDA seeds are checked against the decoded mint."
+            "length; its PDA seeds are checked against the decoded create key."
           ],
           "writable": true
         },
@@ -2038,12 +2039,17 @@ export type Moshsol = {
           "address": "11111111111111111111111111111111"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "initialVaultSol",
+          "type": "u64"
+        }
+      ]
     },
     {
       "name": "migratePlatform",
       "docs": [
-        "One-time after the pump upgrade: grows the platform account to the current layout."
+        "One-time after the payback upgrade: grows the platform account to the current layout."
       ],
       "discriminator": [
         199,
@@ -2088,6 +2094,70 @@ export type Moshsol = {
         {
           "name": "systemProgram",
           "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "payoutBackers",
+      "discriminator": [
+        3,
+        116,
+        183,
+        144,
+        113,
+        218,
+        91,
+        59
+      ],
+      "accounts": [
+        {
+          "name": "agent",
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.create_key",
+                "account": "launch"
+              }
+            ]
+          }
         }
       ],
       "args": []
@@ -2774,6 +2844,19 @@ export type Moshsol = {
       ]
     },
     {
+      "name": "backersPaid",
+      "discriminator": [
+        99,
+        164,
+        90,
+        214,
+        18,
+        75,
+        89,
+        0
+      ]
+    },
+    {
       "name": "buybackBurned",
       "discriminator": [
         186,
@@ -2927,19 +3010,6 @@ export type Moshsol = {
         43,
         18,
         81
-      ]
-    },
-    {
-      "name": "vaultProfitShared",
-      "discriminator": [
-        130,
-        191,
-        242,
-        75,
-        131,
-        4,
-        212,
-        176
       ]
     },
     {
@@ -3143,7 +3213,7 @@ export type Moshsol = {
     {
       "code": 6034,
       "name": "outsideHolders",
-      "msg": "Tokens are held outside the curve and vault; the launch can't wind down"
+      "msg": "More tokens are held outside the venue and vault than a dead launch allows; it can't wind down"
     },
     {
       "code": 6035,
@@ -3184,6 +3254,16 @@ export type Moshsol = {
       "code": 6042,
       "name": "alreadyMigrated",
       "msg": "Account already uses the current layout"
+    },
+    {
+      "code": 6043,
+      "name": "payoutNotDue",
+      "msg": "No backer payout is due: vault SOL under the payback target or the last payout is too recent"
+    },
+    {
+      "code": 6044,
+      "name": "vaultFloor",
+      "msg": "Vault SOL may not drop below the launch's minimum vault reserve"
     }
   ],
   "types": [
@@ -3233,6 +3313,42 @@ export type Moshsol = {
           },
           {
             "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "backersPaid",
+      "docs": [
+        "`payout_backers`: vault SOL credited to backers' claimable balance — `kind` 0 repays the",
+        "principal (`initial_vault_sol`), 1 is a dividend (`payout_share_bps` of vault SOL)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "kind",
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "vaultSolAfter",
             "type": "u64"
           },
           {
@@ -3471,8 +3587,8 @@ export type Moshsol = {
     {
       "name": "creatorFeesCollected",
       "docs": [
-        "pump.fun / PumpSwap creator fees swept into the launch and split between the buyback pool",
-        "and vault SOL (or backers once the launch is wound down)."
+        "pump.fun / PumpSwap creator fees swept into the launch and split between the buyback pool,",
+        "vault SOL (or backers once the launch is wound down) and backers."
       ],
       "type": {
         "kind": "struct",
@@ -3756,14 +3872,6 @@ export type Moshsol = {
             "type": "u64"
           },
           {
-            "name": "buybackSol",
-            "docs": [
-              "SOL from agent sells not yet used for buy-backs. Buy-backs above average cost may only",
-              "spend this budget, and only below the average agent sell price."
-            ],
-            "type": "u64"
-          },
-          {
             "name": "volumeSol",
             "type": "u64"
           },
@@ -3849,6 +3957,35 @@ export type Moshsol = {
           {
             "name": "uri",
             "type": "string"
+          },
+          {
+            "name": "initialVaultSol",
+            "docs": [
+              "SOL the vault started with at launch: bundle + reserve. The payback target is a",
+              "multiple of it."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "backersRepaid",
+            "docs": [
+              "Principal repaid to backers so far (`payout_backers`, kind 0)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "backerPayouts",
+            "docs": [
+              "Dividends paid to backers so far (`payout_backers`, kind 1)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "lastPayoutTs",
+            "docs": [
+              "Last payout (or launch) time; the next payout waits `payout_interval_secs` after it."
+            ],
+            "type": "i64"
           }
         ]
       }
@@ -4025,10 +4162,39 @@ export type Moshsol = {
           {
             "name": "burnShareBps",
             "docs": [
-              "Share of creator fees and agent profit routed to the buyback-and-burn pool (pump",
-              "launches; 0 on launches created before it existed)."
+              "Share of creator fees routed to the buyback-and-burn pool (pump launches)."
             ],
             "type": "u16"
+          },
+          {
+            "name": "creatorFeeVaultBps",
+            "docs": [
+              "Share of creator fees that becomes vault SOL; the remainder goes to backers."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "payoutMultBps",
+            "docs": [
+              "Backer payback terms (see `PlatformParams`)."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "payoutShareBps",
+            "type": "u16"
+          },
+          {
+            "name": "payoutIntervalSecs",
+            "type": "u32"
+          },
+          {
+            "name": "deadHoldersBps",
+            "type": "u16"
+          },
+          {
+            "name": "minVaultSol",
+            "type": "u64"
           }
         ]
       }
@@ -4241,7 +4407,8 @@ export type Moshsol = {
           {
             "name": "agentsPaused",
             "docs": [
-              "Blocks agent trades (circuit breaker)."
+              "Blocks everything the agent authority cranks: agent trades, `payout_backers`, `buyback_burn`",
+              "(circuit breaker)."
             ],
             "type": "bool"
           },
@@ -4271,8 +4438,7 @@ export type Moshsol = {
           {
             "name": "burnShareBps",
             "docs": [
-              "Share of a pump launch's creator fees and of the agent's realized profit that goes to",
-              "the Holdfast buyback-and-burn pool; the rest goes to vault SOL / backers."
+              "Share of a pump launch's creator fees that goes to the Holdfast buyback-and-burn pool."
             ],
             "type": "u16"
           },
@@ -4283,6 +4449,50 @@ export type Moshsol = {
               "crank refuses and the pools keep accruing."
             ],
             "type": "pubkey"
+          },
+          {
+            "name": "creatorFeeVaultBps",
+            "docs": [
+              "Share of a pump launch's creator fees that becomes vault SOL (the agent's capital). The",
+              "rest after this and the burn share goes to backers."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "payoutMultBps",
+            "docs": [
+              "Backer payback: the vault must hold this multiple (bps) of its initial SOL in liquid SOL",
+              "before any payout."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "payoutShareBps",
+            "docs": [
+              "Share of liquid vault SOL paid as a dividend once the principal is repaid."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "payoutIntervalSecs",
+            "docs": [
+              "Minimum time between two backer payouts."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "deadHoldersBps",
+            "docs": [
+              "`wind_down`: a launch is dead when outside holders own at most this share of supply."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "minVaultSol",
+            "docs": [
+              "Liquid SOL the vault always keeps (fees, rent): agent buys and payouts never go below it."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -4431,39 +4641,6 @@ export type Moshsol = {
           },
           {
             "name": "vaultTokens",
-            "type": "u64"
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "vaultProfitShared",
-      "docs": [
-        "Realized profit of an agent sell (fill minus the average cost of the tokens sold). Holdfast",
-        "launches credit it in full to backers; pump launches send `burn_share` of it to the",
-        "buyback pool and the rest to backers."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "launch",
-            "type": "pubkey"
-          },
-          {
-            "name": "mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
-          },
-          {
-            "name": "toBuybackPool",
             "type": "u64"
           },
           {

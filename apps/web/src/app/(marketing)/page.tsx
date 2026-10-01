@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { prefetchHero } from "@/components/band/prefetch-hero";
 import { AgentLive } from "@/components/landing/agent-live";
 import { loadChainFacts } from "@/components/landing/chain-facts";
 import { Creators } from "@/components/landing/creators";
 import { FaqList, faqItems } from "@/components/landing/faq";
+import { prefetchLanding } from "@/components/landing/featured";
 import { FinalCta } from "@/components/landing/final-cta";
 import { Hero } from "@/components/landing/hero";
 import { HowSteps } from "@/components/landing/how-steps";
@@ -14,83 +14,58 @@ import { instructionRows } from "@/components/landing/instructions";
 import { launchSteps } from "@/components/landing/launch-steps";
 import { LiveLaunches } from "@/components/landing/live-launches";
 import { ProofTiles } from "@/components/landing/proof-tiles";
-import { Reveal } from "@/components/landing/reveal";
 import { RulesStrip } from "@/components/landing/rules-strip";
 import { Section, SectionHeader } from "@/components/landing/section";
-import { SimulatorPanel } from "@/components/landing/simulator-panel";
 import { Hydrate, serverQueryClient } from "@/lib/prefetch";
+import { pumpSplit } from "@/lib/pump-terms";
 import { platformQuery } from "@/lib/query-options";
 
-/** Landing (§4.2): hero with the live Band, three-step strip, launches row, rules, how it works, simulator, proof, splits, creators, agent, FAQ, CTA. */
+/** Landing (§4.2): hero, three-step strip, launches row, rules, how it works, proof, splits, creators, agent, FAQ, CTA. */
 export default async function LandingPage() {
   const client = serverQueryClient();
-  const { seed } = await prefetchHero(client);
+  const { seed } = await prefetchLanding(client);
   const facts = loadChainFacts(seed?.mint ?? null);
   const platform = client.getQueryData(platformQuery().queryKey) ?? null;
   const p = platform?.params ?? null;
+  const s = pumpSplit(p);
   const steps = launchSteps(p);
 
   return (
     <Hydrate client={client}>
-      <div className="relative">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 left-1/2 hidden w-full max-w-[1264px] -translate-x-1/2 border-x border-line xl:block"
-        />
+      <div>
         <Hero params={p} />
         <HowStrip params={p} />
 
         <Section label="On Holdfast now" frameClassName="pt-12 md:pb-24 md:pt-16">
-          <Reveal>
-            <LiveLaunches />
-          </Reveal>
+          <LiveLaunches />
         </Section>
 
         <RulesStrip />
 
         <Section id="how" frameClassName="md:pb-16">
-          <Reveal>
-            <SectionHeader title="How a launch works">
-              <p className="body-l text-ink-2">
-                Four beats, each one enforced by an instruction on-chain.{" "}
-                <Link href="/docs/how-it-works" className="text-ink underline decoration-ink-3/60 underline-offset-4 hover:decoration-ink">
-                  How it works ›
-                </Link>
-              </p>
-            </SectionHeader>
-          </Reveal>
-          <HowSteps steps={steps} />
-        </Section>
-
-        <Section id="simulator">
-          <Reveal>
-            <SectionHeader title="Buys the dip. Sells the rip. Never at a loss.">
-              <p className="body-l text-ink-2">
-                The vault agent trades each vault against its own curve, under limits frozen into the launch. Drag the price and see what
-                the program would let it do.
-              </p>
-              <Link href="/docs/agents" className="ui mt-4 inline-block text-ink transition-colors hover:text-accent-ink">
-                Read the agent rules →
+          <SectionHeader title="How a launch works">
+            <p className="body-l text-ink-2">
+              Four beats, each one enforced by an instruction on-chain.{" "}
+              <Link href="/docs/how-it-works" className="text-ink underline decoration-ink-3/60 underline-offset-4 hover:decoration-ink">
+                How it works ›
               </Link>
-            </SectionHeader>
-          </Reveal>
-          <div className="mt-12">
-            <SimulatorPanel />
-          </div>
+            </p>
+          </SectionHeader>
+          <HowSteps steps={steps} />
         </Section>
 
         <Section id="verify">
           <div className="grid gap-10 lg:grid-cols-12 lg:gap-6">
-            <Reveal className="self-start lg:sticky lg:top-[120px] lg:col-span-5">
+            <div className="self-start lg:sticky lg:top-[120px] lg:col-span-5">
               <h2 className="display-l text-ink">Rules you can check, not promises.</h2>
               <p className="body-l mt-6 max-w-[30em] text-ink-2">
                 Every instruction the program exposes, read from its IDL — including{" "}
-                <span className="mono text-ink">admin_withdraw_vault</span>, which lets the platform admin (a multisig on mainnet)
+                <span className="mono text-ink">admin_withdraw_vault</span>, which lets the platform admin (a Squads multisig on mainnet)
                 withdraw a vault. Every withdrawal is on-chain and shown on the launch page.
               </p>
-            </Reveal>
+            </div>
             <div className="lg:col-span-7">
-              <InstructionList rows={instructionRows()} />
+              <InstructionList rows={instructionRows(s)} />
             </div>
           </div>
           <div className="mt-12">
@@ -99,14 +74,13 @@ export default async function LandingPage() {
         </Section>
 
         <Section id="fees">
-          <Reveal>
-            <SectionHeader title="Where the money goes">
-              <p className="body-l text-ink-2">
-                Every launch freezes its split at creation. Creators take no cut of fees; backers take most of the vault agent&rsquo;s
-                profit; the rest buys and burns the Holdfast token.
-              </p>
-            </SectionHeader>
-          </Reveal>
+          <SectionHeader title="Where the money goes">
+            <p className="body-l text-ink-2">
+              Every launch freezes its split at creation. Creators take no cut of fees. pump.fun&rsquo;s creator fee goes {s.vaultPct}% to the
+              vault, {s.burnPct}% to buying and burning the Holdfast token and {s.backerPct}% to backers; what the vault agent sells stays in
+              the vault.
+            </p>
+          </SectionHeader>
           <div className="mt-12">
             <MoneyTrio params={p} />
           </div>
@@ -117,11 +91,9 @@ export default async function LandingPage() {
         </Section>
 
         <Section id="agent">
-          <Reveal>
-            <SectionHeader title="The agent, live">
-              <p className="body-l text-ink-2">One signer, rate-limited on-chain, reporting every decision in plain words.</p>
-            </SectionHeader>
-          </Reveal>
+          <SectionHeader title="The agent, live">
+            <p className="body-l text-ink-2">One signer, rate-limited on-chain, reporting every decision in plain words.</p>
+          </SectionHeader>
           <div className="mt-12">
             <AgentLive />
           </div>

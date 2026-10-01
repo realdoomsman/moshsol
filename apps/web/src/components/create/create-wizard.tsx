@@ -211,6 +211,11 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
       return;
     }
     const d = v.parsed;
+    // Pump launches: the one-time create key seeds the launch PDA (the token is created on pump.fun
+    // at launch). Holdfast launches: the fresh mint keypair seeds it. Generated first so the metadata
+    // can link to the launch page.
+    const seed = Keypair.generate();
+    const launchAddress = launchPda(seed.publicKey).toBase58();
     setUploading(true);
     let uri: string;
     try {
@@ -218,10 +223,10 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
         image: d.image,
         name: d.name,
         symbol: d.symbol,
+        launch: launchAddress,
         description: d.description || undefined,
         twitter: d.twitter,
         telegram: d.telegram,
-        website: d.website,
         whitelist: d.whitelist?.map((k) => k.toBase58()),
       }));
     } catch (e) {
@@ -235,9 +240,6 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
       return;
     }
 
-    // Pump launches: the one-time create key seeds the launch PDA (the token is created on pump.fun
-    // at launch). Holdfast launches: the fresh mint keypair seeds it.
-    const seed = Keypair.generate();
     const signature = await tx.run({
       label: `Create $${d.symbol}`,
       successMessage: `$${d.symbol} raise is open`,
@@ -276,7 +278,7 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
     }
     setAutosave(false);
     clearDraft();
-    router.replace(`/create?launched=${(params?.holdfastCurveEnabled ? seed.publicKey : launchPda(seed.publicKey)).toBase58()}&tx=${signature}`);
+    router.replace(`/create?launched=${params?.holdfastCurveEnabled ? seed.publicKey.toBase58() : launchAddress}&tx=${signature}`);
   };
 
   const summaries = [

@@ -11,10 +11,11 @@ import type { MarketState } from "./strategy";
  * live agent cannot.
  */
 
-/** Flow horizons (s): the latest minute, the short window the gates look at, the long baseline window. */
+/** Flow horizons (s): the latest minute, the short window the gates look at, the long baseline window, the day the support mode looks at. */
 export const FLOW_RECENT_SECS = 60;
 export const FLOW_SHORT_SECS = 180;
 export const FLOW_LONG_SECS = 1_800;
+export const FLOW_DAY_SECS = 86_400;
 /** Minute volumes needed before the long window's median is used as the volume baseline. */
 const MIN_BASELINE_MINUTES = 5;
 /** Volume ratio reported when the baseline is 0 and there is volume now. */
@@ -49,6 +50,15 @@ export interface FlowFeatures {
   vwapDevBps: number;
   /** Seconds since the last on-chain trade of any side. */
   sinceTradeSecs: number;
+  /** Seconds since the agent's own last fill as seen through the `agent_*` counters; Infinity before the window saw one. */
+  sinceAgentTradeSecs: number;
+  /**
+   * Activity over the last 24 h, SOL: per interval the larger of the public gross volume and the absolute net flow
+   * (on a pump launch public volume never reaches the Launch counters, so the price-implied net flow is the lower bound).
+   */
+  volume24hSol: number;
+  /** Spot vs the highest spot of the last 24 h (0 = at the high, 0.5 = halved). */
+  drawdown24h: number;
 }
 
 /** Features of an empty window: no gate fires, no margin moves. */
@@ -63,6 +73,9 @@ export const NEUTRAL_FLOW: FlowFeatures = {
   volumeRatioRecent: 1,
   vwapDevBps: 0,
   sinceTradeSecs: 0,
+  sinceAgentTradeSecs: Infinity,
+  volume24hSol: 0,
+  drawdown24h: 0,
 };
 
 interface Counters {
@@ -87,6 +100,13 @@ function median(xs: number[]): number {
 export class FlowWindow {
   private last: { t: number; c: Counters; price: number } | null = null;
   private readonly samples: FlowSample[] = [];
+  /** Per minute bucket over the last FLOW_DAY_SECS: activity (SOL) and the highest spot seen. */
+  private readonly daily = new Map<number, { activity: number; high: number }>();
+  private dailySum = 0;
+  /** Chain time of the first poll (the day window's age while younger than a day). */
+  private firstT: number | null = null;
+  /** Chain time of the poll that first saw the agent's latest fill; null until the window saw one. */
+  private agentTradeAt: number | null = null;
 
   observe(m: MarketState, now: bigint): FlowFeatures {
     const t = Number(now);
@@ -102,6 +122,10 @@ export class FlowWindow {
     };
     const last = this.last;
     if (last === null || t > last.t) {
+      this.firstT ??= t;
+      const minute = Math.floor(t / 60);
+      const bucket = this.daily.get(minute) ?? { activity: 0, high: 0 };
+      if (price > bucket.high) bucket.high = price;
       if (last !== null) {
         const spent = c.agentSolSpent - last.c.agentSolSpent;
         const received = c.agentSolReceived - last.c.agentSolReceived;
@@ -115,6 +139,17 @@ export class FlowWindow {
         let drop = 0;
         while (drop < this.samples.length && this.samples[drop]!.t <= cutoff) drop++;
         if (drop > 0) this.samples.splice(0, drop);
+        if (c.agentBuys !== last.c.agentBuys || c.agentSells !== last.c.agentSells) this.agentTradeAt = t;
+        const activity = Math.max(0, volume, Math.abs(net));
+        bucket.activity += activity;
+        this.dailySum += activity;
+      }
+      this.daily.set(minute, bucket);
+      const dayCutoff = minute - FLOW_DAY_SECS / 60;
+      for (const [k, v] of this.daily) {
+        if (k > dayCutoff) break;
+        this.daily.delete(k);
+        this.dailySum -= v.activity;
       }
       this.last = { t, c, price };
     }
@@ -123,7 +158,14 @@ export class FlowWindow {
 
   private features(t: number, price: number, sinceTradeSecs: number): FlowFeatures {
     const s = this.samples;
-    if (s.length === 0) return { ...NEUTRAL_FLOW, sinceTradeSecs };
+    const sinceAgentTradeSecs = this.agentTradeAt === null ? Infinity : t - this.agentTradeAt;
+    // Activity per 24 h; while the window is younger than a day the observed span (≥ 1 h) is scaled up to a day.
+    const daySpan = Math.min(FLOW_DAY_SECS, Math.max(3_600, t - (this.firstT ?? t)));
+    const volume24hSol = (Math.max(0, this.dailySum) * FLOW_DAY_SECS) / daySpan;
+    let high = price;
+    for (const b of this.daily.values()) if (b.high > high) high = b.high;
+    const drawdown24h = high > 0 ? 1 - price / high : 0;
+    if (s.length === 0) return { ...NEUTRAL_FLOW, sinceTradeSecs, sinceAgentTradeSecs, volume24hSol, drawdown24h };
     const span = t - (s[0]!.t - s[0]!.dt);
     let vShort = 0;
     let nShort = 0;
@@ -167,6 +209,9 @@ export class FlowWindow {
       volumeRatioRecent: ratio(vRecent, FLOW_RECENT_SECS),
       vwapDevBps: vLong > 0 ? (price / (pvLong / vLong) - 1) * 10_000 : 0,
       sinceTradeSecs,
+      sinceAgentTradeSecs,
+      volume24hSol,
+      drawdown24h,
     };
   }
 }
@@ -185,5 +230,8 @@ export function displayFlow(f: FlowFeatures): FlowFeatures {
     volumeRatioRecent: r(f.volumeRatioRecent, 2),
     vwapDevBps: r(f.vwapDevBps, 0),
     sinceTradeSecs: f.sinceTradeSecs,
+    sinceAgentTradeSecs: f.sinceAgentTradeSecs,
+    volume24hSol: r(f.volume24hSol, 4),
+    drawdown24h: r(f.drawdown24h, 3),
   };
 }

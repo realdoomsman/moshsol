@@ -33,8 +33,28 @@ export interface LaunchSummary extends LaunchJson {
   comments: number;
   /** The creator's profile name, if set. */
   creatorName: string | null;
-  /** SOL paid to backers out of the vault agent's realized profit (sum of `VaultProfitShared`). */
+  /** SOL credited to backers under the pre-October-2026 profit split (sum of historical `VaultProfitShared`); 0 on launches since. */
   profitSharedSol: number;
+  /** Backer payback (`payout_backers`): principal repaid so far and dividends paid on top, in SOL (snapshot `backersRepaid` / `backerPayouts`). */
+  backersRepaidSol: number;
+  backerPayoutsSol: number;
+  /** `initialVaultSol × terms.payoutMultBps / 10000` in SOL: the liquid vault SOL at which backers become payable. */
+  payoutTargetSol: number;
+  /** Liquid `vaultSol` ÷ `initialVaultSol` (0 before launch). */
+  payoutMultiple: number;
+  /** The launch's frozen payback / fee terms, repeated from `terms` for convenience. */
+  payoutShareBps: number;
+  payoutIntervalSecs: number;
+  creatorFeeVaultBps: number;
+  burnShareBps: number;
+  /** `10000 − creatorFeeVaultBps − burnShareBps`: the backers' share of pump.fun creator fees. */
+  backerCreatorFeeBps: number;
+  /** Lamports the vault always keeps (never paid out or spent on buys), from `terms.minVaultSol`. */
+  minVaultSol: string;
+  /** How `creatorFeesCollected` was split by `collect_pump_fees`, in SOL (vault / buyback-and-burn pool / backers). */
+  creatorFeeSplit: { vaultSol: number; burnSol: number; backersSol: number };
+  /** `BackersPaid` events indexed so far (`payout_backers`). */
+  payouts: { count: number; lastAt: number | null };
   /** Vault SOL / tokens (base units) the platform admin withdrew with `admin_withdraw_vault` (sum of `VaultWithdrawn`). */
   vaultWithdrawnSol: number;
   vaultWithdrawnTokens: string;
@@ -74,6 +94,7 @@ export const ACTIVITY_TYPES = [
   "backer_claim",
   "creator_claim",
   "profit_shared",
+  "backers_paid",
   "wound_down",
   "vault_withdrawn",
   "creator_fees_collected",
@@ -101,7 +122,7 @@ export interface ActivityEvent {
   isBuy?: boolean;
   solAmount?: string;
   tokenAmount?: string;
-  /** `graduated`: the PumpSwap pool; `buyback_burned`: the mint bought and burned. */
+  /** `graduated`: the PumpSwap pool; `buyback_burned`: the mint bought and burned; `backers_paid`: `principal` or `dividend`. */
   ref?: string;
 }
 

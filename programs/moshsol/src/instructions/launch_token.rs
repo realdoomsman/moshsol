@@ -67,6 +67,8 @@ pub fn launch(ctx: Context<LaunchToken>) -> Result<()> {
     launch.bundle_sol = spent;
     launch.bundle_tokens = tokens;
     launch.vault_cost_sol = spent;
+    launch.initial_vault_sol = net;
+    launch.last_payout_ts = now;
     launch.record_volume(spent);
 
     let price = launch.price_q64()?;

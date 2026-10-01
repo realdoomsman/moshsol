@@ -83,7 +83,7 @@ export function specKey(s: ScenarioSpec): string {
 }
 
 export function termsKey(t: SimTerms): string {
-  return `${t.venue}/${t.bandBps}/${t.maxImpactBps}/${t.buyBpsPerWindow}/${t.sellBpsPerWindow}/${t.windowSecs}/${t.emaPeriodSecs}/${t.tradeFeeBps}/${t.launchFeeBps}/${t.burnShareBps}`;
+  return `${t.venue}/${t.bandBps}/${t.maxImpactBps}/${t.buyBpsPerWindow}/${t.sellBpsPerWindow}/${t.windowSecs}/${t.emaPeriodSecs}/${t.tradeFeeBps}/${t.launchFeeBps}/${t.minVaultSol}`;
 }
 
 function variantKey(v: LaunchVariant | undefined): string {

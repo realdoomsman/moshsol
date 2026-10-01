@@ -32,8 +32,28 @@ export interface LaunchSummary extends LaunchJson {
   /** Visible comments. */
   comments: number;
   creatorName: string | null;
-  /** SOL credited to backers from the vault agent's realized profit. */
+  /** SOL credited to backers under the pre-October-2026 profit split (sum of historical `VaultProfitShared`); 0 on launches since. */
   profitSharedSol: number;
+  /** Backer payback (`payout_backers`): the principal repaid so far and the dividends paid on top, in SOL. */
+  backersRepaidSol: number;
+  backerPayoutsSol: number;
+  /** `initialVaultSol × payoutMultBps / 10000` in SOL: liquid vault SOL that makes backers payable. */
+  payoutTargetSol: number;
+  /** Liquid vault SOL ÷ initial vault SOL (0 before launch). */
+  payoutMultiple: number;
+  /** Frozen terms, repeated for convenience (same values as `terms`). */
+  payoutShareBps: number;
+  payoutIntervalSecs: number;
+  creatorFeeVaultBps: number;
+  burnShareBps: number;
+  /** 10000 − creatorFeeVaultBps − burnShareBps: the backers' share of pump.fun creator fees. */
+  backerCreatorFeeBps: number;
+  /** The lamports the vault always keeps (never paid out or spent); from `terms.minVaultSol`. */
+  minVaultSol: string;
+  /** How `creatorFeesCollected` was split by `collect_pump_fees`, in SOL. */
+  creatorFeeSplit: { vaultSol: number; burnSol: number; backersSol: number };
+  /** `payout_backers` events seen so far. */
+  payouts: { count: number; lastAt: number | null };
   /** Vault SOL / tokens (base units) withdrawn by the platform admin (`admin_withdraw_vault`). */
   vaultWithdrawnSol: number;
   vaultWithdrawnTokens: string;
@@ -177,6 +197,7 @@ export type ActivityType =
   | "backer_claim"
   | "creator_claim"
   | "profit_shared"
+  | "backers_paid"
   | "wound_down"
   | "vault_withdrawn"
   | "creator_fees_collected"
@@ -201,6 +222,8 @@ export interface ActivityEvent {
   isBuy?: boolean;
   solAmount?: string;
   tokenAmount?: string;
+  /** `backers_paid`: "principal" | "dividend"; `graduated`: the pool; `buyback_burned`: the token burned. */
+  ref?: string | null;
 }
 
 export interface PlatformStats {
@@ -214,9 +237,11 @@ export interface PlatformStats {
   totalRaisedSol: number;
   totalVolumeSol: number;
   volume24hSol: number;
-  /** Everything credited to backers: fee share + vault profit share + wind-down payouts. */
+  /** Everything credited to backers: fee share + backer payouts + wind-down payouts (+ the historical profit split). */
   backerFeesAccruedSol: number;
   profitSharedSol: number;
+  backersRepaidSol: number;
+  backerPayoutsSol: number;
   agentTrades: number;
   vaultSol: number;
   vaultTokensValueSol: number;
@@ -250,8 +275,18 @@ export interface PlatformInfo {
     emaPeriodSecs: number;
     /** `create_launch` (Holdfast curve) still open; false on mainnet: new launches are pump.fun tokens. */
     holdfastCurveEnabled: boolean;
-    /** Share of pump creator fees and agent profit routed to the buyback-and-burn pool. */
+    /** Share of pump.fun creator fees routed to the buyback-and-burn pool. */
     burnShareBps: number;
+    /** Share of pump.fun creator fees that become vault SOL; the rest after `burnShareBps` goes to backers. */
+    creatorFeeVaultBps: number;
+    /** Backer payback: vault SOL ≥ initial × `payoutMultBps`/10000 unlocks it; then `payoutShareBps` of the vault every `payoutIntervalSecs`. */
+    payoutMultBps: number;
+    payoutShareBps: number;
+    payoutIntervalSecs: number;
+    /** A launch is dead (wind-down allowed) when outside holders own ≤ this share of supply. */
+    deadHoldersBps: number;
+    /** Lamports the vault never pays out or spends on buys. */
+    minVaultSol: string;
     /** The Holdfast token `buyback_burn` buys; the default pubkey until set. */
     buybackMint: string;
     paused: boolean;
@@ -328,7 +363,7 @@ export interface AgentDecision {
  * (burned / sold).
  */
 export interface AgentCrank {
-  kind: "collect_fees" | "buyback_burn" | "graduate" | "wind_down";
+  kind: "collect_fees" | "buyback_burn" | "graduate" | "wind_down" | "payout";
   address: string;
   mint: string;
   venue: LaunchVenue;
@@ -338,6 +373,46 @@ export interface AgentCrank {
   error?: string;
   amount?: string;
   tokens?: string;
+}
+
+export type AgentActivityKind = "sell" | "buy" | "buyback" | "hold" | "payout" | "collect_fees" | "wind_down";
+
+/**
+ * One entry of the agent's per-launch decision log (`GET <agent>/launches/:id/activity`, newest first,
+ * last 200): trades, buy-backs, holds with their reason, cranks. `detail` carries the numbers the decision
+ * was made on (SOL / token UI units, prices as strings); `narrative` is the optional AI narration.
+ */
+export interface AgentActivityItem {
+  ts: number;
+  kind: AgentActivityKind;
+  reason: string;
+  detail: Record<string, number | string | boolean>;
+  sig?: string;
+  narrative?: string;
+}
+
+export interface AgentActivity {
+  items: AgentActivityItem[];
+}
+
+/** `GET <agent>/research`: what the agent's research loop learned, newest first (empty until the loop has run). */
+export interface AgentResearchItem {
+  ts: number;
+  /** ≤ 3 plain-English sentences (AI narration when configured, else derived from the numbers). */
+  summary: string;
+  /** Whether the proposed parameters were adopted (walk-forward beat the current ones, inside the hard caps). */
+  adopted: boolean;
+  proposal?: Record<string, number>;
+  current?: Record<string, number>;
+  metrics?: { walkForwardNew: number; walkForwardCurrent: number };
+}
+
+export interface AgentResearch {
+  items: AgentResearchItem[];
+  updatedAt: number | null;
+  /** A research run is in progress / when the next one is scheduled (unix seconds). */
+  running?: boolean;
+  nextAt?: number | null;
 }
 
 export interface AgentStatus {

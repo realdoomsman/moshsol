@@ -91,6 +91,8 @@ export function registerApi(
   app: FastifyInstance,
   deps: RouteDeps & { hub: Hub; holders: Holders },
   opts: Pick<ServerOptions, "filesDir" | "publicUrl"> & {
+    /** The site the metadata `website` of new launches points at (`<siteUrl>/launch/<address>`). */
+    siteUrl: string;
     adminToken: string | null;
     commentLimitPerMin: number;
     socialIpLimitPerMin: number;

@@ -2,6 +2,8 @@ import { AGENT_URL, INDEXER_URL } from "./env";
 import type {
   ActivityEvent,
   ActivityType,
+  AgentActivity,
+  AgentResearch,
   AgentStatus,
   AgentsOverview,
   BackerRow,
@@ -62,10 +64,11 @@ export interface UploadInput {
   image: File;
   name: string;
   symbol: string;
+  /** The launch address the metadata is for: the indexer sets the metadata's website to its launch page. */
+  launch: string;
   description?: string;
   twitter?: string;
   telegram?: string;
-  website?: string;
   whitelist?: string[];
 }
 
@@ -162,12 +165,16 @@ export const api = {
   },
   agents: () => request<AgentsOverview>(INDEXER_URL, "/api/agents"),
   agentStatus: () => request<AgentStatus>(AGENT_URL, "/status"),
+  /** The agent's decision log for one launch (keyed by `launchId`: address or mint). */
+  agentActivity: (id: string) => request<AgentActivity>(AGENT_URL, `/launches/${id}/activity`),
+  agentResearch: () => request<AgentResearch>(AGENT_URL, "/research"),
   upload: (input: UploadInput) => {
     const form = new FormData();
     form.set("image", input.image);
     form.set("name", input.name);
     form.set("symbol", input.symbol);
-    for (const key of ["description", "twitter", "telegram", "website"] as const) {
+    form.set("launch", input.launch);
+    for (const key of ["description", "twitter", "telegram"] as const) {
       const v = input[key];
       if (v) form.set(key, v);
     }
