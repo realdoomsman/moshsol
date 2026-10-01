@@ -24,6 +24,8 @@ export interface PricePath {
   kl: number[];
   /** Start (ms) of every minute that had a candle: public trades happen only there. */
   minutes: number[];
+  /** Per candle minute: USD volume over the first open price (whole tokens traded at the first price). */
+  volume: number[];
   durationMs: number;
   minLog: number;
 }
@@ -42,8 +44,10 @@ export function pathFromCandles(candles: Candle[]): PricePath {
   const kt: number[] = [];
   const kl: number[] = [];
   const minutes: number[] = [];
+  const volume: number[] = [];
   const t0 = candles[0]![0];
-  const ref = Math.log(candles[0]![1]);
+  const first = candles[0]![1];
+  const ref = Math.log(first);
   let minLog = 0;
   const knot = (t: number, price: number) => {
     const l = Math.log(price) - ref;
@@ -52,12 +56,13 @@ export function pathFromCandles(candles: Candle[]): PricePath {
     if (l < minLog) minLog = l;
   };
   for (let i = 0; i < candles.length; i++) {
-    const [t, o, hRaw, lRaw, c] = candles[i]!;
+    const [t, o, hRaw, lRaw, c, volumeUsd] = candles[i]!;
     const h = Math.min(hRaw, Math.max(o, c) * WICK_MAX);
     const l = Math.max(lRaw, Math.min(o, c) / WICK_MAX);
     const start = (t - t0) * 1_000;
     const up = c >= o;
     minutes.push(start);
+    volume.push(volumeUsd > 0 ? volumeUsd / first : 0);
     knot(start, o);
     knot(start + 20_000, up ? l : h);
     knot(start + 40_000, up ? h : l);
@@ -66,7 +71,7 @@ export function pathFromCandles(candles: Candle[]): PricePath {
     if (next && (next[0] - t0) * 1_000 > start + MINUTE_MS) knot((next[0] - t0) * 1_000 - 1, c);
   }
   const last = candles[candles.length - 1]!;
-  return { kt, kl, minutes, durationMs: (last[0] - t0) * 1_000 + MINUTE_MS, minLog };
+  return { kt, kl, minutes, volume, durationMs: (last[0] - t0) * 1_000 + MINUTE_MS, minLog };
 }
 
 /** Moving read cursor over a path (queries arrive in increasing time). */
@@ -131,6 +136,11 @@ class MinuteClock {
     this.due = at;
   }
 
+  /** Index of the candle minute the due trade belongs to. */
+  minuteIndex(): number {
+    return this.minute;
+  }
+
   advance(t: number): void {
     this.last = t;
     if (++this.k >= TRADES_PER_MIN) {
@@ -146,17 +156,24 @@ export class FairValueFlow implements PublicFlow {
   private readonly clock: MinuteClock;
   private lastTarget: number;
   private lastT = 0;
+  /** Lamports of volume per trade slot in each candle minute (the candle's volume on this curve, see `volumeLamports`). */
+  private readonly slotVolume: number[];
 
-  /** `logOffset` maps the path's log(relative price) to log(curve spot); `halfLifeMs` = 0 resets every deviation at once. */
+  /**
+   * `logOffset` maps the path's log(relative price) to log(curve spot); `halfLifeMs` = 0 resets every deviation at
+   * once; `volumeScale` multiplies the candle volume the flow window sees (robustness runs).
+   */
   constructor(
     path: PricePath,
     private readonly logOffset: number,
     private readonly halfLifeMs: number,
     rng: Rng,
+    volumeScale = 1,
   ) {
     this.cursor = new PathCursor(path);
     this.clock = new MinuteClock(path.minutes, rng);
     this.lastTarget = logOffset + path.kl[0]!;
+    this.slotVolume = path.volume.map((v) => (volumeLamports(v, logOffset) * volumeScale) / TRADES_PER_MIN);
   }
 
   next(): number {
@@ -171,11 +188,23 @@ export class FairValueFlow implements PublicFlow {
     const target = this.logOffset + this.cursor.at(m.t);
     const deviation = Math.log(m.spot()) - this.lastTarget;
     const keep = this.halfLifeMs > 0 ? 0.5 ** ((m.t - this.lastT) / this.halfLifeMs) : 0;
-    m.moveTo(target + deviation * keep);
+    const gross = m.moveTo(target + deviation * keep);
+    // The candle's volume beyond what the move took is two-sided: booked as churn, the price path stays the path.
+    m.churn(this.slotVolume[this.clock.minuteIndex()]! - gross);
     this.lastTarget = target;
     this.lastT = m.t;
     this.clock.advance(m.t);
   }
+}
+
+/**
+ * Candle volume on our curve, in lamports: `volume` is USD volume / first USD price (whole tokens at the
+ * first price); the price mapping is multiplicative (spot_t / P_t = e^logOffset / P_0 for every t), so the
+ * SOL value of those tokens on the curve is volume × 10^6 base units × e^logOffset lamports per base unit.
+ * This is the market-cap-consistent scaling; it says nothing about how deep the real pool was.
+ */
+export function volumeLamports(volume: number, logOffset: number): number {
+  return volume * 1e6 * Math.exp(logOffset);
 }
 
 export class ReplayFlow implements PublicFlow {
@@ -196,9 +225,11 @@ export class ReplayFlow implements PublicFlow {
   }
 
   trade(m: Market): void {
-    const amount = this.trades.amount[this.i++]!;
+    const i = this.i++;
+    const amount = this.trades.amount[i]!;
     if (amount > 0) m.buy(BigInt(amount));
-    else m.sell(BigInt(-amount));
+    else if (amount < 0) m.sell(BigInt(-amount));
+    m.churn(this.trades.churn[i]!);
     this.last = m.t;
     const next = this.trades.t[this.i];
     this.due = next === undefined ? Infinity : Math.max(next, this.last + 1);

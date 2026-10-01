@@ -1,6 +1,6 @@
 import { DEFAULT_PARAMS } from "../src/strategy";
-import type { Evaluator } from "./evaluate";
-import { OBJECTIVE, endSol, mean, median, modelScores, runObjective, value } from "./metrics";
+import { modelStats, type Evaluator, type ModelStats } from "./evaluate";
+import { endSol, median, value } from "./metrics";
 import { SearchSpace, cmaes, randomSearch, type Bounds } from "./optimize";
 import { PRODUCTION_TERMS, type SimTerms } from "./program";
 import type { ScenarioSpec } from "./scenarios";
@@ -99,33 +99,9 @@ export function roundTerms(p: TermsPoint): TermsPoint {
 
 const sameTerms = (a: TermsPoint, b: TermsPoint) => TERMS_KEYS.every((k) => a[k] === b[k]);
 
-export interface ModelStats {
-  n: number;
-  /** Vault value vs no agent under the same terms, % at the 24 h VWAP mark: median, mean, mean of the worst 10% of runs. */
-  dvMedian: number;
-  dvMean: number;
-  dvTail: number;
-  /** Max-drawdown cut vs no agent (pp, + = shallower), σ of minute returns vs no agent, minutes inside the band (%) and gain over no agent (pp). */
-  ddCut: number;
-  volRatio: number;
-  inBand: number;
-  inBandGain: number;
-  /** `rug` pools: vault SOL lost (spent minus what came back to the vault or was paid to backers as profit) as % of the starting vault SOL, mean and mean of the worst 10%; NaN without rug runs. */
-  rugLoss: number;
-  rugTail: number;
-  /** Per-model objective S_m (metrics.ts `modelScores`). */
-  s: number;
-  plannedRejects: number;
-}
-
 export interface Measured {
   terms: TermsPoint;
   byModel: Record<string, ModelStats>;
-}
-
-/** Mean of the lowest `OBJECTIVE.tailShare` of `xs`. */
-function tail(xs: number[]): number {
-  return mean([...xs].sort((a, b) => a - b).slice(0, Math.max(1, Math.round(xs.length * OBJECTIVE.tailShare))));
 }
 
 /** `specs` with every launch under `terms` (and `reserveBps` instead of the drawn reserve share). */
@@ -138,29 +114,7 @@ export function withLaunch(specs: ScenarioSpec[], terms: TermsPoint, reserveBps?
 export async function measure(ev: Evaluator, specs: ScenarioSpec[], terms: TermsPoint, reserveBps?: bigint): Promise<{ measured: Measured; runs: RunResult[] }> {
   const variant = withLaunch(specs, terms, reserveBps);
   const runs = await ev.againstNone(variant, { kind: "tuned", params: DEFAULT_PARAMS });
-  const rows = runs.map((r, i) => ({ r, base: ev.base(variant[i]!), c: ev.compareTo(variant[i]!, r) }));
-  const s = modelScores(rows.map(({ c }) => ({ model: c.model, tag: c.tag, j: runObjective(c) })));
-  const byModel: Record<string, ModelStats> = {};
-  for (const model of Object.keys(s)) {
-    const rs = rows.filter(({ r }) => r.model === model);
-    const dv = rs.map(({ c }) => c.dvVwap);
-    const rugLoss = rs.filter(({ r }) => r.tag === "rug").map(({ r }) => (r.sol0 > 0 ? (Math.max(0, r.sol0 - endSol(r)) / r.sol0) * 100 : 0));
-    byModel[model] = {
-      n: rs.length,
-      dvMedian: median(dv),
-      dvMean: mean(dv),
-      dvTail: tail(dv),
-      ddCut: mean(rs.map(({ c }) => c.ddCut)),
-      volRatio: mean(rs.map(({ c }) => c.volRatio)),
-      inBand: mean(rs.map(({ c }) => c.inBand)),
-      inBandGain: mean(rs.map(({ c, base }) => c.inBand - base.inBand * 100)),
-      rugLoss: rugLoss.length > 0 ? mean(rugLoss) : NaN,
-      rugTail: rugLoss.length > 0 ? -tail(rugLoss.map((x) => -x)) : NaN,
-      s: s[model]!,
-      plannedRejects: rs.reduce((sum, { c }) => sum + c.plannedRejects, 0),
-    };
-  }
-  return { measured: { terms, byModel }, runs };
+  return { measured: { terms, byModel: modelStats(ev, variant, runs) }, runs };
 }
 
 /** `ModelStats` fields at their worst flow model, plus planned rejections summed over models. */

@@ -33,7 +33,8 @@ export interface CreateDraft {
   customUnit: DurationUnit;
   bundlePct: number;
   reservePct: number;
-  whitelistOn: boolean;
+  /** Who can deposit: anyone, a merkle whitelist, or only the creator ("fund it yourself"). */
+  access: "open" | "whitelist" | "self";
   whitelistText: string;
 }
 
@@ -53,7 +54,7 @@ export const INITIAL_DRAFT: CreateDraft = {
   customUnit: "m",
   bundlePct: 15,
   reservePct: 30,
-  whitelistOn: false,
+  access: "open",
   whitelistText: "",
 };
 
@@ -189,6 +190,8 @@ export function parsePrefill(q: Record<string, string | string[] | undefined>): 
 }
 
 export interface DraftLimits {
+  /** Connected wallet; a self-funded raise whitelists exactly this key. */
+  creator?: PublicKey | null;
   minRaiseLamports: bigint;
   maxBundleSupplyBps: number;
   /** Platform beta cap on the max raise; 0n (or omitted) = no cap. */
@@ -244,7 +247,7 @@ export function validateDraft(d: CreateDraft, p: DraftLimits): Validation {
   else if (betaRaise > 0n && raiseMax > betaRaise) errors.raiseMax = `At most ${Number(betaRaise) / 1e9} SOL (beta cap)`;
 
   let maxPerWallet = 0n;
-  if (d.perWallet.trim()) {
+  if (d.access !== "self" && d.perWallet.trim()) {
     const v = parseSol(d.perWallet);
     if (v === null || v === 0n) errors.perWallet = "Enter an amount or leave empty for no cap";
     else if (betaWallet > 0n && v > betaWallet) errors.perWallet = `At most ${Number(betaWallet) / 1e9} SOL (beta cap)`;
@@ -266,7 +269,10 @@ export function validateDraft(d: CreateDraft, p: DraftLimits): Validation {
   const whitelist: PublicKey[] = [];
   const badWhitelistLines: number[] = [];
   let whitelistDuplicates = 0;
-  if (d.whitelistOn) {
+  if (d.access === "self") {
+    if (p.creator) whitelist.push(p.creator);
+    else errors.whitelist = "Connect the wallet that will fund the raise";
+  } else if (d.access === "whitelist") {
     const seen = new Set<string>();
     d.whitelistText.split(/\r?\n/).forEach((line, i) => {
       const v = line.trim().replace(/,$/, "");
@@ -314,7 +320,7 @@ export function validateDraft(d: CreateDraft, p: DraftLimits): Validation {
           durationSecs: durationSecs!,
           bundleSupplyBps,
           reserveBps,
-          whitelist: d.whitelistOn ? whitelist : null,
+          whitelist: d.access === "open" ? null : whitelist,
         }
       : null,
   };

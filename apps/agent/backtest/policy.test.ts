@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { bps } from "@holdfast/sdk";
+import { NEUTRAL_FLOW, type FlowFeatures } from "../src/flow";
 import { DEFAULT_PARAMS, PARAM_KEYS, PARAM_SPACE, evaluate, type Sizing, type StrategyParams } from "../src/strategy";
 import { PRODUCTION_TERMS, agentBuy, agentSell, launch, publicTokens, type Chain } from "./program";
 import { Market, T0, mulberry32, type Rng } from "./sim";
@@ -16,6 +17,24 @@ function randomParams(r: Rng): StrategyParams {
 
 const gauss = (r: Rng) => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
 const randomSizing = (r: Rng): Sizing => ({ minTradeLamports: BigInt(Math.floor(10 ** (5 + r() * 3))), slippageBps: Math.floor(r() * 300) });
+
+/** Flow features across their whole range (gates, margin cuts and the early-cap relief all fire somewhere). */
+function randomFlow(r: Rng): FlowFeatures {
+  if (r() < 0.2) return NEUTRAL_FLOW;
+  const volumeSol = 10 ** (r() * 3 - 2);
+  return {
+    spanSecs: Math.floor(r() * 1_800),
+    volumeSol,
+    netSol: volumeSol * (2 * r() - 1),
+    trades: Math.floor(r() * 50),
+    imbalance: 2 * r() - 1,
+    imbalanceRecent: 2 * r() - 1,
+    volumeRatio: 10 ** (r() * 2 - 1),
+    volumeRatioRecent: 10 ** (r() * 2 - 1),
+    vwapDevBps: 3_000 * (r() - 0.5),
+    sinceTradeSecs: Math.floor(r() * 600),
+  };
+}
 
 // Random walks through launch states. Public flow keeps pushing spot around the thresholds the
 // program checks (vault average cost, average agent sell price × (1 − band), the EMA band edges),
@@ -56,7 +75,7 @@ test("policy never plans a trade the program rejects along launch histories", ()
       market.t += 1_000;
       const now = market.now();
       for (let k = 0; k < 3; k++) {
-        const plan = evaluate(chain, randomSizing(r), now, k === 0 ? DEFAULT_PARAMS : randomParams(r)).plan;
+        const plan = evaluate(chain, randomSizing(r), now, k === 0 ? DEFAULT_PARAMS : randomParams(r), randomFlow(r)).plan;
         if (plan.action === "hold") continue;
         plans++;
         const probe = { ...chain };
@@ -123,8 +142,9 @@ test("policy never plans a trade the program rejects on arbitrary states", () =>
       windowTokensSold: (sellCap * BigInt(Math.floor(r() * 1_000))) / 1_000n,
       emaPrice: BigInt(Math.floor(spot * 2 ** 64 * Math.exp(0.06 * gauss(r)))),
       lastTradeTs: now - BigInt(Math.floor(r() * 600)),
+      volumeSol: lam(10 ** (r() * 4)),
     };
-    const plan = evaluate(chain, randomSizing(r), now, i % 2 === 0 ? DEFAULT_PARAMS : randomParams(r)).plan;
+    const plan = evaluate(chain, randomSizing(r), now, i % 2 === 0 ? DEFAULT_PARAMS : randomParams(r), randomFlow(r)).plan;
     if (plan.action === "hold") continue;
     const res = plan.action === "buy" ? agentBuy(chain, plan.amount, plan.minOut, now, 1) : agentSell(chain, plan.amount, plan.minOut, now, 1);
     assert.ok(res.ok, `state ${i}: ${plan.action} ${plan.amount} rejected with ${res.ok ? "" : res.error}: ${plan.reason}`);

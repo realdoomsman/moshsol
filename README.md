@@ -70,7 +70,7 @@ Guarantees enforced in code (see `programs/moshsol/src/constants.rs` for hard ca
 - **Refunds.** Raise below minimum at deadline, or cancelled by the creator → every backer can refund 100% (backer account closed, rent returned). Pausing never blocks refunds, trading or claims.
 - **Accounting.** All launch SOL sits on the launch PDA; `lamports ≥ rent + raise escrow` (raising/refunding) or `rent + curve + vault + unclaimed backer/creator/platform credit` (live and wound down; a wound-down launch has curve = vault = 0 because `wind_down` moved both into backer credit; `admin_withdraw_vault` lowers the vault term), with equality unless someone donates lamports/tokens directly (donations are never counted and stay stuck). Tests assert equality after every step.
 - **Fees.** 1% on public trades, rounded up so no trade is fee-free: 50% backers (pro-rata accumulator, claim any time), 30% creator, 20% platform. The split can never drop below 25% for backers or 10% for creators. On top, 100% of the vault agent's realized sell profit goes to backers through the same accumulator. 1% launch fee on the raise. Flat create fee (anti-spam). All bounded by hard caps.
-- **Beta caps.** `max_raise_lamports` bounds a new launch's `raise_max` and `max_wallet_deposit_lamports` bounds any one wallet's deposit on top of the creator's own cap (0 = none; set by `MAX_RAISE_SOL` / `MAX_WALLET_SOL` in setup).
+- **Beta caps.** `max_raise_lamports` bounds a new launch's `raise_max` and `max_wallet_deposit_lamports` bounds any one wallet's deposit on top of the creator's own cap (0 = none; set by `MAX_RAISE_SOL` / `MAX_WALLET_SOL` in setup). The creator is exempt from the per-wallet cap on their own launch, so a "Fund it yourself" raise (whitelist = creator only, wizard option) can be filled by the dev alone.
 - **Deployment.** Only the program's upgrade authority can run `initialize_platform` (no front-running after deploy).
 
 ## Vault agent
@@ -92,6 +92,28 @@ Guarantees enforced in code (see `programs/moshsol/src/constants.rs` for hard ca
    target in the spirit of [Hummingbot's inventory skew](https://hummingbot.org/strategies/v1-strategies/pure-market-making/)
    and [Avellaneda–Stoikov](https://www.math.nyu.edu/~avellane/HighFrequencyTrading.pdf)): a runner can't drain
    the bag window after window, while buy-backs keep round-tripping below it.
+4. **Flow window** (`src/flow.ts`). Each poll differences the Launch counters (`volume_sol`, `trade_count`,
+   `real_sol`, `agent_*`): public volume, trade count and net SOL flow (buys − sells into the curve, the agent's
+   own fills removed) of the interval. From a 30 min window it derives the order-flow imbalance Σnet/Σvolume
+   over the last 3 min and the last minute ([Cont–Kukanov–Stoikov](https://academic.oup.com/jfec/article-abstract/12/1/47/816163);
+   on a constant-product curve the net flow is what moved the price, so this is a deterministic
+   [bulk volume classification](https://www.stern.nyu.edu/sites/default/files/assets/documents/con_035928.pdf)),
+   the volume rate over the window's median minute volume (volume climax / exhaustion in the
+   [Wyckoff](https://trendspider.com/learning-center/chart-patterns-wyckoff-accumulation/) sense), spot vs the
+   30 min [VWAP](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-overlays/anchored-vwap)
+   and seconds since the last trade. Every `/status` decision carries them (`flow`). The flow knobs built on them
+   (sell earlier into net buying, hold rally sells on thin volume, wait out a live sell-off before buying, buy
+   earlier after a selling climax that is easing, a VWAP anchor) are tuned and kept only if they beat the
+   previous policy out of sample — see the results below.
+5. **Sell guardrail** (by state, not age; a risk constraint that ships regardless of the backtest). Per agent
+   window, rally sells may take `baseSellSol` SOL of proceeds (valued at spot) while the launch trades near its
+   launch price with little volume, whatever the on-chain window cap allows. The allowance ramps geometrically
+   to the on-chain cap as *both* the market-cap multiple (spot / bundle price, log scale, full at `fullMcapMult`)
+   and the traded volume (`volume_sol`, log scale, full at `fullVolumeSol`) grow (`min(both)^rampShape`); a rally
+   with net buying on at least `strongVolumeRatio` × the median minute volume may sell `strongFlowMult` × that
+   (sell into bullish volume, never size up into a thin uptick). Buy-backs on dips are untouched — they are the
+   recovery path. The reason is visible in `/status`, e.g. `mcap 1.3× launch, 4.2 SOL traded: sell allowance
+   0.6 SOL this window`.
 
 Also built and tested in the backtest, and dropped because switching them off did not hurt (mostly helped) on
 the validation split: volatility-scaled entry depth ([Bollinger](https://en.wikipedia.org/wiki/Bollinger_Bands)-style),
@@ -99,17 +121,19 @@ a depth ladder (RBS cushion → wall), window pacing (TWAP, the risk-neutral
 [Almgren–Chriss](https://www.smallake.kr/wp-content/uploads/2016/03/optliq.pdf) schedule), falling-knife and pump
 filters on the agent's own price samples, and an inventory skew of the entry depth.
 
-The parameters (`StrategyParams`) are tuned in a backtest, not by hand; `STRATEGY_PARAMS` overrides any of them.
+The parameters (`StrategyParams`) are tuned in a backtest, not by hand; `STRATEGY_PARAMS` overrides any of them
+inside `PARAM_SPACE` (the guardrail cannot be switched off that way).
 
 ### Backtest (`apps/agent/backtest`)
 
 ```bash
 pnpm --filter @holdfast/agent backtest:fetch     # 1-minute candles of real pump.fun pools (GeckoTerminal, cached)
 pnpm --filter @holdfast/agent backtest train     # random search + CMA-ES on TRAIN, TRAIN/TEST tables
-pnpm --filter @holdfast/agent backtest eval      # no agent / v1 / tuned (defaults or --params) on TRAIN and TEST
+pnpm --filter @holdfast/agent backtest eval      # no agent / v1 / current / tuned (defaults or --params) on TRAIN and TEST
 pnpm --filter @holdfast/agent backtest walkforward   # tune on each pool's first 24 h, test on hours 24–72
 pnpm --filter @holdfast/agent backtest ablate    # tune on a FIT part of TRAIN, switch features off on VALIDATION
-pnpm --filter @holdfast/agent backtest robust    # TEST under other poll/latency/fair-value assumptions
+pnpm --filter @holdfast/agent backtest robust    # TEST under other poll/latency/fair-value/candle-volume assumptions
+pnpm --filter @holdfast/agent backtest flow      # pre-flow policy vs --params on TRAIN, TEST, walk-forward TEST; guardrail level sweep
 pnpm --filter @holdfast/agent backtest terms     # launch terms (policy fixed): Pareto view on TRAIN + walk-forward, reserve sweep
 pnpm --filter @holdfast/agent test               # property + regression tests
 ```
@@ -125,6 +149,14 @@ pnpm --filter @holdfast/agent test               # property + regression tests
   (12 per candle minute) pulls spot to the path and agent-made deviations decay with a 2 min half-life.
   *Exogenous*: the no-agent run's public trades are replayed verbatim, so agent impact persists. *Synthetic*:
   the persona mix of `scripts/src/simulate.ts`, reacting to the agent.
+- **Flow observables.** The simulated agent reads the same Launch counters as the live one, so net flow is
+  exactly the SOL the public trades moved through the curve (on a constant-product curve, a function of the
+  price path) and volume is the gross SOL those trades took. Candles don't carry a buy/sell split, so the
+  historical models add the candle's USD volume beyond what the price move took as *churn*: scaled to the curve
+  by the same multiplicative mapping as prices (SOL volume = USD volume × curve spot / USD price, i.e.
+  market-cap-consistent), booked on `volume_sol`/`trade_count` as a balanced round trip (price path, EMA and
+  slots untouched), replayed verbatim in the exogenous model. The synthetic model's two-sided trades need no
+  churn. Flow signals are therefore price-implied net flow plus balanced churn — see the limitations below.
 - **Objective.** Per run `J = 100·ln(V_agent/V_none)` at the 24 h VWAP + 0.25 × drawdown cut (pp) − 0.25 ×
   net SOL spent (% of starting vault value), clipped to ±50, where `V_agent` = vault SOL + vault tokens marked to
   market + agent profit already paid to backers (`metrics.endSol = sol1 + profitShared`); per flow model the mean over outcome tags (each tag
@@ -158,6 +190,26 @@ memecoin flows. Limitations: candles don't show intra-minute order flow, so trad
 is optimistic for any agent; fair-value half-life, 12 public trades per minute and the start multiple are
 assumptions (`robust` varies the timing ones); the vault is marked at its own prices, which the exogenous
 model lets the agent move.
+
+**Flow knobs and sell guardrail** (`backtest flow`, with profit share; exo model, ΔV@VWAP median, mean in
+brackets; "objective" = min over models vs the pre-flow policy, 0 = equal):
+
+| policy | TEST (21) | worst 10% | objective | walk-forward TEST (73) | worst 10% | objective |
+|---|---|---|---|---|---|---|
+| pre-flow (25/25 bps, no guardrail) | 13.9% (25.7%) | −68.2% | 0 | 7.4% (12.3%) | −27.5% | 0 |
+| trained flow policy (14 knobs) | 7.3% (24.0%) | −64.5% | +0.40 | 6.9% (10.1%) | −25.4% | −0.32 |
+| **shipped: pre-flow + guardrail (1 SOL base)** | 14.0% (26.9%) | −68.1% | +0.06 | 7.4% (11.9%) | −27.5% | −0.04 |
+| guardrail base 0.5 SOL | 13.3% (27.6%) | −68.0% | +0.07 | 7.3% (11.6%) | −27.1% | −0.09 |
+| guardrail base 2 SOL | 13.9% (26.1%) | −68.2% | 0.00 | 7.4% (12.2%) | −27.5% | 0.00 |
+
+The trained flow policy (sell earlier into net buying, hold thin-volume rallies, wait out live dumps, VWAP
+anchor, plus 14 % buy margin) wins on TEST but loses in the walk-forward test, so it is not the default; the
+knobs stay available through `STRATEGY_PARAMS` and the `flow` observables are in `/status`. The guardrail is a
+risk constraint the owner asked for: with a 1 SOL base allowance and the trained ramp (full at 17.6× the launch
+price and 1,387 SOL traded, shape 2.15; 6.6× the allowance into net buying on ≥ 1.39× median volume) it costs
+nothing measurable on value while capping what the vault can sell into a fresh, thin chart. The base level
+barely matters in the data (0.5–3 SOL within noise), because early-stage sells are already small under the
+5 %-per-hour on-chain cap on a small vault; it binds on big raises.
 
 **Launch terms** (`backtest terms`, ~15 min on 26 workers; also measured before profit share, not re-run). The shipped policy is fixed and the six agent terms
 are searched inside the program's hard limits (band 50–5000 bps, impact and window caps from 10 bps, window

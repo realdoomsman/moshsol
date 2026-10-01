@@ -16,11 +16,6 @@ export interface SimTerms extends AgentTerms {
 
 export interface Chain extends MarketState {
   terms: SimTerms;
-  agentBuys: number;
-  agentSells: number;
-  agentSolSpent: bigint;
-  volumeSol: bigint;
-  tradeCount: number;
   /** All trade fees charged so far (backers + creator + platform). */
   feesSol: bigint;
   /** Realized agent-sell profit credited to backers so far (`VaultProfitShared` amounts). */

@@ -58,8 +58,10 @@ pub fn deposit(ctx: Context<Deposit>, amount: u64, proof: Vec<[u8; 32]>) -> Resu
     let room = launch.raise_max - launch.raised;
     require!(room > 0, MoshError::RaiseFull);
     let mut amount = amount.min(room);
-    // The stricter of the creator's cap and the platform beta cap (0 = none).
-    let wallet_cap = match (launch.max_per_wallet, params.max_wallet_deposit_lamports) {
+    // The stricter of the creator's cap and the platform beta cap (0 = none). The creator funding
+    // their own raise is their own money, so the platform cap doesn't apply to them.
+    let platform_cap = if owner == launch.creator { 0 } else { params.max_wallet_deposit_lamports };
+    let wallet_cap = match (launch.max_per_wallet, platform_cap) {
         (0, cap) | (cap, 0) => cap,
         (a, b) => a.min(b),
     };

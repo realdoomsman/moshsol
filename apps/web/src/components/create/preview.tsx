@@ -64,7 +64,7 @@ export function DraftCard({
         />
         <p className="small num mt-3 truncate text-ink-3">
           {durationSecs ? `Closes ${fmtDuration(durationSecs)} after creation` : "Set a duration"} · bundle ≤ {draft.bundlePct}%
-          {draft.whitelistOn ? " · whitelist" : ""}
+          {draft.access === "whitelist" ? " · whitelist" : draft.access === "self" ? " · self-funded" : ""}
         </p>
       </div>
     </article>

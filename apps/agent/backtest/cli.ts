@@ -1,26 +1,45 @@
 /**
  * Backtest CLI (dataset: `backtest:fetch` → apps/agent/backtest/data/):
  *
- *   pnpm --filter @holdfast/agent backtest eval         no agent / v1 / tuned on TRAIN and TEST
+ *   pnpm --filter @holdfast/agent backtest eval         no agent / v1 / current / tuned on TRAIN and TEST
  *   pnpm --filter @holdfast/agent backtest train        random search + CMA-ES on TRAIN, then TRAIN/TEST tables
  *   pnpm --filter @holdfast/agent backtest walkforward  tune on every pool's first 24 h, test on hours 24–72
  *   pnpm --filter @holdfast/agent backtest ablate       tune on a FIT part of TRAIN, switch each feature off on the VALIDATION part
- *   pnpm --filter @holdfast/agent backtest robust       TEST split under other timing / fair-value assumptions
+ *   pnpm --filter @holdfast/agent backtest robust       TEST split under other timing / fair-value / candle-volume assumptions
+ *   pnpm --filter @holdfast/agent backtest flow         current (pre-flow) policy vs --params and vs --params with the flow knobs off
+ *                                                       on TRAIN, TEST and walk-forward TEST (value, worst 10%, drawdown, rug SOL lost per
+ *                                                       flow model), then the sell guardrail's base allowance at --sweep levels (SOL per window)
  *   pnpm --filter @holdfast/agent backtest terms        search the launch terms (policy fixed) on TRAIN and walk-forward,
  *                                                       Pareto view + picks out of sample, then a reserve-share sweep
  *
  * Flags: --params <JSON object or file> (policy to evaluate/ablate/start from; default DEFAULT_PARAMS),
  * --random <n> (200) and --gens <n> (25) for training and the terms search, --freeze <feature,…> (train with
- * those features switched off: margins → 25 bps, floor → none), --terms <JSON object or file> (terms search
- * baseline; default PRODUCTION_TERMS), --rug-budget <pp> (10: extra rug SOL loss a pick may add, pp of the
- * starting vault SOL), --reserves <bps,…> (reserve sweep), --workers <n> (CPUs − 2).
+ * those features switched off, see FEATURES), --terms <JSON object or file> (terms search baseline; default
+ * PRODUCTION_TERMS), --rug-budget <pp> (10: extra rug SOL loss a pick may add, pp of the starting vault SOL),
+ * --reserves <bps,…> (reserve sweep), --sweep <sol,…> (guardrail base allowance sweep; 0.25,0.5,1,2,3),
+ * --workers <n> (CPUs − 2).
  * Every command prints markdown and writes it plus a JSON summary to apps/agent/backtest/results/.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_PARAMS, PARAM_KEYS, PARAM_SPACE, withParams, type ParamKey, type StrategyParams } from "../src/strategy";
-import { Evaluator, FULL_MIN, HOUR_MIN, SYN_TEST_SEEDS, SYN_TRAIN_SEEDS, poolSpecs, split, summary, syntheticSpecs, table } from "./evaluate";
+import {
+  Evaluator,
+  FULL_MIN,
+  HOUR_MIN,
+  SYN_TEST_SEEDS,
+  SYN_TRAIN_SEEDS,
+  minVersus,
+  modelStats,
+  poolSpecs,
+  split,
+  statsTable,
+  summary,
+  syntheticSpecs,
+  table,
+  type ModelStats,
+} from "./evaluate";
 import { mean, type Score } from "./metrics";
 import { SearchSpace, cmaes, randomSearch } from "./optimize";
 import { SimPool } from "./pool";
@@ -50,7 +69,17 @@ import {
 const FEATURES: Record<string, { off: Partial<StrategyParams>; keys: ParamKey[] }> = {
   margins: { off: { buyMarginBps: 25, sellMarginBps: 25 }, keys: ["buyMarginBps", "sellMarginBps"] },
   floor: { off: { holdSlope: PARAM_SPACE.holdSlope.hi }, keys: ["holdSlope"] },
+  sellflow: { off: { sellFlowBps: 0 }, keys: ["sellFlowBps"] },
+  thin: { off: { sellThinRatio: 0 }, keys: ["sellThinRatio"] },
+  dump: { off: { buyDumpShare: 1 }, keys: ["buyDumpShare"] },
+  climax: { off: { buyClimaxBps: 0 }, keys: ["buyClimaxBps"] },
+  vwap: { off: { vwapEntryBps: 0 }, keys: ["vwapEntryBps"] },
+  guardrail: { off: { fullMcapMult: 1, fullVolumeSol: 1 }, keys: ["baseSellSol", "fullMcapMult", "fullVolumeSol", "rampShape"] },
+  strong: { off: { strongFlowMult: 1 }, keys: ["strongVolumeRatio", "strongFlowMult"] },
 };
+
+/** The features that read the flow window (the sell guardrail's `strong` multiplier is part of the guardrail). */
+const FLOW_FEATURES = ["sellflow", "thin", "dump", "climax", "vwap"];
 
 /** `p` with the named features switched off. */
 function without(p: StrategyParams, features: string[]): StrategyParams {
@@ -70,8 +99,8 @@ function frozenFlag(): string[] {
   return names;
 }
 
-/** The new policy's closest match to v1: 25 bps margins, no inventory floor. */
-const V1_LIKE: StrategyParams = without(DEFAULT_PARAMS, Object.keys(FEATURES));
+/** The policy shipped before the flow features and the sell guardrail: 25 bps margins, no inventory floor, nothing else. */
+const CURRENT: StrategyParams = without(DEFAULT_PARAMS, Object.keys(FEATURES));
 
 const RESULTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "results");
 
@@ -116,6 +145,7 @@ async function report(ev: Evaluator, label: string, specs: ScenarioSpec[], param
   const policies: [string, Policy][] = [
     ["none", { kind: "none" }],
     ["v1", { kind: "v1" }],
+    ["current", { kind: "tuned", params: CURRENT }],
     ["tuned", { kind: "tuned", params }],
   ];
   const byPolicy: Record<string, RunResult[]> = {};
@@ -126,22 +156,35 @@ async function report(ev: Evaluator, label: string, specs: ScenarioSpec[], param
   }
   say(`\n### ${label}\n`);
   say(
-    `objective: ${Object.entries(scores)
+    `objective (0 = v1): ${Object.entries(scores)
       .map(([k, s]) => `${k} ${s.score.toFixed(2)} (${Object.entries(s.byModel).map(([m, v]) => `${m} ${v.toFixed(2)}`).join(", ")})`)
       .join(" · ")}\n`,
   );
-  say(summary(ev, specs, byPolicy.v1!, byPolicy.tuned!));
+  say(summary(ev, specs, "current", byPolicy.current!, "tuned", byPolicy.tuned!));
+  say();
+  say(statsTable(["current", "tuned", "v1"].map((k) => [k, modelStats(ev, specs, byPolicy[k]!)])));
   say("\n<details><summary>all metrics</summary>\n");
   say(table(ev, specs, byPolicy));
   say("\n</details>");
   return scores;
 }
 
+/** Per-model stats of `params` and of the current policy on `specs`, printed as one table. */
+async function compareCurrent(ev: Evaluator, label: string, specs: ScenarioSpec[], named: [string, StrategyParams][]) {
+  const rows: [string, Record<string, ModelStats>][] = [];
+  for (const [name, p] of [["current", CURRENT] as [string, StrategyParams], ...named]) {
+    rows.push([name, modelStats(ev, specs, await ev.runs(specs, { kind: "tuned", params: p }))]);
+  }
+  say(`\n### ${label}\n`);
+  say(statsTable(rows));
+  return Object.fromEntries(rows);
+}
+
 async function tune(ev: Evaluator, specs: ScenarioSpec[], start: StrategyParams, label: string, frozen: string[]): Promise<StrategyParams> {
   const fitness = ev.fitness(specs);
   const space = new SearchSpace(PARAM_SPACE, tunableKeys(frozen), without(start, frozen));
   const t0 = Date.now();
-  const seeds = [start, DEFAULT_PARAMS, V1_LIKE].map((p) => without(p, frozen));
+  const seeds = [start, DEFAULT_PARAMS, CURRENT].map((p) => without(p, frozen));
   const random = await randomSearch(space, intFlag("random", 200), seeds, fitness, mulberry32(7));
   console.log(`[${label}] random search: best ${random[0]!.score.toFixed(3)} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
   const trials = await cmaes(space, random[0]!.params, fitness, {
@@ -287,9 +330,9 @@ async function termsCommand(ev: Evaluator, entries: PoolEntry[], trainSpecs: Sce
 
 async function main(): Promise<void> {
   const cmd = process.argv[2];
-  if (!cmd || !["eval", "train", "walkforward", "ablate", "robust", "terms"].includes(cmd)) {
+  if (!cmd || !["eval", "train", "walkforward", "ablate", "robust", "flow", "terms"].includes(cmd)) {
     throw new Error(
-      "usage: backtest <eval|train|walkforward|ablate|robust|terms> [--params <json|file>] [--terms <json|file>] [--random n] [--gens n] [--freeze f,…] [--rug-budget pp] [--reserves bps,…] [--workers n]",
+      "usage: backtest <eval|train|walkforward|ablate|robust|flow|terms> [--params <json|file>] [--terms <json|file>] [--random n] [--gens n] [--freeze f,…] [--rug-budget pp] [--reserves bps,…] [--sweep sol,…] [--workers n]",
     );
   }
   const entries = loadIndex();
@@ -322,28 +365,65 @@ async function main(): Promise<void> {
       save("walkforward", { params: best, train: tr, test: te });
     } else if (cmd === "terms") {
       await termsCommand(ev, entries, trainSpecs, testSpecs);
+    } else if (cmd === "flow") {
+      say(`\npolicy:\n\n\`\`\`json\n${fmtParams(params)}\n\`\`\``);
+      const { wfTest } = walkForward(entries);
+      const splits: [string, ScenarioSpec[]][] = [
+        ["TRAIN", trainSpecs],
+        ["TEST", testSpecs],
+        ["WALK-FORWARD TEST (hours 24–72)", wfTest],
+      ];
+      // "flow off" keeps the tuned margins, floor and guardrail: the flow knobs' own contribution.
+      const compared: Record<string, unknown> = {};
+      for (const [label, specs] of splits) {
+        compared[label] = await compareCurrent(ev, label, specs, [
+          ["tuned", params],
+          ["tuned, flow off", without(params, FLOW_FEATURES)],
+        ]);
+      }
+      // The owner's guardrail at several base levels (the ramp knobs stay as tuned).
+      const sweepLevels = (flag("sweep") ?? "0.25,0.5,1,2,3").split(",").map((s) => {
+        const n = Number(s.trim());
+        if (!(n > 0)) throw new Error(`--sweep: levels must be positive SOL amounts, got "${s}"`);
+        return n;
+      });
+      say(`\n## Sell guardrail: cost / benefit of the base allowance (SOL per window near the launch price; ramp as tuned)\n`);
+      const levels: [string, StrategyParams][] = [
+        ["no guardrail", without(params, ["guardrail"])],
+        ...sweepLevels.map((sol): [string, StrategyParams] => [`${sol} SOL / window`, withParams(params, { baseSellSol: sol })]),
+        ["tuned", params],
+      ];
+      const sweep: Record<string, unknown> = {};
+      for (const [label, specs] of splits) sweep[label] = await compareCurrent(ev, `guardrail — ${label}`, specs, levels);
+      save("flow", { params, compared, sweep });
     } else if (cmd === "robust") {
-      const variants: [string, Partial<SimOptions> | undefined, number | undefined][] = [
-        ["as trained (10 s polls, 0.4–1.2 s landing, 2 min fair-value half-life)", undefined, undefined],
-        ["agent polls every 4 s (POLL_MS default)", { pollMs: 4_000 }, undefined],
-        ["slow landing: 1.5–3 s after the re-read", { sendMsMin: 1_500, sendMsMax: 3_000 }, undefined],
-        ["fair value: 30 s half-life", undefined, 30_000],
-        ["fair value: 10 min half-life", undefined, 600_000],
+      const variants: [string, Partial<SimOptions> | undefined, Partial<Extract<ScenarioSpec, { kind: "pool" }>>][] = [
+        ["as trained (10 s polls, 0.4–1.2 s landing, 2 min fair-value half-life, candle volume ×1)", undefined, {}],
+        ["agent polls every 4 s (POLL_MS default)", { pollMs: 4_000 }, {}],
+        ["slow landing: 1.5–3 s after the re-read", { sendMsMin: 1_500, sendMsMax: 3_000 }, {}],
+        ["fair value: 30 s half-life", undefined, { halfLifeMs: 30_000 }],
+        ["fair value: 10 min half-life", undefined, { halfLifeMs: 600_000 }],
+        ["candle volume ×0.25 (flow imbalances 4× stronger)", undefined, { volumeScale: 0.25 }],
+        ["candle volume ×4 (flow imbalances 4× weaker)", undefined, { volumeScale: 4 }],
       ];
       say(`\nTEST split under other assumptions; policy:\n\n\`\`\`json\n${fmtParams(params)}\n\`\`\`\n`);
-      say("| assumption | model | v1 ΔV@VWAP % | tuned ΔV@VWAP % | objective (0 = v1) |");
-      say("|---|---|---:|---:|---:|");
+      say("| assumption | model | current ΔV@VWAP % | tuned ΔV@VWAP % | objective (0 = v1) current / tuned | min over models tuned vs current |");
+      say("|---|---|---:|---:|---|---:|");
       const rows: Record<string, unknown> = {};
-      for (const [name, sim, halfLifeMs] of variants) {
+      for (const [name, sim, poolSpec] of variants) {
         const e = new Evaluator(pool, sim);
-        const specs = testSpecs.map((s) => (s.kind === "pool" && s.model === "fair" && halfLifeMs !== undefined ? { ...s, halfLifeMs } : s));
-        const [v1, tuned] = [await e.runs(specs, { kind: "v1" }), await e.runs(specs, { kind: "tuned", params })];
-        const score = e.score(specs, tuned);
-        rows[name] = score;
-        for (const model of Object.keys(score.byModel)) {
-          const dv = (runs: RunResult[]) =>
-            mean(runs.flatMap((r, i) => (r.model === model ? [e.compareTo(specs[i]!, r).dvVwap] : [])));
-          say(`| ${name} | ${model} | ${dv(v1).toFixed(1)} | ${dv(tuned).toFixed(1)} | ${score.score.toFixed(2)} |`);
+        const specs = testSpecs.map((s) => {
+          if (s.kind !== "pool") return s;
+          // The half-life only exists in the fair-value model; the volume scale applies to both history models.
+          const { halfLifeMs, ...rest } = poolSpec;
+          return { ...s, ...rest, ...(s.model === "fair" && halfLifeMs !== undefined ? { halfLifeMs } : {}) };
+        });
+        const [current, tuned] = [await e.runs(specs, { kind: "tuned", params: CURRENT }), await e.runs(specs, { kind: "tuned", params })];
+        const [sc, st] = [e.score(specs, current), e.score(specs, tuned)];
+        const [mc, mt] = [modelStats(e, specs, current), modelStats(e, specs, tuned)];
+        rows[name] = { current: sc, tuned: st, minVersusCurrent: minVersus(mt, mc) };
+        for (const model of Object.keys(st.byModel)) {
+          say(`| ${name} | ${model} | ${mc[model]!.dvMean.toFixed(1)} | ${mt[model]!.dvMean.toFixed(1)} | ${sc.score.toFixed(2)} / ${st.score.toFixed(2)} | ${minVersus(mt, mc).toFixed(3)} |`);
         }
       }
       save("robust", { params, variants: rows });

@@ -1,5 +1,6 @@
 import { once } from "node:events";
 import http from "node:http";
+import type { FlowFeatures } from "./flow";
 
 /** One entry of `GET /status` → `decisions` (see the Agent status API contract). */
 export interface Decision {
@@ -17,6 +18,8 @@ export interface Decision {
   amount?: string;
   signature?: string;
   error?: string;
+  /** Public order flow seen between polls (src/flow.ts): what the flow knobs and the sell guardrail looked at. */
+  flow: FlowFeatures;
 }
 
 /**

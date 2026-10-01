@@ -336,7 +336,7 @@ export function StepVault({
   const maxBundlePct = (params?.maxBundleSupplyBps ?? LIMITS.minBundleSupplyBps) / 100;
   const maxReservePct = LIMITS.maxReserveBps / 100;
   const csv = useRef<HTMLInputElement>(null);
-  const selfExcluded = !!wallet && draft.whitelistOn && v.whitelist.length > 0 && !v.whitelist.some((k) => k.equals(wallet));
+  const selfExcluded = !!wallet && draft.access === "whitelist" && v.whitelist.length > 0 && !v.whitelist.some((k) => k.equals(wallet));
 
   const addAddresses = (text: string) => {
     const found = extractAddresses(text);
@@ -449,22 +449,31 @@ export function StepVault({
           <span className="grid gap-0.5">
             <span className="label text-ink-3">Access</span>
             <span className="small text-ink-2">
-              {draft.whitelistOn
+              {draft.access === "whitelist"
                 ? "Only listed wallets can deposit (checked on-chain with a merkle proof)."
-                : "Anyone can back the raise."}
+                : draft.access === "self"
+                  ? "Only you can deposit: you fund the whole bundle yourself, and all backer earnings are yours."
+                  : "Anyone can back the raise."}
             </span>
           </span>
-          <Segmented
+          <Segmented<CreateDraft["access"]>
             label="Who can back the raise"
-            value={draft.whitelistOn ? "whitelist" : "open"}
-            onChange={(x) => set("whitelistOn", x === "whitelist", "whitelist")}
+            value={draft.access}
+            onChange={(x) => set("access", x, "whitelist")}
             items={[
               { value: "open", label: "Open" },
               { value: "whitelist", label: "Whitelist" },
+              { value: "self", label: "Fund it yourself" },
             ]}
           />
         </div>
-        {draft.whitelistOn ? (
+        {draft.access === "self" ? (
+          <p className={cn("small", err("whitelist") ? "text-warn" : "text-ink-2")}>
+            {err("whitelist") ??
+              `Deposits are limited to ${wallet ? `${wallet.toBase58().slice(0, 4)}…${wallet.toBase58().slice(-4)}` : "your wallet"}; the per-wallet beta cap doesn't apply to a creator funding their own raise.`}
+          </p>
+        ) : null}
+        {draft.access === "whitelist" ? (
           <Field
             label="Wallets"
             aside={
@@ -600,14 +609,14 @@ export function StepReview({
           <Row label="Min – max">
             {draft.raiseMin || "—"} – {draft.raiseMax || "—"} SOL
           </Row>
-          <Row label="Per-wallet cap">{draft.perWallet ? `${draft.perWallet} SOL` : "No cap"}</Row>
+          <Row label="Per-wallet cap">{draft.access === "self" ? "Creator only" : draft.perWallet ? `${draft.perWallet} SOL` : "No cap"}</Row>
           <Row label="Duration">{durationSecs ? fmtDuration(durationSecs) : "—"}</Row>
         </ReviewGroup>
         <ReviewGroup title="Vault & access" onEdit={() => onEdit(2)}>
           <Row label="Max bundle">{draft.bundlePct}% of supply</Row>
           <Row label="SOL reserve">{draft.reservePct}% of raise</Row>
           <Row label="Access">
-            {draft.whitelistOn ? `Whitelist · ${v.whitelist.length.toLocaleString("en-US")} wallets` : "Open"}
+            {draft.access === "whitelist" ? `Whitelist · ${v.whitelist.length.toLocaleString("en-US")} wallets` : draft.access === "self" ? "Self-funded (creator only)" : "Open"}
           </Row>
         </ReviewGroup>
       </div>

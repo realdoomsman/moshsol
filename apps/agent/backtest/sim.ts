@@ -1,4 +1,5 @@
 import { BPS, bpsCeil } from "@holdfast/sdk";
+import { FlowWindow, NEUTRAL_FLOW, type FlowFeatures } from "../src/flow";
 import { evaluate, project, type Plan, type Sizing, type StrategyParams } from "../src/strategy";
 import { agentBuy, agentSell, launch, publicBuy, publicSell, publicTokens, type Chain, type LaunchSetup, type ProgramError } from "./program";
 import { evaluateV1 } from "./v1";
@@ -66,11 +67,13 @@ export function hashSeed(s: string): number {
 /**
  * Executed public trades (the exogenous-flow recording), column-wise to keep dozens of 72 h
  * recordings per worker small: times (ms) and signed amounts, + = buy of that many gross lamports,
- * − = sell of that many token base units (both below 2^53, so exact as doubles).
+ * − = sell of that many token base units (both below 2^53, so exact as doubles), plus the churn
+ * volume (lamports, see `Market.churn`) booked with the trade (an entry with amount 0 is churn only).
  */
 export interface Recording {
   t: number[];
   amount: number[];
+  churn: number[];
 }
 
 /** Chain + clock + public-trade bookkeeping shared by the flow models and the agent. */
@@ -80,6 +83,8 @@ export class Market {
   readonly pubSol: number[] = [];
   readonly pubTok: number[] = [];
   publicFails = 0;
+  /** Gross lamports of the last executed public trade (what `volume_sol` counted). */
+  private lastGross = 0;
 
   constructor(
     readonly chain: Chain,
@@ -109,8 +114,8 @@ export class Market {
       return 0n;
     }
     this.book(Number(gross - bpsCeil(gross, c.terms.tradeFeeBps)), Number(res.out));
-    this.recording?.t.push(this.t);
-    this.recording?.amount.push(Number(gross));
+    this.lastGross = Number(gross);
+    this.record(this.lastGross, 0);
     return res.out;
   }
 
@@ -127,17 +132,32 @@ export class Market {
       return 0n;
     }
     this.book(Number(gross), Number(amount));
-    this.recording?.t.push(this.t);
-    this.recording?.amount.push(-Number(amount));
+    this.lastGross = Number(gross);
+    this.record(-Number(amount), 0);
     return amount;
   }
 
-  /** Public trade that moves spot to exp(logTarget) (lamports per base unit); sells stop at the public's holdings. */
-  moveTo(logTarget: number): void {
+  /**
+   * Two-sided volume the history had beyond what moving the price took: booked on the launch's
+   * `volume_sol` / `trade_count` as one round trip (a buy and its sell at the same price, which leaves
+   * reserves, EMA and the slot bookkeeping as they are), so the agent's flow window sees the candle's
+   * volume while the price path stays exactly the path.
+   */
+  churn(lamports: number): void {
+    if (lamports < 1) return;
+    const l = Math.floor(lamports);
+    this.chain.volumeSol += BigInt(l);
+    this.chain.tradeCount += 2;
+    this.record(0, l);
+  }
+
+  /** Public trade that moves spot to exp(logTarget) (lamports per base unit); sells stop at the public's holdings. Returns the gross lamports traded. */
+  moveTo(logTarget: number): number {
     const c = this.chain;
     const x = Number(c.virtualSol + c.realSol);
     const y = Number(c.tokenReserve);
     const d = logTarget - Math.log(x / y);
+    this.lastGross = 0;
     if (d > 1e-5) {
       // x·y is constant, spot = x/y, so x scales with √(spot ratio); gross covers the fee.
       const net = x * (Math.exp(d / 2) - 1);
@@ -147,6 +167,20 @@ export class Market {
       const tokens = Math.floor(y * (Math.exp(-d / 2) - 1));
       if (tokens >= 1_000) this.sell(BigInt(tokens));
     }
+    return this.lastGross;
+  }
+
+  private record(amount: number, churn: number): void {
+    const r = this.recording;
+    if (!r) return;
+    const last = r.t.length - 1;
+    if (churn > 0 && last >= 0 && r.t[last] === this.t && r.churn[last] === 0) {
+      r.churn[last] = churn;
+      return;
+    }
+    r.t.push(this.t);
+    r.amount.push(amount);
+    r.churn.push(churn);
   }
 
   private book(sol: number, tokens: number): void {
@@ -231,6 +265,9 @@ class SimAgent {
   private nextTradeAt = 0;
   private failures = 0;
   private plan: Plan | null = null;
+  /** Like `agent.ts`: one flow observation per poll, reused by the re-read right before sending. */
+  private readonly flow = new FlowWindow();
+  private features: FlowFeatures = NEUTRAL_FLOW;
   readonly stats: AgentStats = {
     polls: 0,
     buys: 0,
@@ -256,7 +293,7 @@ class SimAgent {
   private decide(market: Market): Plan {
     const c = market.chain;
     const now = market.now();
-    return this.policy.kind === "v1" ? evaluateV1(c, this.opt.sizing, now) : evaluate(c, this.opt.sizing, now, this.policy.params).plan;
+    return this.policy.kind === "v1" ? evaluateV1(c, this.opt.sizing, now) : evaluate(c, this.opt.sizing, now, this.policy.params, this.features).plan;
   }
 
   private nextPoll(earliest: number): void {
@@ -269,6 +306,7 @@ class SimAgent {
     if (this.phase === "poll") {
       this.pollStart = this.at;
       s.polls++;
+      this.features = this.flow.observe(market.chain, market.now());
       const plan = this.decide(market);
       if (plan.action === "hold") {
         s.holds[plan.kind] = (s.holds[plan.kind] ?? 0) + 1;

@@ -277,6 +277,19 @@ export interface AgentDecision {
   amount?: string;
   signature?: string;
   error?: string;
+  /** Public order flow the agent saw between polls (apps/agent/src/flow.ts `FlowFeatures`). */
+  flow?: {
+    spanSecs: number;
+    volumeSol: number;
+    netSol: number;
+    trades: number;
+    imbalance: number;
+    imbalanceRecent: number;
+    volumeRatio: number;
+    volumeRatioRecent: number;
+    vwapDevBps: number;
+    sinceTradeSecs: number;
+  };
 }
 
 export interface AgentStatus {

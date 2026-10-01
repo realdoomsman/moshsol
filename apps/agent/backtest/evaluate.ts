@@ -1,5 +1,5 @@
 import type { StrategyParams } from "../src/strategy";
-import { aggregate, compare, mean, median, modelScores, runObjective, type Comparison, type Score } from "./metrics";
+import { OBJECTIVE, aggregate, compare, endSol, mean, median, modelScores, runObjective, type Comparison, type Score } from "./metrics";
 import type { SimPool } from "./pool";
 import { hashSeed, type Policy, type RunResult, type SimOptions } from "./sim";
 import { runKey, type PoolEntry, type ScenarioSpec } from "./scenarios";
@@ -101,6 +101,86 @@ export class Evaluator {
 
 const f = (v: number, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : "–");
 
+export interface ModelStats {
+  n: number;
+  /** Vault value vs no agent, % at the 24 h VWAP mark: median, mean, mean of the worst 10% of runs. */
+  dvMedian: number;
+  dvMean: number;
+  dvTail: number;
+  /** Max-drawdown cut vs no agent (pp, + = shallower), σ of minute returns vs no agent, minutes inside the band (%) and gain over no agent (pp). */
+  ddCut: number;
+  volRatio: number;
+  inBand: number;
+  inBandGain: number;
+  /** `rug` pools: vault SOL lost (spent minus what came back to the vault or was paid to backers as profit) as % of the starting vault SOL, mean and mean of the worst 10%; NaN without rug runs. */
+  rugLoss: number;
+  rugTail: number;
+  /** Per-model objective S_m (metrics.ts `modelScores`). */
+  s: number;
+  plannedRejects: number;
+  buys: number;
+  sells: number;
+}
+
+/** Mean of the lowest `OBJECTIVE.tailShare` of `xs`. */
+export function tail(xs: number[]): number {
+  return mean([...xs].sort((a, b) => a - b).slice(0, Math.max(1, Math.round(xs.length * OBJECTIVE.tailShare))));
+}
+
+/** Per flow model: value, support and rug-loss statistics of `runs` (one per spec) against their no-agent baselines. */
+export function modelStats(ev: Evaluator, specs: ScenarioSpec[], runs: RunResult[]): Record<string, ModelStats> {
+  const rows = runs.map((r, i) => ({ r, base: ev.base(specs[i]!), c: ev.compareTo(specs[i]!, r) }));
+  const s = modelScores(rows.map(({ c }) => ({ model: c.model, tag: c.tag, j: runObjective(c) })));
+  const byModel: Record<string, ModelStats> = {};
+  for (const model of Object.keys(s)) {
+    const rs = rows.filter(({ r }) => r.model === model);
+    const dv = rs.map(({ c }) => c.dvVwap);
+    const rugLoss = rs.filter(({ r }) => r.tag === "rug").map(({ r }) => (r.sol0 > 0 ? (Math.max(0, r.sol0 - endSol(r)) / r.sol0) * 100 : 0));
+    byModel[model] = {
+      n: rs.length,
+      dvMedian: median(dv),
+      dvMean: mean(dv),
+      dvTail: tail(dv),
+      ddCut: mean(rs.map(({ c }) => c.ddCut)),
+      volRatio: mean(rs.map(({ c }) => c.volRatio)),
+      inBand: mean(rs.map(({ c }) => c.inBand)),
+      inBandGain: mean(rs.map(({ c, base }) => c.inBand - base.inBand * 100)),
+      rugLoss: rugLoss.length > 0 ? mean(rugLoss) : NaN,
+      rugTail: rugLoss.length > 0 ? -tail(rugLoss.map((x) => -x)) : NaN,
+      s: s[model]!,
+      plannedRejects: rs.reduce((sum, { c }) => sum + c.plannedRejects, 0),
+      buys: mean(rs.map(({ c }) => c.buys)),
+      sells: mean(rs.map(({ c }) => c.sells)),
+    };
+  }
+  return byModel;
+}
+
+/** Min over flow models of (S_m − S_m(ref)) / max(1, |S_m(ref)|): the objective's worst-model term with `ref` as its 0. */
+export function minVersus(stats: Record<string, ModelStats>, ref: Record<string, ModelStats>): number {
+  return Math.min(...Object.entries(stats).map(([m, s]) => (s.s - ref[m]!.s) / Math.max(1, Math.abs(ref[m]!.s))));
+}
+
+/** Markdown rows comparing policies per flow model (the first entry is the reference of the last column). */
+export function statsTable(byPolicy: [string, Record<string, ModelStats>][]): string {
+  const rows = [
+    "| policy | model | n | ΔV@VWAP median % (mean) | worst-10% ΔV % | DD cut pp | vol× | buys/sells | rug SOL lost % (worst 10%) | S_m | min over models vs " + byPolicy[0]![0] + " |",
+    "|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|",
+  ];
+  const ref = byPolicy[0]![1];
+  for (const [name, stats] of byPolicy) {
+    const models = Object.keys(stats);
+    models.forEach((model, i) => {
+      const s = stats[model]!;
+      rows.push(
+        `| ${i === 0 ? name : ""} | ${model} | ${s.n} | ${f(s.dvMedian)} (${f(s.dvMean)}) | ${f(s.dvTail)} | ${f(s.ddCut, 2)} | ${f(s.volRatio, 3)} | ${f(s.buys, 0)}/${f(s.sells, 0)} | ` +
+          `${Number.isFinite(s.rugLoss) ? `${f(s.rugLoss)} (${f(s.rugTail)})` : "–"} | ${f(s.s, 2)} | ${i === 0 ? f(minVersus(stats, ref), 3) : ""} |`,
+      );
+    });
+  }
+  return rows.join("\n");
+}
+
 /** Run indices grouped by flow model and outcome tag, each model followed by its "all" group. */
 function groups(specs: ScenarioSpec[], runs: RunResult[]): { model: string; label: string; idx: number[] }[] {
   const byKey = new Map<string, number[]>();
@@ -140,10 +220,10 @@ export function table(ev: Evaluator, specs: ScenarioSpec[], byPolicy: Record<str
   return rows.join("\n");
 }
 
-/** Compact v1 → tuned comparison per (flow model, outcome tag); no-agent is the 0 of every Δ column. */
-export function summary(ev: Evaluator, specs: ScenarioSpec[], v1: RunResult[], tuned: RunResult[]): string {
+/** Compact a → b comparison per (flow model, outcome tag); no-agent is the 0 of every Δ column. */
+export function summary(ev: Evaluator, specs: ScenarioSpec[], aName: string, v1: RunResult[], bName: string, tuned: RunResult[]): string {
   const rows: string[] = [
-    "| model | tag | n | ΔV@VWAP % v1 → tuned (medians) | ΔV@final % v1 → tuned | max DD % none / v1 / tuned | planned rej | landed rej v1 / tuned (same-slot) |",
+    `| model | tag | n | ΔV@VWAP % ${aName} → ${bName} (medians) | ΔV@final % ${aName} → ${bName} | max DD % none / ${aName} / ${bName} | planned rej | landed rej ${aName} / ${bName} (same-slot) |`,
     "|---|---|---:|---|---|---|---:|---|",
   ];
   for (const { model, label, idx } of groups(specs, v1)) {

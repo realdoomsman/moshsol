@@ -14,6 +14,7 @@ import {
   type MoshEvent,
 } from "@holdfast/sdk";
 import type { AgentConfig } from "./config";
+import { FlowWindow, displayFlow, type FlowFeatures } from "./flow";
 import { log } from "./log";
 import type { Decision, StatusSnapshot, WindDown } from "./status";
 import {
@@ -56,6 +57,8 @@ interface LaunchRuntime {
   windDownAt: number;
   /** Consecutive failed `wind_down` sends (sizes their back-off). */
   windDownFailures: number;
+  /** Public flow between polls, from Launch account deltas (one observation per tick). */
+  flow: FlowWindow;
 }
 
 function clockUnixTs(data: Buffer): bigint {
@@ -168,7 +171,7 @@ export class Agent {
   private async runtimeOf(mint: PublicKey, key: string): Promise<LaunchRuntime> {
     let rt = this.runtime.get(key);
     if (!rt) {
-      rt = { nextTradeAt: 0, failures: 0, windDownAt: 0, windDownFailures: 0 };
+      rt = { nextTradeAt: 0, failures: 0, windDownAt: 0, windDownFailures: 0, flow: new FlowWindow() };
       this.runtime.set(key, rt);
     }
     if (rt.symbol === undefined) {
@@ -231,21 +234,22 @@ export class Agent {
 
   private async handle(rt: LaunchRuntime, key: string, account: LaunchAccount, now: bigint, skipReason?: string): Promise<void> {
     const mint = account.mint;
-
-    let ev = evaluate(marketOf(account), this.sizing, now, this.cfg.strategy);
+    const market = marketOf(account);
+    const flow = rt.flow.observe(market, now);
+    let ev = evaluate(market, this.sizing, now, this.cfg.strategy, flow);
     if (skipReason) {
-      this.record(rt, key, ev, { action: "skip", reason: skipReason }, "paused");
+      this.record(rt, key, ev, flow, { action: "skip", reason: skipReason }, "paused");
       return;
     }
     if (ev.plan.action === "hold") {
       rt.failures = 0;
-      this.record(rt, key, ev, { action: "hold", reason: ev.plan.reason }, ev.plan.kind);
+      this.record(rt, key, ev, flow, { action: "hold", reason: ev.plan.reason }, ev.plan.kind);
       return;
     }
     if (this.cfg.dryRun) {
       const plan = ev.plan;
       const reason = `dry run, not sent: ${plan.reason}`;
-      this.record(rt, key, ev, { action: plan.action, reason, amount: plan.amount.toString() }, plan.kind, {
+      this.record(rt, key, ev, flow, { action: plan.action, reason, amount: plan.amount.toString() }, plan.kind, {
         expectedOut: plan.expectedOut,
         minOut: plan.minOut,
         impactBps: plan.impactBps,
@@ -257,10 +261,10 @@ export class Agent {
       const secs = Math.ceil(waitMs / 1000);
       if (rt.lastError !== undefined) {
         const reason = `backing off after error, retry in ${secs}s; wants ${ev.plan.reason}`;
-        this.record(rt, key, ev, { action: "skip", reason, error: rt.lastError }, "backoff");
+        this.record(rt, key, ev, flow, { action: "skip", reason, error: rt.lastError }, "backoff");
       } else {
         const reason = `cooldown after last trade, ${secs}s left; wants ${ev.plan.reason}`;
-        this.record(rt, key, ev, { action: "skip", reason }, "cooldown");
+        this.record(rt, key, ev, flow, { action: "skip", reason }, "cooldown");
       }
       return;
     }
@@ -273,17 +277,17 @@ export class Agent {
     );
     if (!launchInfo || !clockInfo) throw new Error(`launch ${key} or clock vanished during refresh`);
     const fresh = this.client.program.coder.accounts.decode<LaunchAccount>("launch", launchInfo.data);
-    ev = evaluate(marketOf(fresh), this.sizing, clockUnixTs(clockInfo.data), this.cfg.strategy);
+    ev = evaluate(marketOf(fresh), this.sizing, clockUnixTs(clockInfo.data), this.cfg.strategy, flow);
     const plan = ev.plan;
     if (plan.action === "hold") {
       rt.failures = 0;
-      this.record(rt, key, ev, { action: "hold", reason: plan.reason }, plan.kind);
+      this.record(rt, key, ev, flow, { action: "hold", reason: plan.reason }, plan.kind);
       return;
     }
-    await this.execute(rt, key, mint, ev, plan);
+    await this.execute(rt, key, mint, ev, flow, plan);
   }
 
-  private async execute(rt: LaunchRuntime, key: string, mint: PublicKey, ev: Evaluation, plan: TradePlan): Promise<void> {
+  private async execute(rt: LaunchRuntime, key: string, mint: PublicKey, ev: Evaluation, flow: FlowFeatures, plan: TradePlan): Promise<void> {
     const agent = this.signer.publicKey;
     const connection = this.client.connection;
     const amount = plan.amount.toString();
@@ -323,7 +327,7 @@ export class Agent {
             }
           : {};
       const shared = profit?.name === "vaultProfitShared" ? { profitSharedLamports: profit.data.amount.toString() } : {};
-      this.record(rt, key, ev, { action: plan.action, reason: plan.reason, amount, signature }, plan.kind, {
+      this.record(rt, key, ev, flow, { action: plan.action, reason: plan.reason, amount, signature }, plan.kind, {
         ...extra,
         ...landed?.cost,
         ...fill,
@@ -337,7 +341,7 @@ export class Agent {
       const backoff =
         error === SAME_SLOT_TRADE_MESSAGE ? 0 : Math.min(this.cfg.cooldownMs * 2 ** rt.failures++, this.cfg.maxBackoffMs);
       rt.nextTradeAt = Date.now() + backoff;
-      this.record(rt, key, ev, { action: plan.action, reason: plan.reason, amount, error }, "error", { ...extra, retryInMs: backoff });
+      this.record(rt, key, ev, flow, { action: plan.action, reason: plan.reason, amount, error }, "error", { ...extra, retryInMs: backoff });
     }
   }
 
@@ -357,11 +361,12 @@ export class Agent {
     rt: LaunchRuntime,
     mint: string,
     ev: Evaluation,
+    flow: FlowFeatures,
     d: Pick<Decision, "action" | "reason" | "amount" | "signature" | "error">,
     kind: string,
     extra: Record<string, unknown> = {},
   ): void {
-    const decision: Decision = { mint, symbol: rt.symbol, at: nowSec(), ...d, ...displayPrices(ev.projection) };
+    const decision: Decision = { mint, symbol: rt.symbol, at: nowSec(), ...d, ...displayPrices(ev.projection), flow: displayFlow(flow) };
     this.decisions.set(mint, decision);
     const trade = d.action === "buy" || d.action === "sell";
     if (trade || rt.loggedKind !== kind) {

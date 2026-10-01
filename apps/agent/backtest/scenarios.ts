@@ -62,7 +62,18 @@ export interface LaunchVariant {
 }
 
 export type ScenarioSpec = (
-  | { kind: "pool"; file: string; pool: string; tag: string; model: PathModel; fromMin: number; toMin: number; halfLifeMs?: number }
+  | {
+      kind: "pool";
+      file: string;
+      pool: string;
+      tag: string;
+      model: PathModel;
+      fromMin: number;
+      toMin: number;
+      halfLifeMs?: number;
+      /** Multiplies the candle volume the flow window sees (default 1, robustness runs). */
+      volumeScale?: number;
+    }
   | { kind: "synthetic"; seed: number; hours: number }
 ) & { launch?: LaunchVariant };
 
@@ -79,10 +90,12 @@ function variantKey(v: LaunchVariant | undefined): string {
   return `${v?.terms ? `|terms ${termsKey(v.terms)}` : ""}${v?.reserveBps === undefined ? "" : `|reserve ${v.reserveBps}`}`;
 }
 
-/** Scenario key plus the flow model, a non-default fair-value half-life and the launch variant: one baseline run each. */
+/** Scenario key plus the flow model, non-default fair-value half-life / volume scale and the launch variant: one baseline run each. */
 export function runKey(s: ScenarioSpec): string {
   if (s.kind === "synthetic") return `${specKey(s)}|synthetic${variantKey(s.launch)}`;
-  return `${specKey(s)}|${s.model}${s.halfLifeMs === undefined ? "" : `~${s.halfLifeMs}`}${variantKey(s.launch)}`;
+  const halfLife = s.halfLifeMs === undefined ? "" : `~${s.halfLifeMs}`;
+  const volume = s.volumeScale === undefined ? "" : `×${s.volumeScale}`;
+  return `${specKey(s)}|${s.model}${halfLife}${volume}${variantKey(s.launch)}`;
 }
 
 /** Launch parameters drawn deterministically from the scenario id, then `variant` applied. */
@@ -158,17 +171,17 @@ export class ScenarioBuilder {
       prepare: (market, rng) => {
         const offset = offsetOf(market.spot());
         preroll(market, offset + p.kl[0]!);
-        return new FairValueFlow(p, offset, spec.halfLifeMs ?? FAIR_HALF_LIFE_MS, rng);
+        return new FairValueFlow(p, offset, spec.halfLifeMs ?? FAIR_HALF_LIFE_MS, rng, spec.volumeScale);
       },
     };
     if (spec.model === "fair") return fair;
-    // The no-agent public trades depend on the launch (raise, reserve, bundle, fees), not on the agent terms.
-    const recKey = `${id}|${setup.reserveBps}|${setup.terms.tradeFeeBps}/${setup.terms.launchFeeBps}`;
+    // The no-agent public trades depend on the launch (raise, reserve, bundle, fees) and the volume scale, not on the agent terms.
+    const recKey = `${id}|${setup.reserveBps}|${setup.terms.tradeFeeBps}/${setup.terms.launchFeeBps}|×${spec.volumeScale ?? 1}`;
     let recorded = this.recordings.get(recKey);
     if (recorded) {
       this.recordings.delete(recKey);
     } else {
-      recorded = { t: [], amount: [] };
+      recorded = { t: [], amount: [], churn: [] };
       simulate(fair, { kind: "none" }, undefined, recorded);
       if (this.recordings.size >= MAX_RECORDINGS) this.recordings.delete(this.recordings.keys().next().value!);
     }

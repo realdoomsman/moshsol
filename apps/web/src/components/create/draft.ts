@@ -3,7 +3,8 @@ import type { TokenImage } from "./image";
 
 /** localStorage key of the autosaved wizard (§4.6). */
 export const DRAFT_KEY = "hf-create-draft";
-const VERSION = 1;
+// 2: `whitelistOn` became `access` ("open" | "whitelist" | "self"); older drafts are dropped.
+const VERSION = 2;
 
 interface StoredImage {
   dataUrl: string;

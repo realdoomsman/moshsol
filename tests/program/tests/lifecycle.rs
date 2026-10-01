@@ -193,6 +193,19 @@ fn platform_beta_caps_bound_raise_and_wallet_deposits() {
     env.assert_invariants(&open);
     env.assert_invariants(&strict);
 
+    // The creator funding their own raise is exempt from the platform cap (not from their own).
+    let creator = env.user(30);
+    let mut a = default_args();
+    a.raise_max = 20 * SOL;
+    a.whitelist_root = merkle(&[merkle_leaf(&creator.pubkey())]).0;
+    let own = env.create_ok(&creator, a);
+    ok(env.deposit(&creator, &own, 12 * SOL, vec![]));
+    assert_eq!(env.backer(&own, &creator.pubkey()).unwrap().deposited, 12 * SOL);
+    assert_err(env.deposit(&b1, &own, SOL, vec![]), MoshError::NotWhitelisted);
+    ok(env.launch_token(&creator, &own));
+    assert_eq!(env.launch(&own).backer_count, 1);
+    env.assert_invariants(&own);
+
     // The raise cap can't sit below the platform minimum.
     let admin = env.admin.insecure_clone();
     let mut bad = params;

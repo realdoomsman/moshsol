@@ -101,13 +101,14 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
   const v = useMemo(
     () =>
       validateDraft(draft, {
+        creator: publicKey,
         // Until /api/platform loads, the raise minimum can't be checked; min 1 lamport keeps the rest honest.
         minRaiseLamports: minRaiseLamports ?? 1n,
         maxBundleSupplyBps: params?.maxBundleSupplyBps ?? LIMITS.minBundleSupplyBps,
         maxRaiseLamports: BigInt(maxRaiseCap),
         maxWalletDepositLamports: BigInt(maxWalletCap),
       }),
-    [draft, minRaiseLamports, params?.maxBundleSupplyBps, maxRaiseCap, maxWalletCap],
+    [draft, publicKey, minRaiseLamports, params?.maxBundleSupplyBps, maxRaiseCap, maxWalletCap],
   );
   const range = useMemo(() => bundleRange(params, draft), [params, draft]);
   const cost = useCreateCost(draft.name, draft.symbol, params);
@@ -277,7 +278,7 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
     draft.raiseMin && draft.raiseMax
       ? `${draft.raiseMin}–${draft.raiseMax} SOL${durationSecs ? ` · ${fmtDuration(durationSecs)}` : ""}`
       : null,
-    `≤ ${draft.bundlePct}% · ${draft.reservePct}% reserve · ${draft.whitelistOn ? "whitelist" : "open"}`,
+    `≤ ${draft.bundlePct}% · ${draft.reservePct}% reserve · ${draft.access === "self" ? "self-funded" : draft.access}`,
     null,
   ];
 

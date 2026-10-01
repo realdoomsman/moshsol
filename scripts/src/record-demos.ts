@@ -70,6 +70,7 @@ import {
   type LaunchAccount,
   type MoshClient,
 } from "@holdfast/sdk";
+import { NEUTRAL_FLOW } from "../../apps/agent/src/flow";
 import { DEFAULT_PARAMS, evaluate, isqrt, marketOf, type Sizing } from "../../apps/agent/src/strategy";
 import { LOCALNET_DIR, RPC_URL, airdrop, clientFor, loadOrCreateKeypair, send } from "./common";
 
@@ -82,9 +83,9 @@ const SLIPPAGE_BPS = 300;
 const AGENT_SIZING: Sizing = { minTradeLamports: 10_000_000n, slippageBps: 100 };
 /** Extra depth below the agent's trigger so EMA drift during the next ticks can't cancel the buy. */
 const DUMP_EXTRA_BPS = 120n;
-/** The agent's decision on `l` at `now`. */
+/** The agent's decision on `l` at `now` (flow features neutral: the demo dumps into a quiet market, no flow gate fires). */
 function predict(l: LaunchAccount, now: bigint) {
-  return evaluate(marketOf(l), AGENT_SIZING, now, DEFAULT_PARAMS);
+  return evaluate(marketOf(l), AGENT_SIZING, now, DEFAULT_PARAMS, NEUTRAL_FLOW);
 }
 
 interface State {
