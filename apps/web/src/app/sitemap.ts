@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { DOCS } from "@/components/docs/registry";
 import { api } from "@/lib/api";
+import { launchHref } from "@/lib/launch";
 import { SITE_URL } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +12,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const docs = DOCS.filter((d) => d.slug).map((d) => ({ url: `${SITE_URL}/docs/${d.slug}` }));
   const launches = await api
     .launches({ status: "all", sort: "new", limit: 200 })
-    .then((r) => r.launches.map((l) => ({ url: `${SITE_URL}/launch/${l.mint}`, lastModified: new Date((l.lastTradeAt ?? l.createdAt) * 1000) })))
+    .then((r) => r.launches.map((l) => ({ url: `${SITE_URL}${launchHref(l)}`, lastModified: new Date((l.lastTradeAt ?? l.createdAt) * 1000) })))
     .catch(() => []);
   return [...pages, ...docs, ...launches];
 }

@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { launchId } from "@/lib/launch";
 import { prefetch } from "@/lib/prefetch";
 import { backersQuery, candlesQuery, launchesQuery, launchQuery, platformQuery, recentTradesQuery } from "@/lib/query-options";
 import type { LaunchSummary } from "@/lib/types";
@@ -23,18 +24,18 @@ export async function prefetchHero(client: QueryClient): Promise<{ seed: LaunchS
     client.getQueryData(trendingQuery().queryKey),
     client.getQueryData(liveLaunchesQuery().queryKey)?.launches,
   );
-  const points = async (mint: string) => {
-    await prefetch(client, candlesQuery(mint, HERO_TF));
-    return candlesSince(client.getQueryData(candlesQuery(mint, HERO_TF).queryKey)?.candles, nowSec).length;
+  const points = async (id: string) => {
+    await prefetch(client, candlesQuery(id, HERO_TF));
+    return candlesSince(client.getQueryData(candlesQuery(id, HERO_TF).queryKey)?.candles, nowSec).length;
   };
-  let chart = primary && (await points(primary.mint)) >= BAND_MIN_POINTS ? primary : null;
-  if (!chart && fallback && fallback.mint !== primary?.mint && (await points(fallback.mint)) >= BAND_MIN_POINTS) chart = fallback;
+  let chart = primary && (await points(launchId(primary))) >= BAND_MIN_POINTS ? primary : null;
+  if (!chart && fallback && fallback.address !== primary?.address && (await points(launchId(fallback))) >= BAND_MIN_POINTS) chart = fallback;
   const seed = chart ?? fallback ?? primary;
   await Promise.all([
-    seed ? prefetch(client, launchQuery(seed.mint)) : null,
-    seed ? prefetch(client, backersQuery(seed.mint)) : null,
-    chart ? prefetch(client, recentTradesQuery(chart.mint, 200)) : null,
-    chart ? prefetch(client, agentTradesQuery(chart.mint)) : null,
+    seed ? prefetch(client, launchQuery(launchId(seed))) : null,
+    seed ? prefetch(client, backersQuery(launchId(seed))) : null,
+    chart ? prefetch(client, recentTradesQuery(launchId(chart), 200)) : null,
+    chart ? prefetch(client, agentTradesQuery(launchId(chart))) : null,
   ]);
   return { seed, chart };
 }

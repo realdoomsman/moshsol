@@ -1,10 +1,14 @@
 import { once } from "node:events";
 import http from "node:http";
+import type { LaunchVenue } from "@holdfast/sdk";
 import type { FlowFeatures } from "./flow";
 
 /** One entry of `GET /status` → `decisions` (see the Agent status API contract). */
 export interface Decision {
+  /** The launch PDA (what the agent keys everything by; pump launches share the default mint before `launch_pump`). */
+  address: string;
   mint: string;
+  venue: LaunchVenue;
   symbol?: string;
   /** Unix seconds (wall clock) when the decision was made. */
   at: number;
@@ -22,20 +26,26 @@ export interface Decision {
   flow: FlowFeatures;
 }
 
+export type CrankKind = "collect_fees" | "buyback_burn" | "graduate" | "wind_down";
+
 /**
- * One entry of `GET /status` → `windDowns`: a `wind_down` the agent cranked for a launch that met every rule
- * (in dry run: would have sent). Neither `signature` nor `error` = dry run.
+ * One entry of `GET /status` → `cranks`: a permissionless instruction the agent cranked for a launch that met
+ * every rule (in dry run: would have sent). Neither `signature` nor `error` = dry run.
  */
-export interface WindDown {
+export interface CrankAttempt {
+  kind: CrankKind;
+  address: string;
   mint: string;
+  venue: LaunchVenue;
   symbol?: string;
   /** Unix seconds (wall clock) of the attempt. */
   at: number;
   signature?: string;
   error?: string;
-  /** From the landed `WoundDown` event: lamports credited to backers, token base units returned to the curve. */
-  solToBackers?: string;
-  tokensReturned?: string;
+  /** Lamports, from the landed event: fees collected, SOL spent on the buyback, or SOL credited to backers at wind-down. */
+  amount?: string;
+  /** Token base units, from the landed event: burned by the buyback, or returned to the curve / sold at wind-down. */
+  tokens?: string;
 }
 
 export interface StatusSnapshot {
@@ -46,9 +56,11 @@ export interface StatusSnapshot {
   tick: number;
   /** Fee wallet balance as of the last tick (null before the first). */
   balanceSol: number | null;
+  /** Address lookup table used for PumpSwap trades once created or configured (`AGENT_ALT`). */
+  lookupTable: string | null;
   decisions: Decision[];
-  /** Recent wind-down attempts, newest first. */
-  windDowns: WindDown[];
+  /** Recent crank attempts, newest first. */
+  cranks: CrankAttempt[];
 }
 
 const CORS = {

@@ -4,6 +4,7 @@ import { lamportsToSol } from "@holdfast/sdk";
 import Link from "next/link";
 import { fmtSolValue } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
+import { launchHref } from "@/lib/launch";
 import { useLaunches } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { ButtonLink } from "../ui/button";
@@ -88,7 +89,7 @@ function Tile({ launch: l }: { launch: LaunchSummary }) {
   const raising = l.status === "raising";
   const up = (l.change24h ?? 0) >= 0;
   return (
-    <Link href={`/launch/${l.mint}`} className="block h-full p-5 transition-colors hover:bg-raised">
+    <Link href={launchHref(l)} className="block h-full p-5 transition-colors hover:bg-raised">
       <TokenAvatar src={l.image} symbol={l.symbol} mint={l.mint} size={40} />
       <p className="h3 mt-3 truncate text-ink">{l.name}</p>
       <p className="small text-ink-3">${l.symbol}</p>

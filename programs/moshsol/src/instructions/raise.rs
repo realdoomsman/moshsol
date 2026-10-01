@@ -14,7 +14,7 @@ pub struct Deposit<'info> {
     pub owner: Signer<'info>,
     #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
     pub platform: Box<Account<'info, Platform>>,
-    #[account(mut, seeds = [LAUNCH_SEED, launch.mint.as_ref()], bump = launch.bump)]
+    #[account(mut, seeds = [LAUNCH_SEED, launch.create_key.as_ref()], bump = launch.bump)]
     pub launch: Box<Account<'info, Launch>>,
     #[account(
         init_if_needed,
@@ -104,7 +104,7 @@ pub struct CancelLaunch<'info> {
     pub creator: Signer<'info>,
     #[account(
         mut,
-        seeds = [LAUNCH_SEED, launch.mint.as_ref()],
+        seeds = [LAUNCH_SEED, launch.create_key.as_ref()],
         bump = launch.bump,
         has_one = creator @ MoshError::Unauthorized
     )]
@@ -127,7 +127,7 @@ pub fn cancel_launch(ctx: Context<CancelLaunch>) -> Result<()> {
 pub struct Refund<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
-    #[account(mut, seeds = [LAUNCH_SEED, launch.mint.as_ref()], bump = launch.bump)]
+    #[account(mut, seeds = [LAUNCH_SEED, launch.create_key.as_ref()], bump = launch.bump)]
     pub launch: Box<Account<'info, Launch>>,
     #[account(
         mut,

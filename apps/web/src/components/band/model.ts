@@ -8,7 +8,6 @@ import {
   BPS,
   bps,
   compact,
-  curveOf,
   fmtPrice,
   fmtSol,
   lamportsToSol,
@@ -232,7 +231,7 @@ const PRICE_SCALE = 10n ** 24n;
 
 /**
  * The launch's curve after a trade moves spot to `price` (SOL per whole token) along x·y = k.
- * Clamped at the curve's floor (no real SOL left).
+ * Clamped at the curve's floor (no real SOL left; a pool without virtual reserves keeps 1 lamport).
  */
 export function curveAtPrice(c: CurveState, price: number): CurveState {
   const x = c.virtualSol + c.realSol;
@@ -240,11 +239,13 @@ export function curveAtPrice(c: CurveState, price: number): CurveState {
   const raw = BigInt(Math.max(0, Math.round(price * 1e27)));
   let x2 = isqrt((k * raw) / PRICE_SCALE);
   if (x2 < c.virtualSol) x2 = c.virtualSol;
+  if (x2 === 0n) x2 = 1n;
   return { virtualSol: c.virtualSol, realSol: x2 - c.virtualSol, tokenReserve: k / x2 };
 }
 
-/** Lowest spot the curve can reach (all real SOL sold back out). */
+/** Lowest spot the curve can reach (all real SOL sold back out); 0 on a pool with no virtual reserves. */
 export function curveFloorPrice(c: CurveState): number {
+  if (c.virtualSol === 0n) return 0;
   const k = (c.virtualSol + c.realSol) * c.tokenReserve;
   return spotPrice({ virtualSol: c.virtualSol, realSol: 0n, tokenReserve: k / c.virtualSol });
 }
@@ -314,16 +315,18 @@ const avg = (lamports: bigint, base: bigint) =>
 /**
  * What the program would let the vault agent do if spot were `price` right now: the launch's
  * frozen terms, its vault, window budgets and cost basis, with SDK quotes on the moved curve
- * (agent trades pay no fee). Sizes are the largest fill every on-chain check accepts.
+ * (agent trades pay no fee). `curve` is where the launch trades (`useVenueCurve`: the Holdfast
+ * curve, or the pump.fun curve / PumpSwap pool reserves). Sizes are the largest fill every on-chain
+ * check accepts.
  */
-export function simulateAgent(l: LaunchJson, price: number, nowSec: number): SimDecision {
+export function simulateAgent(l: LaunchJson, curve: CurveState, price: number, nowSec: number): SimDecision {
   const t = l.terms;
   const zones = agentZones(l, nowSec);
   const band = BigInt(t.agentBandBps);
   const maxImpact = t.agentMaxImpactBps;
   const bandPct = pctFromBps(t.agentBandBps);
   const impactPct = pctFromBps(maxImpact);
-  const c = curveAtPrice(curveOf(l), price);
+  const c = curveAtPrice(curve, price);
   const spot = spotPrice(c);
   const deviation = zones.ema > 0 ? spot / zones.ema - 1 : 0;
   const dev = fmtDeviation(deviation);
@@ -486,10 +489,10 @@ export function simulateAgent(l: LaunchJson, price: number, nowSec: number): Sim
  * Presets for the simulator chips. Moves are relative to the launch's spot and clamped at the curve
  * floor (labels show the move the curve can actually make); moves the curve can't make are dropped.
  */
-export function simulatorPresets(l: LaunchJson, nowSec: number): { id: string; label: string; price: number }[] {
+export function simulatorPresets(l: LaunchJson, curve: CurveState, nowSec: number): { id: string; label: string; price: number }[] {
   const z = agentZones(l, nowSec);
   const spot = l.priceSol;
-  const floor = curveFloorPrice(curveOf(l)) * 1.0001;
+  const floor = curveFloorPrice(curve) * 1.0001;
   const drop = Math.max(spot * 0.92, floor);
   const dump = Math.max(Math.min(z.avgCost, z.bandLow) * 0.97, floor);
   const dropPct = (1 - drop / spot) * 100;
@@ -512,14 +515,15 @@ export function simulatorPresets(l: LaunchJson, nowSec: number): { id: string; l
  */
 export function simulatorDomain(
   l: LaunchJson,
+  curve: CurveState,
   nowSec: number,
   include: number | null = null,
 ): { min: number; max: number; floor: number } {
   const z = agentZones(l, nowSec);
-  const near = simulatorPresets(l, nowSec)
+  const near = simulatorPresets(l, curve, nowSec)
     .filter((p) => p.id !== "dump")
     .map((p) => p.price);
-  const floor = curveFloorPrice(curveOf(l));
+  const floor = curveFloorPrice(curve);
   const core = [z.bandLow, z.bandHigh, l.priceSol, ...near, ...(include === null ? [] : [include])];
   const lo = Math.min(...core);
   const hi = Math.max(...core);

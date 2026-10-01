@@ -11,6 +11,7 @@ import { MenuItem, Popover } from "@/components/ui/popover";
 import { Select } from "@/components/ui/select";
 import { Segmented } from "@/components/ui/tabs";
 import { useNow } from "@/lib/hooks";
+import { launchId } from "@/lib/launch";
 import { useLaunches } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { useWatchlist } from "@/lib/watchlist";
@@ -68,7 +69,7 @@ function LaneList({
   /** `cards` = board column; `rows` = the mobile list; `grid` = tablet two-up. */
   layout: "cards" | "rows" | "grid";
 }) {
-  const held = useHeldOrder(launches, (l) => l.mint);
+  const held = useHeldOrder(launches, launchId);
   if (!launches.length) {
     const empty = LANE_EMPTY[lane];
     // A quiet placeholder the size of what would be there: a card in a column, a row in the list.
@@ -100,7 +101,7 @@ function LaneList({
     return (
       <div {...held.bind} className="rounded-md border border-line bg-surface px-3">
         {held.items.map((l) => (
-          <LaunchRow key={l.mint} launch={l} now={now} flash={flashes[l.mint]} fresh={isFresh(l.mint)} />
+          <LaunchRow key={launchId(l)} launch={l} now={now} flash={flashes[l.mint]} fresh={isFresh(launchId(l))} />
         ))}
       </div>
     );
@@ -108,7 +109,7 @@ function LaneList({
   return (
     <div {...held.bind} className={cn("grid gap-3", layout === "grid" && "sm:grid-cols-2")}>
       {held.items.map((l) => (
-        <LaunchCard key={l.mint} launch={l} now={now} flash={flashes[l.mint]} fresh={isFresh(l.mint)} />
+        <LaunchCard key={launchId(l)} launch={l} now={now} flash={flashes[l.mint]} fresh={isFresh(launchId(l))} />
       ))}
     </div>
   );
@@ -180,7 +181,7 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
   const launches = useLaunches({ status: "all", sort: "trending" });
   const flashes = useTradeFlashes();
   const all = launches.data?.launches ?? [];
-  const isFresh = useFreshIds(all.map((l) => l.mint));
+  const isFresh = useFreshIds(all.map(launchId));
 
   const setView = useCallback(
     (v: View) => {
@@ -200,7 +201,7 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
   const onTableSort = (key: SortKey) =>
     setSortState((s) => (s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" }));
 
-  const watched = watchingOnly ? all.filter((l) => watchlist.has(l.mint)) : all;
+  const watched = watchingOnly ? all.filter((l) => watchlist.has(launchId(l))) : all;
   const sorted = sortLaunches(watched, sort, now);
   const lanes: Record<Lane, LaunchSummary[]> = { raising: [], min: [], live: [] };
   for (const lane of LANES) {
@@ -217,7 +218,7 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
       icon={<Star className="size-4" strokeWidth={1.5} fill={watchingOnly ? "currentColor" : "none"} />}
       onClick={() => setWatchingOnly((w) => !w)}
     >
-      Watching <span className="num text-current/70">{watchlist.mints.length}</span>
+      Watching <span className="num text-current/70">{watchlist.ids.length}</span>
     </Button>
   );
   const sortSelect = (
@@ -250,7 +251,7 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
           </Button>
         }
       >
-        {watchlist.mints.length
+        {watchlist.ids.length
           ? "None of your watched launches are listed right now."
           : "You're not watching any launches. Star one on its page to follow it here."}
       </EmptyState>
@@ -274,7 +275,7 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
       <>
         <div className="hidden gap-3 md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {sorted.map((l) => (
-            <LaunchCard key={l.mint} launch={l} now={now} flash={flashes[l.mint]} fresh={isFresh(l.mint)} />
+            <LaunchCard key={launchId(l)} launch={l} now={now} flash={flashes[l.mint]} fresh={isFresh(launchId(l))} />
           ))}
         </div>
         <div className="md:hidden">

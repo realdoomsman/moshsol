@@ -10,7 +10,7 @@ use crate::state::{Backer, Launch, Platform};
 pub struct ClaimBackerFees<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
-    #[account(mut, seeds = [LAUNCH_SEED, launch.mint.as_ref()], bump = launch.bump)]
+    #[account(mut, seeds = [LAUNCH_SEED, launch.create_key.as_ref()], bump = launch.bump)]
     pub launch: Box<Account<'info, Launch>>,
     #[account(
         mut,
@@ -49,7 +49,7 @@ pub struct ClaimCreatorFees<'info> {
     pub creator: Signer<'info>,
     #[account(
         mut,
-        seeds = [LAUNCH_SEED, launch.mint.as_ref()],
+        seeds = [LAUNCH_SEED, launch.create_key.as_ref()],
         bump = launch.bump,
         has_one = creator @ MoshError::Unauthorized
     )]
@@ -81,7 +81,7 @@ pub fn claim_creator_fees(ctx: Context<ClaimCreatorFees>) -> Result<()> {
 pub struct SweepPlatformFees<'info> {
     #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
     pub platform: Box<Account<'info, Platform>>,
-    #[account(mut, seeds = [LAUNCH_SEED, launch.mint.as_ref()], bump = launch.bump)]
+    #[account(mut, seeds = [LAUNCH_SEED, launch.create_key.as_ref()], bump = launch.bump)]
     pub launch: Box<Account<'info, Launch>>,
     /// CHECK: must equal platform.fee_recipient
     #[account(mut, address = platform.fee_recipient @ MoshError::Unauthorized)]

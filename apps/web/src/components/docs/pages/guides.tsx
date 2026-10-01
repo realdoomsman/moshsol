@@ -239,8 +239,9 @@ export const forTraders: DocPage = {
           <P>
             Each launch trades on its own constant-product curve: <C>x · y = k</C>, where <C>x</C> is{" "}
             {p ? `${lamportsToSol(p.virtualSolReserves)} SOL of virtual reserves` : "virtual SOL reserves"} plus the real SOL in the
-            curve and <C>y</C> the tokens left in it. Spot price is <C>x / y</C>. Liquidity never migrates to a DEX and no instruction
-            takes it out while anyone outside the curve and vault holds the token, so the curve is always there to sell into.
+            curve and <C>y</C> the tokens left in it. Spot price is <C>x / y</C>. This is the legacy venue of the two launches created before pump.fun
+            launches; its liquidity never migrates to a DEX and no instruction takes it out while anyone outside the curve and vault
+            holds the token. New launches trade on pump.fun instead (see Venues).
           </P>
           <P>
             Sells can only pay out real SOL in the curve, so the curve stops quoting at the price where its real SOL reaches zero:

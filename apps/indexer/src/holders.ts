@@ -1,7 +1,30 @@
-import { TOKEN_2022_PROGRAM_ID, TOTAL_SUPPLY, curvePda, tokenAta, vaultPda } from "@holdfast/sdk";
+import {
+  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  TOTAL_SUPPLY,
+  bondingCurvePda,
+  curvePda,
+  poolBaseAta,
+  poolPda,
+  pumpAuthorityPda,
+  splAta,
+  tokenAta,
+  vaultPda,
+  type LaunchVenue,
+} from "@holdfast/sdk";
 import { PublicKey, type Connection } from "@solana/web3.js";
 import type { Store } from "./db";
 import type { HolderRow } from "./types";
+
+/** The launch whose holders to load; pump launches need their venue (curve vs PumpSwap pool) and SPL Token mint. */
+export interface HolderTarget {
+  address: string;
+  mint: string;
+  venue: LaunchVenue;
+  graduated: boolean;
+}
+
+type Label = NonNullable<HolderRow["label"]>;
 
 export interface HolderSet {
   /** Owners sorted by balance desc (curve/vault PDAs labelled). */
@@ -14,11 +37,14 @@ export interface HolderSet {
 }
 
 /**
- * Token-2022 holder snapshots, cached per mint for `ttlMs`; concurrent requests share one RPC call.
+ * Holder snapshots, cached per mint for `ttlMs`; concurrent requests share one RPC call. Holdfast launches
+ * are Token-2022 mints whose curve and vault are program PDAs; pump launches are SPL Token mints whose
+ * venue account is the bonding curve's ATA (the PumpSwap pool's base account once graduated) and whose
+ * vault is the pump authority's ATA. Those accounts are labelled and never counted as holders.
  *
  * Preferred source is getProgramAccounts (memcmp mint @0, sliced to owner+amount) — exact.
  * Public RPCs exclude the token programs from secondary indexes, so on the first such error we
- * switch permanently to reading the actual token accounts of the curve, the vault and every
+ * switch permanently to reading the actual token accounts of the venue, the vault and every
  * wallet that ever traded the launch (from the indexed trade ledger).
  */
 export class Holders {
@@ -43,34 +69,52 @@ export class Holders {
     this.cache.clear();
   }
 
-  async get(mint: string, launch: string): Promise<HolderSet> {
-    const hit = this.cache.get(mint);
+  async get(target: HolderTarget): Promise<HolderSet> {
+    const hit = this.cache.get(target.mint);
     if (hit && Date.now() - hit.at < this.ttlMs) return hit;
-    const running = this.inflight.get(mint);
+    const running = this.inflight.get(target.mint);
     if (running) return running;
-    const p = this.load(mint, launch).finally(() => this.inflight.delete(mint));
-    this.inflight.set(mint, p);
+    const p = this.load(target).finally(() => this.inflight.delete(target.mint));
+    this.inflight.set(target.mint, p);
     return p;
   }
 
-  private async load(mint: string, launch: string): Promise<HolderSet> {
-    const launchKey = new PublicKey(launch);
-    const labels = new Map<string, "curve" | "vault">([
-      [curvePda(launchKey, this.programId).toBase58(), "curve"],
-      [vaultPda(launchKey, this.programId).toBase58(), "vault"],
-    ]);
-    const byOwner = new Map<string, { amount: bigint; label: "curve" | "vault" | null }>();
+  /** The venue's and the vault's token accounts (with their owner) for a launch. */
+  private programAccounts(t: HolderTarget): { tokenAccount: PublicKey; owner: PublicKey; label: Label }[] {
+    const launch = new PublicKey(t.address);
+    if (t.venue === "holdfast") {
+      return [
+        { tokenAccount: curvePda(launch, this.programId), owner: launch, label: "curve" },
+        { tokenAccount: vaultPda(launch, this.programId), owner: launch, label: "vault" },
+      ];
+    }
+    const mint = new PublicKey(t.mint);
+    const curve = bondingCurvePda(mint);
+    const pool = poolPda(mint);
+    const authority = pumpAuthorityPda(launch, this.programId);
+    return [
+      { tokenAccount: splAta(curve, mint), owner: curve, label: "curve" },
+      { tokenAccount: poolBaseAta(pool, mint), owner: pool, label: "pool" },
+      { tokenAccount: splAta(authority, mint), owner: authority, label: "vault" },
+    ];
+  }
+
+  private async load(t: HolderTarget): Promise<HolderSet> {
+    const tokenProgram = t.venue === "holdfast" ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+    const program = this.programAccounts(t);
+    const labels = new Map<string, Label>(program.map((p) => [p.tokenAccount.toBase58(), p.label]));
+    const byOwner = new Map<string, { amount: bigint; label: Label | null }>();
     const add = (tokenAccount: PublicKey, owner: PublicKey, amount: bigint) => {
       const label = labels.get(tokenAccount.toBase58()) ?? null;
-      // Curve/vault rows are keyed (and shown) by their PDA token account so they never merge with users.
+      // Venue/vault rows are keyed (and shown) by their token account so they never merge with users.
       const key = label ? tokenAccount.toBase58() : owner.toBase58();
       byOwner.set(key, { amount: (byOwner.get(key)?.amount ?? 0n) + amount, label });
     };
     if (!this.gpaUnavailable) {
       try {
-        const accounts = await this.connection.getProgramAccounts(TOKEN_2022_PROGRAM_ID, {
+        const accounts = await this.connection.getProgramAccounts(tokenProgram, {
           commitment: "confirmed",
-          filters: [{ memcmp: { offset: 0, bytes: mint } }],
+          filters: [{ memcmp: { offset: 0, bytes: t.mint } }],
           // Token account layout: mint(32) owner(32) amount(u64 LE) …
           dataSlice: { offset: 32, length: 40 },
         });
@@ -84,16 +128,16 @@ export class Holders {
       }
     }
     if (this.gpaUnavailable) {
-      // Exact balances for the curve, the vault and every wallet that ever traded this launch
-      // (their Token-2022 ATAs), fetched 100 at a time. Only wallets that received tokens by
-      // transfer without ever trading are missed.
-      const mintKey = new PublicKey(mint);
+      // Exact balances for the venue, the vault and every wallet that ever traded this launch
+      // (their ATAs), fetched 100 at a time. Only wallets that received tokens by transfer without
+      // ever trading are missed — on pump launches, where public trades happen on pump.fun, that is
+      // everyone but the agent, so this fallback is only as good as the RPC's getProgramAccounts.
+      const mintKey = new PublicKey(t.mint);
       const entries: { tokenAccount: PublicKey; owner: PublicKey }[] = [
-        { tokenAccount: curvePda(launchKey, this.programId), owner: launchKey },
-        { tokenAccount: vaultPda(launchKey, this.programId), owner: launchKey },
-        ...this.store.traders(launch).map((t) => {
-          const owner = new PublicKey(t);
-          return { tokenAccount: tokenAta(owner, mintKey), owner };
+        ...program,
+        ...this.store.traders(t.address).map((w) => {
+          const owner = new PublicKey(w);
+          return { tokenAccount: t.venue === "holdfast" ? tokenAta(owner, mintKey) : splAta(owner, mintKey), owner };
         }),
       ];
       for (let i = 0; i < entries.length; i += 100) {
@@ -124,7 +168,7 @@ export class Holders {
     holders.sort((a, b) => (BigInt(b.amount) > BigInt(a.amount) ? 1 : BigInt(b.amount) < BigInt(a.amount) ? -1 : 0));
     const topPct = holders.find((h) => h.label === null)?.pct ?? 0;
     const set: HolderSet = { holders, count, topPct, at: Date.now() };
-    this.cache.set(mint, set);
+    this.cache.set(t.mint, set);
     return set;
   }
 }

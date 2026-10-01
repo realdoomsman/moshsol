@@ -1,6 +1,6 @@
 "use client";
 
-import { previewBundle, type BundlePreview } from "@holdfast/sdk";
+import { previewBundle, previewPumpBundle, type BundlePreview } from "@holdfast/sdk";
 import { ACCOUNT_SIZE, ExtensionType, getMintLen } from "@solana/spl-token";
 import { useMemo } from "react";
 import { useMoshClient } from "@/lib/chain";
@@ -24,8 +24,10 @@ export interface BundleRange {
 }
 
 /**
- * The `launch` instruction's bundle buy at the minimum and maximum raise (`previewBundle` mirrors
- * the program math exactly). Null until min/max parse and platform params are loaded.
+ * The `launch` / `launch_pump` instruction's bundle buy at the minimum and maximum raise
+ * (`previewBundle` / `previewPumpBundle` mirror the program math exactly; new launches are pump.fun
+ * tokens unless the platform still allows the Holdfast curve). Null until min/max parse and
+ * platform params are loaded.
  */
 export function bundleRange(
   params: PlatformInfo["params"] | undefined,
@@ -36,14 +38,10 @@ export function bundleRange(
   const hi = previewLamports(d.raiseMax);
   if (lo === null || hi === null || hi < lo) return null;
   const bundleSupplyBps = Math.round(d.bundlePct * 100);
-  const run = (raised: bigint) =>
-    previewBundle({
-      raised,
-      virtualSol: BigInt(params.virtualSolReserves),
-      launchFeeBps: params.launchFeeBps,
-      reserveBps: Math.round(d.reservePct * 100),
-      bundleSupplyBps,
-    });
+  const run = (raised: bigint) => {
+    const terms = { raised, launchFeeBps: params.launchFeeBps, reserveBps: Math.round(d.reservePct * 100), bundleSupplyBps };
+    return params.holdfastCurveEnabled ? previewBundle({ ...terms, virtualSol: BigInt(params.virtualSolReserves) }) : previewPumpBundle(terms);
+  };
   const atMax = run(hi);
   return { lo, hi, atMin: run(lo), atMax, cappedAtMax: Math.round(atMax.supplyPct * 100) >= bundleSupplyBps };
 }
@@ -56,7 +54,8 @@ export interface CreateCost {
 }
 
 /**
- * What creating costs the creator: the platform create fee, rent for the launch account, the mint
+ * What creating costs the creator: the platform create fee, rent for the launch account and (Holdfast
+ * curve launches only; a pump launch creates its token at launch, paid from the raise) the mint
  * (with on-mint metadata) and the curve/vault token accounts, plus a network-fee allowance. Rent is
  * `(len + 128) * 3480 * 2` lamports on every cluster, so it's computed locally rather than spending
  * public-RPC quota on getMinimumBalanceForRentExemption.
@@ -69,14 +68,11 @@ export function useCreateCost(name: string, symbol: string, params: PlatformInfo
     // The metadata URI is only known after upload; the indexer issues `${INDEXER_URL}/files/meta/<id>.json`.
     const uriLen = `${INDEXER_URL}/files/meta/`.length + 40;
     const metadataLen = 4 + 32 + 32 + 4 * 4 + nameLen + symbolLen + uriLen;
-    const sizes = [
-      client.program.account.launch.size,
-      getMintLen([ExtensionType.MetadataPointer]) + metadataLen,
-      ACCOUNT_SIZE,
-      ACCOUNT_SIZE,
-    ];
+    const sizes = params?.holdfastCurveEnabled
+      ? [client.program.account.launch.size, getMintLen([ExtensionType.MetadataPointer]) + metadataLen, ACCOUNT_SIZE, ACCOUNT_SIZE]
+      : [client.program.account.launch.size];
     return sizes.reduce((sum, len) => sum + BigInt((len + 128) * 3480 * 2), 0n);
-  }, [client, nameLen, symbolLen]);
+  }, [client, nameLen, symbolLen, params?.holdfastCurveEnabled]);
   const createFee = params ? BigInt(params.createFeeLamports) : null;
   return { createFee, rent, network: TX_FEE_LAMPORTS, total: createFee !== null ? rent + createFee + TX_FEE_LAMPORTS : null };
 }

@@ -33,6 +33,49 @@ export const theVault: DocPage = {
       ),
     },
     {
+      id: "venues",
+      title: "Venues",
+      body: (
+        <>
+          <P>
+            Every launch has a venue. New launches are <B>pump.fun tokens</B>: the raise seeds the launch with a one-time create
+            key, and the launch instruction creates the token on pump.fun with the launch itself as the token&rsquo;s creator and
+            buys the bundle on pump.fun&rsquo;s bonding curve in the same transaction, before any public trade can exist. Public
+            trading happens on pump.fun (and on PumpSwap once the curve completes and <C>graduate_pump</C> records the pool), never on
+            this site; there is no Holdfast trade fee on these launches. The vault agent trades the vault on that venue under the
+            same rules as below (band, cost basis, window caps, max impact); only the same-slot anti-sandwich rule has nothing to
+            see there, so the agent relies on its slippage floor and private submission.
+          </P>
+          <Ul>
+            <li>
+              <B>Creator fees.</B> pump.fun pays the token&rsquo;s creator a share of every trade; the launch is the creator, so the
+              creator wallet earns nothing from trades. Any wallet can collect them (<C>collect_pump_fees</C>): 25% to the launch&rsquo;s
+              buyback-and-burn pool, 75% to the vault SOL (to backers once wound down).
+            </li>
+            <li>
+              <B>Agent profit.</B> Realized profit on agent sells goes 25% to the buyback pool and 75% to backers (100% to backers on
+              the legacy Holdfast-curve launches).
+            </li>
+            <li>
+              <B>Buyback and burn.</B> <C>buyback_burn</C> (permissionless, at most once a minute per launch) spends the pool on the
+              Holdfast token on its own pump.fun curve or PumpSwap pool and burns what it bought. Every burn is listed on the launch
+              page.
+            </li>
+            <li>
+              <B>Wind-down.</B> Same age and idle rules; &ldquo;nobody else holds&rdquo; is read from the venue&rsquo;s own token account plus
+              the vault, then the vault&rsquo;s tokens are sold into the venue and the proceeds plus the vault SOL go to backers. The
+              buyback pool stays for the crank.
+            </li>
+          </Ul>
+          <P>
+            The two launches created before this change trade on the <B>Holdfast curve</B>, the program&rsquo;s own bonding curve
+            described in the rest of these docs (1% trade fee split between backers, creator and platform; liquidity that never
+            migrates). New launches on that curve are closed (<C>holdfast_curve_enabled</C> is off on mainnet).
+          </P>
+        </>
+      ),
+    },
+    {
       id: "who-can-move-it",
       title: "Who can move it",
       body: (
@@ -113,7 +156,7 @@ export const agents: DocPage = {
   group: "Protocol",
   nav: "The vault agent",
   title: "The vault agent",
-  description: "A single rate-limited signer that trades each vault against its own curve — buying dips below cost, selling rallies above it.",
+  description: "A single rate-limited signer that trades each vault on its venue (pump.fun / PumpSwap, or the legacy Holdfast curve) — buying dips below cost, selling rallies above it.",
   sections: ({ p, platform }) => [
     {
       id: "rules",

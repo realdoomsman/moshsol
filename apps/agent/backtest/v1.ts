@@ -40,7 +40,7 @@ export function evaluateV1(m: MarketState, s: Sizing, now: bigint): Plan {
     const ideal = buyToPrice(p, minBig((p.ema * (BPS - band)) / BPS, impactTargets(p, t.maxImpactBps).up));
     if (ideal < s.minTradeLamports) return hold("too_small");
     const hi = minBig(ideal, perTrade);
-    const impactOk = (a: bigint) => buyImpactOk(p, t.maxImpactBps, a);
+    const impactOk = (a: bigint) => buyImpactOk(m, p, a);
     const fill = (a: bigint) => tokensOut(p.x, p.y, a);
     let solIn = largestFeasible(hi, (a) => impactOk(a) && buyBelowCost(p, a, fill(a)));
     if (solIn < s.minTradeLamports) solIn = largestFeasible(minBig(hi, m.buybackSol), (a) => impactOk(a) && buyBelowAvgSell(m, a, fill(a)));

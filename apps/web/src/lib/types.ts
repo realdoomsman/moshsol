@@ -1,4 +1,4 @@
-import type { LaunchJson, LaunchStatus } from "@holdfast/sdk";
+import type { LaunchJson, LaunchStatus, LaunchVenue } from "@holdfast/sdk";
 
 /** Shapes served by apps/indexer (see shared contract). Lamport/base-unit amounts are decimal strings. */
 
@@ -35,6 +35,10 @@ export interface LaunchSummary extends LaunchJson {
   vaultWithdrawnTokens: string;
   /** The permissionless wind-down; null while not wound down (or its event wasn't indexed). */
   woundDown: { timestamp: number; solToBackers: number; tokensReturned: string; signature: string } | null;
+  /** Pump launches: `graduate_pump` recorded the PumpSwap pool; null before (and always on Holdfast launches). */
+  graduation: { timestamp: number; signature: string; pool: string } | null;
+  /** Permissionless pump cranks seen so far (`collect_pump_fees`, `buyback_burn`). */
+  cranks: { creatorFeeCollections: number; buybacks: number; lastCollectedAt: number | null; lastBuybackAt: number | null };
 }
 
 export interface TradeRow {
@@ -87,9 +91,10 @@ export interface HolderRow {
   label: "curve" | "vault" | null;
 }
 
-/** A thread comment (`/api/launches/:mint/comments`, WS `comment`); `body` is plain text. */
+/** A thread comment (`/api/launches/:id/comments`, WS `comment`); `body` is plain text. Threads are keyed by the launch address. */
 export interface Comment {
   id: number;
+  launch: string;
   mint: string;
   wallet: string;
   name: string | null;
@@ -111,7 +116,7 @@ export interface CommentsPage {
 
 export type TraderWindow = "24h" | "7d" | "all";
 
-/** `/api/launches/:mint/traders`: a non-agent trader's volume on one launch. */
+/** `/api/launches/:id/traders`: a non-agent trader's volume on one launch. */
 export interface TraderStat {
   wallet: string;
   name: string | null;
@@ -169,13 +174,20 @@ export type ActivityType =
   | "creator_claim"
   | "profit_shared"
   | "wound_down"
-  | "vault_withdrawn";
+  | "vault_withdrawn"
+  | "creator_fees_collected"
+  | "buyback_burned"
+  | "graduated"
+  | "migrated";
 
 export interface ActivityEvent {
   id: string | number;
   type: ActivityType;
   signature: string;
   timestamp: number;
+  /** Launch address: what the per-launch queries of a pump launch are keyed by (its mint is unset while raising). */
+  launch: string;
+  venue: LaunchVenue;
   mint: string;
   symbol: string;
   name: string;
@@ -229,6 +241,12 @@ export interface PlatformInfo {
     agentBandBps: number;
     agentWindowSecs: number;
     emaPeriodSecs: number;
+    /** `create_launch` (Holdfast curve) still open; false on mainnet: new launches are pump.fun tokens. */
+    holdfastCurveEnabled: boolean;
+    /** Share of pump creator fees and agent profit routed to the buyback-and-burn pool. */
+    burnShareBps: number;
+    /** The Holdfast token `buyback_burn` buys; the default pubkey until set. */
+    buybackMint: string;
     paused: boolean;
     agentsPaused: boolean;
   };
@@ -236,6 +254,8 @@ export interface PlatformInfo {
 
 export interface AgentLaunchRow {
   mint: string;
+  address: string;
+  venue: LaunchVenue;
   symbol: string;
   name: string;
   image: string | null;
@@ -257,13 +277,16 @@ export interface AgentLaunchRow {
 export interface AgentsOverview {
   totals: { buys: number; sells: number; solSpent: string; solReceived: string };
   launches: AgentLaunchRow[];
-  recent: (TradeRow & { mint: string; symbol: string })[];
+  recent: (TradeRow & { mint: string; address: string; venue: LaunchVenue; symbol: string })[];
 }
 
 export type AgentAction = "buy" | "sell" | "hold" | "skip";
 
 export interface AgentDecision {
+  /** Launch PDA (the agent's map key). */
+  address: string;
   mint: string;
+  venue: LaunchVenue;
   symbol?: string;
   /** unix seconds */
   at: number;
@@ -292,6 +315,24 @@ export interface AgentDecision {
   };
 }
 
+/**
+ * A permissionless pump crank the agent attempted (`/status`, newest first); neither `signature` nor
+ * `error` = dry run. `amount` is lamports (collected / spent / paid to backers), `tokens` base units
+ * (burned / sold).
+ */
+export interface AgentCrank {
+  kind: "collect_fees" | "buyback_burn" | "graduate" | "wind_down";
+  address: string;
+  mint: string;
+  venue: LaunchVenue;
+  symbol?: string;
+  at: number;
+  signature?: string;
+  error?: string;
+  amount?: string;
+  tokens?: string;
+}
+
 export interface AgentStatus {
   agent: string;
   dryRun: boolean;
@@ -299,6 +340,9 @@ export interface AgentStatus {
   lastTickAt: number | null;
   tick: number;
   decisions: AgentDecision[];
+  cranks: AgentCrank[];
+  /** Address lookup table the agent's pump transactions use; null when none is configured. */
+  lookupTable: string | null;
 }
 
 /** `GET /api/health` (the same body comes back with a 503 while unhealthy). */
@@ -316,6 +360,8 @@ export interface IndexerHealth {
 /** `GET /api/search?q=`: up to 8 launches and 8 wallets. */
 export interface SearchLaunch {
   mint: string;
+  address: string;
+  venue: LaunchVenue;
   name: string;
   symbol: string;
   image: string | null;
@@ -344,7 +390,7 @@ export type WsMessage =
   | { type: "launch"; launch: LaunchSummary }
   /** The indexer rebuilt its index after a chain reset; everything cached is stale. */
   | { type: "reset"; genesisHash: string }
-  | { type: "comment"; mint: string; comment: Comment }
-  | { type: "comment_deleted"; mint: string; id: number };
+  | { type: "comment"; launch: string; comment: Comment }
+  | { type: "comment_deleted"; launch: string; id: number };
 
 export type { LaunchStatus };

@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { fmtChange, fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
+import { launchHref, launchId } from "@/lib/launch";
 import { useAgentStatus, useCandles, useLaunch, useTrades } from "@/lib/queries";
 import { clearsHeadline } from "@/lib/thresholds";
 import type { LaunchSummary } from "@/lib/types";
@@ -60,7 +61,7 @@ export function BandInstrument() {
     );
   }
   if (deciding) return <InstrumentSkeleton />;
-  return <Instrument mint={seed.mint} initial={seed} chart={chartLaunch !== null} nowSec={nowSec} />;
+  return <Instrument id={launchId(seed)} initial={seed} chart={chartLaunch !== null} nowSec={nowSec} />;
 }
 
 function Frame({ children, className }: { children: ReactNode; className?: string }) {
@@ -87,10 +88,10 @@ function InstrumentSkeleton() {
   );
 }
 
-function Instrument({ mint, initial, chart, nowSec }: { mint: string; initial: LaunchSummary; chart: boolean; nowSec: number }) {
-  const launchQ = useLaunch(mint);
+function Instrument({ id, initial, chart, nowSec }: { id: string; initial: LaunchSummary; chart: boolean; nowSec: number }) {
+  const launchQ = useLaunch(id);
   const l = launchQ.data ?? initial;
-  const href = `/launch/${l.mint}`;
+  const href = launchHref(l);
   const up = (l.change24h ?? 0) >= 0;
 
   return (
@@ -128,9 +129,9 @@ function Instrument({ mint, initial, chart, nowSec }: { mint: string; initial: L
 
 function ChartArea({ launch: l, nowSec, href }: { launch: LaunchSummary; nowSec: number; href: string }) {
   const [drawKey, setDrawKey] = useState(0);
-  const candles = useCandles(l.mint, HERO_TF);
-  const trades = useTrades(l.mint, 200);
-  const agent = useQuery(agentTradesQuery(l.mint));
+  const candles = useCandles(launchId(l), HERO_TF);
+  const trades = useTrades(launchId(l), 200);
+  const agent = useQuery(agentTradesQuery(launchId(l)));
   const points = bandSeries({
     candles: candlesSince(candles.data?.candles, nowSec),
     tf: HERO_TF,

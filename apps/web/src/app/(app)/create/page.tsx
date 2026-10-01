@@ -18,7 +18,7 @@ function canonicalKey(v: string | string[] | undefined): string | null {
 }
 
 /**
- * `/create` is the wizard; `/create?launched=<mint>&tx=<signature>` is its success screen (the
+ * `/create` is the wizard; `/create?launched=<launch id>&tx=<signature>` is its success screen (the
  * wizard lands there after the create transaction confirms, so a reload keeps it).
  */
 export default async function CreatePage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -30,7 +30,7 @@ export default async function CreatePage({ searchParams }: { searchParams: Promi
     const tx = typeof q.tx === "string" && /^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(q.tx) ? q.tx : null;
     return (
       <Hydrate client={client}>
-        <CreateSuccess mint={launched} signature={tx} />
+        <CreateSuccess id={launched} signature={tx} />
       </Hydrate>
     );
   }

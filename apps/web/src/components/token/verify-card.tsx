@@ -1,12 +1,24 @@
 "use client";
 
-import { PROGRAM_ID, TOTAL_SUPPLY, curvePda, timeAgo, vaultPda } from "@holdfast/sdk";
+import {
+  bondingCurvePda,
+  curvePda,
+  poolBaseAta,
+  poolPda,
+  PROGRAM_ID,
+  pumpAuthorityPda,
+  splAta,
+  timeAgo,
+  TOTAL_SUPPLY,
+  vaultPda,
+} from "@holdfast/sdk";
 import { PublicKey } from "@solana/web3.js";
 import { ChevronDown } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 import { useMintFacts, useTokenAccountAmount } from "@/lib/chain";
 import { fmtTokens } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
+import { launchId, VENUE_LABEL, venueKindOf } from "@/lib/launch";
 import type { LaunchSummary } from "@/lib/types";
 import { VerifyGlyph } from "../brand/glyphs";
 import { Address } from "../ui/address";
@@ -50,21 +62,33 @@ function AccountRow({ label, address }: { label: string; address: string }) {
 /**
  * Verify on-chain (§4.5, Jupiter risk scan): the launch's guarantees read straight from the chain —
  * collapsed to "5 checks passed · checked 5s ago". A failed check turns the summary and its row
- * `warn` with the reason, and opens the card; it is never hidden.
+ * `warn` with the reason, and opens the card; it is never hidden. Pump launches verify the same
+ * mint facts (pump.fun revokes both authorities and mints the same fixed supply) plus the vault ATA
+ * and the venue's token account; before `launch_pump` there is no mint yet, so only the accounts show.
  */
 export function VerifyCard({ launch: l, className }: { launch: LaunchSummary; className?: string }) {
   const launchKey = new PublicKey(l.address);
-  const curve = curvePda(launchKey).toBase58();
-  const vault = vaultPda(launchKey).toBase58();
-  const mint = useMintFacts(l.mint);
-  const vaultBal = useTokenAccountAmount(l.mint, vault);
-  const curveBal = useTokenAccountAmount(l.mint, curve);
+  const pump = l.venue === "pump";
+  const hasMint = l.mint !== PublicKey.default.toBase58();
+  const mintKey = hasMint ? new PublicKey(l.mint) : null;
+  const venueLabel = VENUE_LABEL[venueKindOf(l)];
+  const venue = !mintKey
+    ? null
+    : !pump
+      ? curvePda(launchKey)
+      : l.pump.graduated
+        ? poolBaseAta(poolPda(mintKey), mintKey)
+        : splAta(bondingCurvePda(mintKey), mintKey);
+  const vault = !pump ? vaultPda(launchKey) : mintKey ? splAta(pumpAuthorityPda(launchKey), mintKey) : null;
+  const mint = useMintFacts(l, hasMint);
+  const vaultBal = useTokenAccountAmount(launchId(l), vault?.toBase58() ?? null);
+  const venueBal = useTokenAccountAmount(launchId(l), venue?.toBase58() ?? null);
   const now = useNow(5_000);
   const [open, setOpen] = useState(false);
   const bodyId = useId();
   const live = l.status === "live";
 
-  const checks: Check[] = [
+  const mintChecks: Check[] = [
     {
       label: "Mint authority",
       ok: mint.data ? mint.data.mintAuthority === null : null,
@@ -88,22 +112,30 @@ export function VerifyCard({ launch: l, className }: { launch: LaunchSummary; cl
           {
             label: "Vault tokens",
             ok: vaultBal.data !== undefined ? vaultBal.data === BigInt(l.vaultTokens) : null,
-            value: `${fmtTokens(l.vaultTokens)} in a program-owned PDA`,
+            value: `${fmtTokens(l.vaultTokens)} in a program-owned ${pump ? "ATA" : "PDA"}`,
             failure: `The vault account holds ${vaultBal.data !== undefined ? fmtTokens(vaultBal.data) : "?"}, not the indexed ${fmtTokens(l.vaultTokens)}.`,
           },
         ]
       : []),
-    {
-      label: "Liquidity",
-      ok: curveBal.data !== undefined ? curveBal.data === BigInt(l.tokenReserve) : null,
-      value: "Curve, never migrates",
-      failure: `The curve account holds ${curveBal.data !== undefined ? fmtTokens(curveBal.data) : "?"}, not the indexed reserve.`,
-    },
+    pump
+      ? {
+          label: "Liquidity",
+          ok: venueBal.data !== undefined ? venueBal.data > 0n : null,
+          value: `${venueLabel}, read from chain`,
+          failure: `The ${venueLabel} token account holds nothing.`,
+        }
+      : {
+          label: "Liquidity",
+          ok: venueBal.data !== undefined ? venueBal.data === BigInt(l.tokenReserve) : null,
+          value: "Curve, never migrates",
+          failure: `The curve account holds ${venueBal.data !== undefined ? fmtTokens(venueBal.data) : "?"}, not the indexed reserve.`,
+        },
   ];
+  const checks = hasMint ? mintChecks : [];
   const settled = checks.every((c) => c.ok !== null);
   const failed = checks.filter((c) => c.ok === false);
   const passed = checks.filter((c) => c.ok === true).length;
-  const checkedAt = Math.max(mint.dataUpdatedAt, vaultBal.dataUpdatedAt, curveBal.dataUpdatedAt);
+  const checkedAt = Math.max(mint.dataUpdatedAt, vaultBal.dataUpdatedAt, venueBal.dataUpdatedAt);
   const expanded = open || failed.length > 0;
 
   return (
@@ -118,11 +150,13 @@ export function VerifyCard({ launch: l, className }: { launch: LaunchSummary; cl
         <span className="grid min-w-0 gap-0.5">
           <span className="h3 text-ink">Verify on-chain</span>
           <span className={cn("small num", failed.length ? "text-warn" : "text-ink-2")}>
-            {!settled && !failed.length
-              ? "Checking…"
-              : failed.length
-                ? `${failed.length} check${failed.length > 1 ? "s" : ""} failed`
-                : `${passed} checks passed ✓`}
+            {!hasMint
+              ? "The token is created on pump.fun at launch"
+              : !settled && !failed.length
+                ? "Checking…"
+                : failed.length
+                  ? `${failed.length} check${failed.length > 1 ? "s" : ""} failed`
+                  : `${passed} checks passed ✓`}
             {settled && checkedAt > 0 ? (
               <span className="text-ink-3"> · checked {timeAgo(Math.floor(checkedAt / 1000), now)}</span>
             ) : null}
@@ -149,10 +183,12 @@ export function VerifyCard({ launch: l, className }: { launch: LaunchSummary; cl
             </li>
           </ul>
           <div className="mt-2">
-            <AccountRow label="Mint" address={l.mint} />
+            {hasMint ? <AccountRow label="Mint" address={l.mint} /> : null}
             <AccountRow label="Launch account" address={l.address} />
-            <AccountRow label="Curve tokens" address={curve} />
-            <AccountRow label="Vault tokens" address={vault} />
+            {pump && !hasMint ? <AccountRow label="Create key" address={l.createKey} /> : null}
+            {venue ? <AccountRow label={pump ? `${venueLabel} tokens` : "Curve tokens"} address={venue.toBase58()} /> : null}
+            {vault ? <AccountRow label="Vault tokens" address={vault.toBase58()} /> : null}
+            {pump && l.pump.graduated ? <AccountRow label="PumpSwap pool" address={l.pump.pool} /> : null}
             <AccountRow label="Creator" address={l.creator} />
             <AccountRow label="Program" address={PROGRAM_ID.toBase58()} />
           </div>

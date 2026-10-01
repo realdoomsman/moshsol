@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useCallback, useState, type ReactNode } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
+import { launchHref, launchId, type LaunchRef } from "@/lib/launch";
 import { usePlatform } from "@/lib/queries";
 import { TX_STAGE_LABEL, type TxStage } from "@/lib/tx";
 import type { ActivityEvent, LaunchSummary, PortfolioBacked, PortfolioCreated, PortfolioHolding } from "@/lib/types";
@@ -34,9 +35,9 @@ export const claimBackerLabel = (l: LaunchSummary) => `Claim $${l.symbol} backer
 export const claimCreatorLabel = (l: LaunchSummary) => `Claim $${l.symbol} creator fees`;
 export const refundLabel = (l: LaunchSummary) => `Refund $${l.symbol}`;
 
-function LaunchCell({ l, size = 32 }: { l: Pick<LaunchSummary, "mint" | "name" | "symbol" | "image">; size?: number }) {
+function LaunchCell({ l, size = 32 }: { l: LaunchRef & Pick<LaunchSummary, "name" | "symbol" | "image">; size?: number }) {
   return (
-    <Link href={`/launch/${l.mint}`} className="group flex min-w-0 items-center gap-3">
+    <Link href={launchHref(l)} className="group flex min-w-0 items-center gap-3">
       <TokenAvatar src={l.image} symbol={l.symbol} mint={l.mint} size={size} />
       <span className="min-w-0">
         <span className="ui block truncate text-ink group-hover:underline group-hover:decoration-ink-3/60 group-hover:underline-offset-2">
@@ -99,7 +100,9 @@ export function BackedPanel({ rows, actions, now }: { rows: PortfolioBacked[]; a
       <EmptyState action={<ButtonLink href="/app" size="sm" variant="secondary">Find a raise</ButtonLink>}>
         No backed launches.
         {params
-          ? ` Backers earn ${params.backerFeeShareBps / 100}% of every trade fee and 100% of the vault agent's profit.`
+          ? params.holdfastCurveEnabled
+            ? ` Backers earn ${params.backerFeeShareBps / 100}% of every trade fee and 100% of the vault agent's profit.`
+            : ` Backers earn ${100 - params.burnShareBps / 100}% of the vault agent's profit; the rest buys and burns the Holdfast token.`
           : ""}
       </EmptyState>
     );
@@ -126,7 +129,7 @@ export function BackedPanel({ rows, actions, now }: { rows: PortfolioBacked[]; a
       <ul className="md:hidden">
         {rows.map((b) => (
           <ListRow
-            key={b.launch.mint}
+            key={launchId(b.launch)}
             l={b.launch}
             figures={
               <>
@@ -162,7 +165,7 @@ export function BackedPanel({ rows, actions, now }: { rows: PortfolioBacked[]; a
           {rows.map((b) => {
             const claimable = BigInt(b.claimable);
             return (
-              <TR key={b.launch.mint}>
+              <TR key={launchId(b.launch)}>
                 <TD>
                   <LaunchCell l={b.launch} />
                 </TD>
@@ -198,7 +201,11 @@ export function CreatedPanel({ rows, actions, now }: { rows: PortfolioCreated[];
     return (
       <EmptyState action={<ButtonLink href="/create" size="sm" variant="secondary">Create a launch</ButtonLink>}>
         No launches created.
-        {params ? ` Creators earn ${params.creatorFeeShareBps / 100}% of every trade fee on their launch.` : ""}
+        {params
+          ? params.holdfastCurveEnabled
+            ? ` Creators earn ${params.creatorFeeShareBps / 100}% of every trade fee on their launch.`
+            : " New launches are pump.fun tokens; the launch itself collects pump.fun's creator fees for its vault and the buyback pool."
+          : ""}
       </EmptyState>
     );
   }
@@ -221,7 +228,7 @@ export function CreatedPanel({ rows, actions, now }: { rows: PortfolioCreated[];
       <ul className="md:hidden">
         {rows.map((c) => (
           <ListRow
-            key={c.launch.mint}
+            key={launchId(c.launch)}
             l={c.launch}
             figures={
               <>
@@ -253,7 +260,7 @@ export function CreatedPanel({ rows, actions, now }: { rows: PortfolioCreated[];
           {rows.map((c) => {
             const fees = BigInt(c.creatorFeesUnclaimed);
             return (
-              <TR key={c.launch.mint}>
+              <TR key={launchId(c.launch)}>
                 <TD>
                   <LaunchCell l={c.launch} />
                 </TD>
@@ -309,7 +316,7 @@ export function RefundsPanel({
       <ul className="md:hidden">
         {rows.map((b) => (
           <ListRow
-            key={b.launch.mint}
+            key={launchId(b.launch)}
             l={b.launch}
             figures={<span>{fmtLamports(b.deposited)} SOL to refund</span>}
             action={action(b)}
@@ -341,7 +348,7 @@ export function RefundsPanel({
         </THead>
         <tbody>
           {rows.map((b) => (
-            <TR key={b.launch.mint}>
+            <TR key={launchId(b.launch)}>
               <TD>
                 <LaunchCell l={b.launch} />
               </TD>
@@ -389,7 +396,7 @@ export function HoldingsPanel({ rows }: { rows: PortfolioHolding[] }) {
     );
   }
   const trade = (h: PortfolioHolding) => (
-    <ButtonLink href={`/launch/${h.launch.mint}`} size="sm" variant="secondary">
+    <ButtonLink href={launchHref(h.launch)} size="sm" variant="secondary">
       Trade
     </ButtonLink>
   );
@@ -398,7 +405,7 @@ export function HoldingsPanel({ rows }: { rows: PortfolioHolding[] }) {
       <ul className="md:hidden">
         {rows.map((h) => (
           <ListRow
-            key={h.launch.mint}
+            key={launchId(h.launch)}
             l={h.launch}
             figures={
               <>
@@ -423,7 +430,7 @@ export function HoldingsPanel({ rows }: { rows: PortfolioHolding[] }) {
         </THead>
         <tbody>
           {rows.map((h) => (
-            <TR key={h.launch.mint}>
+            <TR key={launchId(h.launch)}>
               <TD>
                 <LaunchCell l={h.launch} />
               </TD>
@@ -457,6 +464,10 @@ const ACTIVITY_VERB: Record<ActivityEvent["type"], string> = {
   profit_shared: "Vault profit to backers",
   wound_down: "Wound down",
   vault_withdrawn: "Admin vault withdrawal",
+  creator_fees_collected: "pump.fun creator fees collected",
+  buyback_burned: "Buyback & burn",
+  graduated: "Graduated to PumpSwap",
+  migrated: "Layout migrated",
 };
 
 function verbOf(e: ActivityEvent): string {
@@ -469,6 +480,9 @@ function amountOf(e: ActivityEvent): string {
     return `${fmtTokens(e.tokenAmount)} for ${fmtLamports(e.solAmount)} SOL`;
   }
   if (e.type === "launched" && e.tokenAmount) return `${fmtTokens(e.tokenAmount)} to the vault`;
+  if (e.type === "buyback_burned" && e.tokenAmount && BigInt(e.tokenAmount) > 0n) {
+    return `${fmtLamports(e.solAmount ?? "0")} SOL → ${fmtTokens(e.tokenAmount)} burned`;
+  }
   if ((e.type === "wound_down" || e.type === "vault_withdrawn") && e.tokenAmount && BigInt(e.tokenAmount) > 0n) {
     return `${fmtLamports(e.solAmount ?? "0")} SOL + ${fmtTokens(e.tokenAmount)}`;
   }

@@ -55,7 +55,7 @@ holdfast:<kind>:v1
 
 | kind | subject | payload hashed |
 |---|---|---|
-| `comment` | launch mint | the `body` string exactly as sent in the request |
+| `comment` | the launch **address** (a pump launch has no mint of its own while raising) | the `body` string exactly as sent in the request |
 | `profile` | the wallet itself | the `profile` JSON string exactly as sent in the request |
 
 Rules enforced by the server:
@@ -110,15 +110,16 @@ Connect to `ws(s)://<indexer>/ws`. The server only pushes (client messages are i
 
 | `type` | Shape | When |
 |---|---|---|
-| `event` | `{ type, event: ActivityEvent }` | A new on-chain event was indexed (trade, deposit, launch, claim, …) |
-| `launch` | `{ type, launch: LaunchSummary }` | A launch's summary changed (every touching event, holder refresh, metadata) |
-| `comment` | `{ type, mint, comment: Comment }` | A comment was posted |
-| `comment_deleted` | `{ type, mint, id }` | A moderator removed a comment |
+| `event` | `{ type, event: ActivityEvent }` | A new on-chain event was indexed (trade, deposit, launch, claim, crank, …) |
+| `launch` | `{ type, launch: LaunchSummary }` | A launch's summary changed (every touching event, holder refresh, metadata, venue price poll) |
+| `comment` | `{ type, launch, comment: Comment }` | A comment was posted (`launch` = launch address) |
+| `comment_deleted` | `{ type, launch, id }` | A moderator removed a comment |
 | `reset` | `{ type, genesisHash }` | Chain reset: the index (including comments) was rebuilt — drop caches and refetch |
 
 ```json
-{ "type": "comment", "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1",
-  "comment": { "id": 15, "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1",
+{ "type": "comment", "launch": "ChpzEmQQ5f3Y2hTh8cf3nqWx7tK6P4XQ6K9m3LpJx9uZ",
+  "comment": { "id": 15, "launch": "ChpzEmQQ5f3Y2hTh8cf3nqWx7tK6P4XQ6K9m3LpJx9uZ",
+    "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1",
     "wallet": "FwYLuQQev8VnGnXySMd7NSJvSYwqhe3tgcdyWzEVpnAs", "name": "holdfast_dev", "avatar": null,
     "body": "creator here — backers get the vault's profit", "replyTo": null, "replyCount": 0, "createdAt": 1790498155,
     "isCreator": true, "isBacker": true, "holdsTokens": false } }
@@ -131,7 +132,18 @@ Connect to `ws(s)://<indexer>/ws`. The server only pushes (client messages are i
 ### LaunchSummary
 
 Returned by the launch list/detail endpoints, `/api/trending` and the `launch` WS message. It is the on-chain
-`Launch` account snapshot (`LaunchJson` from `@holdfast/sdk`) plus indexer fields.
+`Launch` account snapshot (`LaunchJson` from `@holdfast/sdk`: `venue`, `createKey`, `pump.{bondingCurve,pool,graduated}`,
+`buybackPoolSol`, `creatorFeesCollected`, `burnedSol`, `burnedTokens`, `lastBuybackTs`, on-chain `name`/`symbol`/`uri`, …)
+plus indexer fields.
+
+**Venues.** `venue` is `holdfast` (trades on this program's own curve; the two original mainnet launches) or `pump`
+(a pump.fun token the launch created; trading happens on pump.fun, then on PumpSwap once `pump.graduated`). A pump
+launch has **no mint until it launches**: `mint` is the default pubkey `11111111111111111111111111111111` while
+raising/refunding, so key pump launches by `address` (see `:id` below). For pump launches the indexer overwrites the
+snapshot's `priceSol` / `marketCapSol` with the venue's reserves — bonding curve `virtualSol / virtualToken` before
+graduation, PumpSwap pool `quote / base` balances after — re-read on every full refresh (`FULL_REFRESH_MS`) and every
+touching event, so `change24h`, sorting and stats work the same on both venues; `emaSol` stays the account's own sample.
+Between the curve completing and `graduate_pump` recording the pool there is nothing to quote and the last price is kept.
 
 ```json
 {
@@ -176,25 +188,29 @@ Returned by the launch list/detail endpoints, `/api/trending` and the `launch` W
   "profitSharedSol": 0,
   "vaultWithdrawnSol": 0,
   "vaultWithdrawnTokens": "0",
-  "woundDown": null
+  "woundDown": null,
+  "graduation": null,
+  "cranks": { "creatorFeeCollections": 0, "buybacks": 0, "lastCollectedAt": null, "lastBuybackAt": null }
 }
 ```
 
 | Indexer field | Meaning |
 |---|---|
-| `name`, `symbol`, `image`, `description`, `twitter`, `telegram`, `website`, `whitelist` | From the metadata JSON at `uri` (on-chain name/symbol until it loads) |
-| `change24h` | % price change vs the last trade ≥24 h ago (vs the launch price for younger launches); `null` unless live |
-| `volume24hSol`, `volume1hSol` | SOL traded in the window (agent trades included) |
+| `name`, `symbol`, `image`, `description`, `twitter`, `telegram`, `website`, `whitelist` | From the metadata JSON at `uri` (on-chain name/symbol until it loads; pump launches carry name/symbol/uri on the launch account, Holdfast launches on the mint) |
+| `change24h` | % price change vs the last trade ≥24 h ago (vs the launch price for younger launches); `null` unless live. On pump launches only agent trades are indexed, so the reference is usually the launch price |
+| `volume24hSol`, `volume1hSol` | SOL traded in the window through this program (agent trades included; public pump.fun trades are not indexed) |
 | `trades1h` | Trades in the last hour (agent trades included) |
 | `buyers24h`, `sellers24h` | Distinct non-agent wallets that bought / sold in the last 24 h |
 | `lastTradeAt` | Last indexed trade (`null` if none) |
-| `holders` | Wallets with a non-zero balance (curve and vault excluded) |
-| `topHolderPct` | Largest holder's % of total supply, curve and vault excluded; `null` until holders were first loaded |
+| `holders` | Wallets with a non-zero balance (the venue's own token account and the vault excluded); 0 for a pump launch without a mint |
+| `topHolderPct` | Largest holder's % of total supply, venue and vault excluded; `null` until holders were first loaded |
 | `comments` | Visible comments |
 | `creatorName` | The creator's profile name, `null` if unset |
-| `profitSharedSol` | SOL credited to backers from the vault agent's realized profit (sum of `VaultProfitShared` events) |
-| `vaultWithdrawnSol`, `vaultWithdrawnTokens` | Vault SOL / tokens (base units) the platform admin withdrew with `admin_withdraw_vault` (sum of `VaultWithdrawn`); each withdrawal is listed by `GET /api/launches/:mint/activity?type=vault_withdrawn` |
+| `profitSharedSol` | SOL of the vault agent's realized profit shared out (sum of `VaultProfitShared` events; 100% to backers on Holdfast launches, 75% backers / 25% buyback pool on pump launches) |
+| `vaultWithdrawnSol`, `vaultWithdrawnTokens` | Vault SOL / tokens (base units) the platform admin withdrew with `admin_withdraw_vault` (sum of `VaultWithdrawn`); each withdrawal is listed by `GET /api/launches/:id/activity?type=vault_withdrawn` |
 | `woundDown` | `{ timestamp, solToBackers, tokensReturned, signature }` from the `WoundDown` event (`solToBackers` in SOL, `tokensReturned` base units); `null` if not wound down (or the event predates the indexed history) |
+| `graduation` | Pump launches: `{ timestamp, signature, pool }` from the `PumpGraduated` event (`graduate_pump` recorded the PumpSwap pool); `null` before (and always on Holdfast launches) |
+| `cranks` | Pump launches: `{ creatorFeeCollections, buybacks, lastCollectedAt, lastBuybackAt }` — counts and last unix times of the indexed `CreatorFeesCollected` (`collect_pump_fees`) and `BuybackBurned` (`buyback_burn`) events; the SOL totals are the snapshot's `creatorFeesCollected`, `burnedSol`, `burnedTokens`, `buybackPoolSol` |
 
 `status` is `raising` (raise open or awaiting launch), `live` (trading), `refunding` (cancelled/failed raise) or
 `woundDown` (permissionless `wind_down` ran: trading stopped for good, curve + vault SOL were credited to backers).
@@ -219,23 +235,30 @@ realized profit and the wind-down payout. A backer's claimable amount (`/backers
 
 ```json
 { "id": "3NR4…vs6m:0", "type": "deposit", "signature": "3NR4…vs6m", "timestamp": 1790425997,
+  "launch": "HNCt4NhXq1cD7Yk2jv5sUw9bTq3aG8nR6pL2mZ4eF7vK", "venue": "holdfast",
   "mint": "A824aq2CUztjDr1oDsCg8ZRWYrJ8jb5yeRdTkj2bcE5n", "symbol": "FROG", "name": "Lily Frog",
   "image": "https://…/files/img/I9sdWZ9jbnLZ.svg", "actor": "FwYLuQQev8VnGnXySMd7NSJvSYwqhe3tgcdyWzEVpnAs",
   "solAmount": "30000000" }
 ```
 
+`launch` is the launch address (the stable key; `mint` is the default pubkey on a pump launch that hasn't launched).
 `type`: `trade`, `deposit`, `launch_created`, `launched`, `refund`, `cancelled`, `backer_claim`, `creator_claim`,
-`profit_shared`, `wound_down`, `vault_withdrawn`.
+`profit_shared`, `wound_down`, `vault_withdrawn`, and on pump launches `creator_fees_collected` (`collect_pump_fees`
+swept pump.fun / PumpSwap creator fees into the launch), `buyback_burned` (`buyback_burn` bought and burned the
+platform's buyback token), `graduated` (`graduate_pump` recorded the PumpSwap pool) and `migrated` (the admin's one-time
+layout migration after the program upgrade).
 `actor` is the trader/backer/creator (the launch creator for the launch-level `launched`/`cancelled`/`profit_shared`/
-`wound_down`; the platform fee recipient for `vault_withdrawn`). Optional: `isAgent`, `isBuy` (trades), `solAmount`
-(lamports: trade/deposit/claim amounts, the profit credited for `profit_shared`, curve + vault SOL credited to backers
-for `wound_down`, vault SOL withdrawn for `vault_withdrawn`), `tokenAmount` (trades, `launched`; tokens returned to the
-curve for `wound_down`; vault tokens withdrawn for `vault_withdrawn`).
+`wound_down`/`creator_fees_collected`/`buyback_burned`/`graduated`/`migrated`; the platform fee recipient for
+`vault_withdrawn`). Optional: `isAgent`, `isBuy` (trades), `solAmount` (lamports: trade/deposit/claim amounts, the
+profit credited for `profit_shared`, curve + vault SOL credited to backers for `wound_down`, vault SOL withdrawn for
+`vault_withdrawn`, creator fees collected for `creator_fees_collected`, SOL spent for `buyback_burned`), `tokenAmount`
+(trades, `launched`; tokens returned to the curve for `wound_down`; vault tokens withdrawn for `vault_withdrawn`; tokens
+burned for `buyback_burned`), `ref` (the PumpSwap pool for `graduated`; the mint burned for `buyback_burned`).
 
 ### Comment
 
 ```json
-{ "id": 3, "mint": "DRoHKBY6hAszKSBm8fey8AZqMDzPexkgYPSNeyZdHJNv",
+{ "id": 3, "launch": "ChpzEmQQ5f3Y2hTh8cf3nqWx7tK6P4XQ6K9m3LpJx9uZ", "mint": "DRoHKBY6hAszKSBm8fey8AZqMDzPexkgYPSNeyZdHJNv",
   "wallet": "HQru7X9aGHafTxr8S2NbNPiaei4RryhJiJgjoK13ATGS", "name": "bs_HQru7X", "avatar": "https://…/files/img/Oe7_XRPbyQ_J.png",
   "body": "gm holders", "replyTo": null, "replyCount": 1, "createdAt": 1790498023,
   "isCreator": false, "isBacker": false, "holdsTokens": false }
@@ -243,6 +266,7 @@ curve for `wound_down`; vault tokens withdrawn for `vault_withdrawn`).
 
 | Field | Meaning |
 |---|---|
+| `launch`, `mint` | The launch's address (what comments are keyed by) and its current mint |
 | `wallet`, `name`, `avatar` | Author and their profile name/avatar (`null` when unset) |
 | `body` | Trimmed text, control characters stripped, ≤500 chars, newlines kept (max one blank line) — render as plain text |
 | `replyTo` | Id of the comment it answers (same launch); it may have been removed by a moderator since |
@@ -268,6 +292,10 @@ curve for `wound_down`; vault tokens withdrawn for `vault_withdrawn`).
 ### `GET /api/platform`
 
 Global platform account (`404` if not initialized). Use a launch's `terms`, not these params, for quotes.
+`holdfastCurveEnabled` says whether `create_launch` (Holdfast curve) is still open — false on mainnet, where new
+launches are pump.fun tokens (`create_launch_pump`); `burnShareBps` is the share of a pump launch's creator fees and of
+the agent's realized profit that goes to its buyback-and-burn pool; `buybackMint` is the token `buyback_burn` buys and
+burns (the default pubkey `11111111111111111111111111111111` while unset: pools accrue, the crank refuses).
 
 ```json
 { "address": "675WZQsKXyFfCXD2a2iQdhFdYFdgz8HWiCJwrcCBuUgs", "admin": "FwYL…", "feeRecipient": "J2zc…",
@@ -276,24 +304,36 @@ Global platform account (`404` if not initialized). Use a launch's `terms`, not 
     "createFeeLamports": "5000000", "virtualSolReserves": "30000000000", "maxBundleSupplyBps": 2500,
     "minRaiseLamports": "50000000", "agentBuyBpsPerWindow": 1000, "agentSellBpsPerWindow": 500,
     "agentMaxImpactBps": 300, "agentBandBps": 200, "agentWindowSecs": 3600, "emaPeriodSecs": 1800,
-    "paused": false, "agentsPaused": false } }
+    "paused": false, "agentsPaused": false, "maxRaiseLamports": "0", "maxWalletDepositLamports": "0",
+    "holdfastCurveEnabled": false, "burnShareBps": 2500, "buybackMint": "11111111111111111111111111111111" } }
 ```
 
 ### `GET /api/stats`
 
 ```json
-{ "totalLaunches": 4, "liveLaunches": 2, "raisingLaunches": 1, "woundDownLaunches": 0, "totalRaisedSol": 1.08,
-  "totalVolumeSol": 0.817, "volume24hSol": 0.089, "backerFeesAccruedSol": 0.000449, "profitSharedSol": 0,
-  "agentTrades": 0, "vaultSol": 0.312, "vaultTokensValueSol": 0.744, "vaultWithdrawnSol": 0 }
+{ "totalLaunches": 4, "liveLaunches": 2, "raisingLaunches": 1, "woundDownLaunches": 0, "pumpLaunches": 2,
+  "totalRaisedSol": 1.08, "totalVolumeSol": 0.817, "volume24hSol": 0.089, "backerFeesAccruedSol": 0.000449,
+  "profitSharedSol": 0, "agentTrades": 0, "vaultSol": 0.312, "vaultTokensValueSol": 0.744, "vaultWithdrawnSol": 0,
+  "buybackPoolSol": 0.05, "burnedSol": 0.12, "creatorFeesCollectedSol": 0.68 }
 ```
 
 `backerFeesAccruedSol` is everything credited to backers (fee share + vault profit share + wind-down payouts);
 `profitSharedSol` is the vault-profit part. `vaultSol` / `vaultTokensValueSol` are what the vaults hold now (tokens at
-spot price); `vaultWithdrawnSol` is the SOL the platform admin has withdrawn from vaults with `admin_withdraw_vault`.
+spot / venue price); `vaultWithdrawnSol` is the SOL the platform admin has withdrawn from vaults with
+`admin_withdraw_vault`. `pumpLaunches` counts launches with `venue: "pump"`; `buybackPoolSol` (SOL waiting for
+`buyback_burn`), `burnedSol` (SOL already spent on buybacks) and `creatorFeesCollectedSol` (pump.fun / PumpSwap creator
+fees swept in) are sums over the launch snapshots.
 
 ---
 
 ## Launches
+
+### The `:id` parameter
+
+Every `/api/launches/:id…` route below resolves `:id` as the launch **address or its mint**. Pump launches have no mint
+until they launch (their `mint` is the default pubkey, which never resolves), so link them by `address`
+(`/launch/<venue === "pump" ? address : mint>` on the web); Holdfast launches keep working by mint. The response always
+carries both `address` and `mint`.
 
 ### `GET /api/launches`
 
@@ -301,23 +341,23 @@ spot price); `vaultWithdrawnSol` is the SOL the platform admin has withdrawn fro
 |---|---|---|
 | `status` | `all` | `raising` \| `live` \| `refunding` \| `woundDown` \| `all` |
 | `sort` | `new` | `new` \| `trending` (`volume1hSol + 0.25 × volume24hSol`) \| `volume` (24 h) \| `mcap` \| `raised` |
-| `q` | — | Case-insensitive substring of name, symbol or mint |
+| `q` | — | Case-insensitive substring of name, symbol, mint or address |
 | `limit` / `offset` | `50` / `0` | `limit` ≤ 200 |
 
 → `{ "launches": LaunchSummary[], "total": 4 }` (`total` counts all matches before paging).
 
-### `GET /api/launches/:mint`
+### `GET /api/launches/:id`
 
-→ `LaunchSummary`. `404` unknown mint.
+→ `LaunchSummary`. `404` unknown id.
 
-### `GET /api/launches/:mint/activity?type=&before=&limit=`
+### `GET /api/launches/:id/activity?type=&before=&limit=`
 
 The launch's indexed events, newest first. `type` narrows to one `ActivityEvent` type (`400` if unknown), e.g.
 `type=vault_withdrawn` lists every admin vault withdrawal (`actor` = recipient, `solAmount` lamports,
 `tokenAmount` base units, `signature` = the transaction). `limit` default 50, ≤ 500; `before` unix seconds.
 → `{ "events": ActivityEvent[] }`
 
-### `GET /api/launches/:mint/trades`
+### `GET /api/launches/:id/trades`
 
 Newest first.
 
@@ -332,7 +372,7 @@ Newest first.
 
 → `{ "trades": TradeRow[] }`. `400` on an invalid `side`/`minSol`/`trader`.
 
-### `GET /api/launches/:mint/traders`
+### `GET /api/launches/:id/traders`
 
 Top non-agent traders of the launch by SOL volume.
 
@@ -350,7 +390,7 @@ Top non-agent traders of the launch by SOL volume.
 
 `netSol` = sold − bought (cash flow, not PnL); `netTokens` = bought − sold in base units (string, may be negative).
 
-### `GET /api/launches/:mint/candles?tf=`
+### `GET /api/launches/:id/candles?tf=`
 
 `tf` seconds: `60` (default), `300`, `900`, `3600`, `86400`. Starts at the launch (bundle) price; each candle opens at
 the previous close.
@@ -360,7 +400,7 @@ the previous close.
   "volumeSol": 0.0794 } ] }
 ```
 
-### `GET /api/launches/:mint/backers`
+### `GET /api/launches/:id/backers`
 
 Live from chain (one RPC call). Sorted by deposit.
 
@@ -368,7 +408,7 @@ Live from chain (one RPC call). Sorted by deposit.
 { "backers": [ { "owner": "Ckbc…", "deposited": "50000000", "feesClaimed": "224286", "claimable": "0", "shareBps": 10000 } ] }
 ```
 
-### `GET /api/launches/:mint/deposits?before=&limit=`
+### `GET /api/launches/:id/deposits?before=&limit=`
 
 `limit` default 50, ≤ 500; `before` unix seconds.
 
@@ -376,9 +416,12 @@ Live from chain (one RPC call). Sorted by deposit.
 { "deposits": [ { "signature": "5ZYy…", "timestamp": 1790425601, "backer": "Ckbc…", "amount": "50000000", "raised": "50000000" } ] }
 ```
 
-### `GET /api/launches/:mint/holders?limit=`
+### `GET /api/launches/:id/holders?limit=`
 
-`limit` default 20, ≤ 1000. Cached per launch (`HOLDERS_TTL_MS`). `label` marks the curve/vault token accounts.
+`limit` default 20, ≤ 1000. Cached per launch (`HOLDERS_TTL_MS`). `label` marks the venue's and the vault's token
+accounts: `curve` (Holdfast curve PDA, or the pump.fun bonding curve's ATA), `pool` (the PumpSwap pool's base account
+once graduated) and `vault` (vault PDA, or the pump authority's ATA); they are never counted as holders. Holdfast
+launches are Token-2022 mints, pump launches SPL Token mints. `{ "holders": [] }` for a pump launch that hasn't launched.
 
 ```json
 { "holders": [
@@ -391,7 +434,7 @@ Live from chain (one RPC call). Sorted by deposit.
 
 ## Comments
 
-### `GET /api/launches/:mint/comments`
+### `GET /api/launches/:id/comments`
 
 Flat thread, newest first (replies included, linked by `replyTo`).
 
@@ -411,23 +454,23 @@ Flat thread, newest first (replies included, linked by `replyTo`).
 
 → `{ "comment": Comment }`. `404` if unknown or removed.
 
-### `POST /api/launches/:mint/comments`
+### `POST /api/launches/:id/comments`
 
 Body (JSON, ≤ 16 KB):
 
 ```json
 { "wallet": "HQru7X9aGHafTxr8S2NbNPiaei4RryhJiJgjoK13ATGS",
-  "message": "holdfast:comment:v1\nDRoHKBY6hAszKSBm8fey8AZqMDzPexkgYPSNeyZdHJNv\n<sha256(body) hex>\n1790498023",
+  "message": "holdfast:comment:v1\nChpzEmQQ5f3Y2hTh8cf3nqWx7tK6P4XQ6K9m3LpJx9uZ\n<sha256(body) hex>\n1790498023",
   "signature": "<base58 ed25519 signature of message>",
   "body": "gm holders",
   "replyTo": 1 }
 ```
 
-`201` → `{ "comment": Comment }`, and every `/ws` client receives `{ type: "comment", mint, comment }`.
+`201` → `{ "comment": Comment }`, and every `/ws` client receives `{ type: "comment", launch, comment }`.
 
 | Status | Error (examples) |
 |---|---|
-| `400` | `body must not be empty`, `body must be at most 500 characters`, `wallet is required (string)`, `invalid wallet`, `message is signed for <X>, not <mint>`, `message hash does not match the submitted content`, `signature must be a base58-encoded 64-byte Ed25519 signature`, `replyTo must be a visible comment on this launch` |
+| `400` | `body must not be empty`, `body must be at most 500 characters`, `wallet is required (string)`, `invalid wallet`, `message is signed for <X>, not <launch address>`, `message hash does not match the submitted content`, `signature must be a base58-encoded 64-byte Ed25519 signature`, `replyTo must be a visible comment on this launch` |
 | `401` | `invalid signature`, `message timestamp is outside ±300s of server time (<now>)` |
 | `404` | `launch not found` |
 | `409` | `this signed message was already used; sign a new one`, `you already posted this comment here recently` (same wallet + launch + text within 10 min) |
@@ -439,10 +482,11 @@ signature with the comment (not exposed by the API).
 ### `DELETE /api/comments/:id` (moderation)
 
 Header `x-admin-token: <ADMIN_TOKEN>`. Soft delete: the comment disappears from every read and counts, and
-`/ws` clients receive `{ type: "comment_deleted", mint, id }`. Idempotent.
+`/ws` clients receive `{ type: "comment_deleted", launch, id }`. Idempotent.
 
 ```json
-{ "ok": true, "id": 1, "mint": "DRoHKBY6hAszKSBm8fey8AZqMDzPexkgYPSNeyZdHJNv", "deletedAt": 1790498024, "alreadyDeleted": false }
+{ "ok": true, "id": 1, "launch": "ChpzEmQQ5f3Y2hTh8cf3nqWx7tK6P4XQ6K9m3LpJx9uZ", "mint": "DRoHKBY6hAszKSBm8fey8AZqMDzPexkgYPSNeyZdHJNv",
+  "deletedAt": 1790498024, "alreadyDeleted": false }
 ```
 
 | Status | Error |
@@ -475,22 +519,22 @@ Profile + stats, all from indexed data (no RPC call). Works for any valid wallet
     "comments": 0, "firstSeen": 1790412385
   },
   "launches": [
-    { "mint": "A824aq2CUztjDr1oDsCg8ZRWYrJ8jb5yeRdTkj2bcE5n", "name": "Lily Frog", "symbol": "FROG",
+    { "address": "HNCt4NhXq1cD7Yk2jv5sUw9bTq3aG8nR6pL2mZ4eF7vK", "venue": "holdfast", "mint": "A824aq2CUztjDr1oDsCg8ZRWYrJ8jb5yeRdTkj2bcE5n", "name": "Lily Frog", "symbol": "FROG",
       "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g", "status": "raising",
       "createdAt": 1790425994, "raised": "30000000", "raisedSol": 0.03, "raiseMin": "200000000", "raiseMax": "1000000000",
       "backerCount": 1, "priceSol": 2.9999e-8, "marketCapSol": 29.999, "volume24hSol": 0, "creatorFeesEarnedSol": 0 },
-    { "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1", "name": "Moshpit", "symbol": "MOSH",
+    { "address": "62dtus18U6vSSDB6srjyU5peibfYMQKTHDcATx6Rn3Wg", "venue": "holdfast", "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1", "name": "Moshpit", "symbol": "MOSH",
       "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g", "status": "live",
       "createdAt": 1790412385, "raised": "1000000000", "raisedSol": 1, "raiseMin": "1000000000", "raiseMax": "1000000000",
       "backerCount": 1, "priceSol": 3.1432e-8, "marketCapSol": 31.432, "volume24hSol": 0.044708593,
       "creatorFeesEarnedSol": 0.000134571 }
   ],
   "backed": [
-    { "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1", "name": "Moshpit", "symbol": "MOSH",
+    { "address": "62dtus18U6vSSDB6srjyU5peibfYMQKTHDcATx6Rn3Wg", "venue": "holdfast", "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1", "name": "Moshpit", "symbol": "MOSH",
       "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g", "status": "live",
       "depositedSol": 1, "shareBps": 10000, "feesEarnedSol": 0.000224285, "feesClaimableSol": 0.000224285,
       "firstDepositAt": 1790412386 },
-    { "mint": "A824aq2CUztjDr1oDsCg8ZRWYrJ8jb5yeRdTkj2bcE5n", "name": "Lily Frog", "symbol": "FROG",
+    { "address": "HNCt4NhXq1cD7Yk2jv5sUw9bTq3aG8nR6pL2mZ4eF7vK", "venue": "holdfast", "mint": "A824aq2CUztjDr1oDsCg8ZRWYrJ8jb5yeRdTkj2bcE5n", "name": "Lily Frog", "symbol": "FROG",
       "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g", "status": "raising",
       "depositedSol": 0.03, "shareBps": 10000, "feesEarnedSol": 0, "feesClaimableSol": 0, "firstDepositAt": 1790425997 }
   ]
@@ -583,7 +627,7 @@ Entry shapes per kind:
 - `backers`: `rank, wallet, name, avatar, feesEarnedSol, depositedSol, launchesBacked`
 - `creators`: `rank, wallet, name, avatar, score, volumeSol, raisedSol, creatorFeesSol` (fees earned in the window; `all` = claimed + unclaimed), `launches`, `liveLaunches`
 - `traders`: `rank, wallet, name, avatar, volumeSol, trades, buys, sells, buyVolumeSol, sellVolumeSol, netSol, launchesTraded, lastTradeAt`
-- `launches`: `rank, mint, name, symbol, image, creator, creatorName, volumeSol, trades, traders, priceSol, marketCapSol, mcapChangePct (null if no reference price), holders`
+- `launches`: `rank, address, venue, mint, name, symbol, image, creator, creatorName, volumeSol, trades, traders, priceSol, marketCapSol, mcapChangePct (null if no reference price), holders`
 
 `400` on an invalid `kind`/`window`/`limit`.
 
@@ -591,14 +635,14 @@ Entry shapes per kind:
 
 `q`: 1–64 chars (required, `400` otherwise). Up to 8 launches and 8 users.
 
-- Launches: case-insensitive substring of name or symbol, or (for `q` ≥ 3 base58 chars) a mint prefix
-  (case-sensitive). Exact symbol/name/mint matches first, then prefixes, then substrings; newest first within a tier.
+- Launches: case-insensitive substring of name or symbol, or (for `q` ≥ 3 base58 chars) a mint or launch address
+  prefix (case-sensitive). Exact symbol/name/mint/address matches first, then prefixes, then substrings; newest first within a tier.
 - Users: profile names starting with `q` (case-insensitive), and for `q` ≥ 3 base58 chars wallets starting with `q`
   (profiles, then any wallet seen on chain).
 
 ```json
 { "query": "VOLT",
-  "launches": [ { "mint": "DRoH…", "name": "Volt Runner", "symbol": "VOLT", "image": "https://…", "status": "live",
+  "launches": [ { "address": "62dt…", "venue": "holdfast", "mint": "DRoH…", "name": "Volt Runner", "symbol": "VOLT", "image": "https://…", "status": "live",
     "priceSol": 3.0099e-8, "marketCapSol": 30.099, "raised": "50000000", "holders": 1, "creatorName": null } ],
   "users": [ { "wallet": "FwYL…", "name": "holdfast_dev", "avatar": null } ] }
 ```
@@ -622,7 +666,8 @@ same ranking.
 
 ### `GET /api/portfolio/:wallet`
 
-Live from chain (backer accounts + Token-2022 balances; two RPC calls).
+Live from chain (backer accounts + Token-2022 and SPL Token balances; three RPC calls). `holdings` matches token
+balances to launches by mint, so it covers both venues.
 
 ```json
 { "backed": [ { "launch": LaunchSummary, "deposited": "50000000", "feesClaimed": "224286", "claimable": "0",
@@ -641,11 +686,11 @@ Vault-agent overview: totals, per-live-launch window budgets and EMA band, 50 la
 
 ```json
 { "totals": { "buys": 0, "sells": 0, "solSpent": "0", "solReceived": "0" },
-  "launches": [ { "mint": "…", "symbol": "VOLT", "name": "Volt Runner", "image": "…", "vaultSol": "14850000",
+  "launches": [ { "address": "…", "venue": "holdfast", "mint": "…", "symbol": "VOLT", "name": "Volt Runner", "image": "…", "vaultSol": "14850000",
     "vaultTokens": "1153667514021", "windowStart": 1790425741, "windowBuyCap": "1485000", "windowSolSpent": "0",
     "windowSellCap": "57683375701", "windowTokensSold": "0", "priceSol": 3.0099e-8, "emaSol": 3.0069e-8,
     "bandLowSol": 2.9467e-8, "bandHighSol": 3.0670e-8, "agentBuys": 0, "agentSells": 0 } ],
-  "recent": [ TradeRow & { "mint": "…", "symbol": "VOLT" } ] }
+  "recent": [ TradeRow & { "launch": "…", "venue": "holdfast", "mint": "…", "symbol": "VOLT" } ] }
 ```
 
 ---

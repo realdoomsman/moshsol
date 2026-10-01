@@ -6,6 +6,7 @@ pub mod errors;
 pub mod events;
 pub mod instructions;
 pub mod math;
+pub mod pump;
 pub mod state;
 
 use instructions::*;
@@ -48,6 +49,16 @@ pub mod moshsol {
         platform::accept_admin(ctx)
     }
 
+    /// One-time after the pump upgrade: grows the platform account to the current layout.
+    pub fn migrate_platform(ctx: Context<MigratePlatform>) -> Result<()> {
+        migrate::migrate_platform(ctx)
+    }
+
+    /// One-time per pre-pump launch after the upgrade: grows it to the current layout.
+    pub fn migrate_launch(ctx: Context<MigrateLaunch>) -> Result<()> {
+        migrate::migrate_launch(ctx)
+    }
+
     // ---------------- launch lifecycle ----------------
 
     pub fn create_launch(ctx: Context<CreateLaunch>, args: CreateLaunchArgs) -> Result<()> {
@@ -68,6 +79,52 @@ pub mod moshsol {
 
     pub fn launch(ctx: Context<LaunchToken>) -> Result<()> {
         launch_token::launch(ctx)
+    }
+
+    // ---------------- pump.fun launches ----------------
+
+    pub fn create_launch_pump(ctx: Context<CreateLaunchPump>, args: CreateLaunchPumpArgs) -> Result<()> {
+        pump_launch::create_launch_pump(ctx, args)
+    }
+
+    pub fn launch_pump(ctx: Context<LaunchPump>) -> Result<()> {
+        pump_launch::launch_pump(ctx)
+    }
+
+    pub fn graduate_pump(ctx: Context<GraduatePump>) -> Result<()> {
+        pump_launch::graduate_pump(ctx)
+    }
+
+    pub fn agent_buy_pump<'info>(
+        ctx: Context<'_, '_, 'info, 'info, AgentTradePump<'info>>,
+        sol_in: u64,
+        min_tokens_out: u64,
+    ) -> Result<()> {
+        pump_agent::agent_buy_pump(ctx, sol_in, min_tokens_out)
+    }
+
+    pub fn agent_sell_pump<'info>(
+        ctx: Context<'_, '_, 'info, 'info, AgentTradePump<'info>>,
+        tokens_in: u64,
+        min_sol_out: u64,
+    ) -> Result<()> {
+        pump_agent::agent_sell_pump(ctx, tokens_in, min_sol_out)
+    }
+
+    pub fn collect_pump_fees<'info>(ctx: Context<'_, '_, 'info, 'info, CollectPumpFees<'info>>) -> Result<()> {
+        pump_fees::collect_pump_fees(ctx)
+    }
+
+    pub fn buyback_burn<'info>(
+        ctx: Context<'_, '_, 'info, 'info, BuybackBurn<'info>>,
+        max_sol: u64,
+        min_tokens_out: u64,
+    ) -> Result<()> {
+        pump_fees::buyback_burn(ctx, max_sol, min_tokens_out)
+    }
+
+    pub fn wind_down_pump<'info>(ctx: Context<'_, '_, 'info, 'info, WindDownPump<'info>>) -> Result<()> {
+        vault::wind_down_pump(ctx)
     }
 
     // ---------------- trading ----------------

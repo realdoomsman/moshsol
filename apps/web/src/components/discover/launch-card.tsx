@@ -15,7 +15,7 @@ import { Sparkline } from "@/components/ui/sparkline";
 import { TokenAvatar } from "@/components/ui/token-avatar";
 import { WalletLink } from "@/components/wallet-peek/wallet-peek";
 import { fmtSolValue } from "@/lib/format";
-import { phaseOf } from "@/lib/launch";
+import { launchHref, launchId, phaseOf } from "@/lib/launch";
 import { candlesQuery } from "@/lib/query-options";
 import { SPARKLINE_MIN_POINTS } from "@/lib/thresholds";
 import type { LaunchSummary } from "@/lib/types";
@@ -42,8 +42,8 @@ export function Change({ value, className }: { value: number | null | undefined;
  * Closing prices over the last 24 h (15-minute candles, starting from the first bucket's open).
  * Fewer than 12 points → `null`, so cards omit the line and tables show "—" (§6.10).
  */
-export function useDaySpark(mint: string, enabled: boolean, now: number): number[] | null {
-  const candles = useQuery({ ...candlesQuery(mint, 900), enabled, staleTime: 60_000 });
+export function useDaySpark(id: string, enabled: boolean, now: number): number[] | null {
+  const candles = useQuery({ ...candlesQuery(id, 900), enabled, staleTime: 60_000 });
   const recent = (candles.data?.candles ?? []).filter((c) => c.time >= now - 86_400);
   if (!recent.length) return null;
   const values = [recent[0].open, ...recent.map((c) => c.close)];
@@ -71,7 +71,7 @@ function Byline({ l, now }: { l: LaunchSummary; now: number }) {
 }
 
 function LiveBody({ l, now }: { l: LaunchSummary; now: number }) {
-  const spark = useDaySpark(l.mint, true, now);
+  const spark = useDaySpark(launchId(l), true, now);
   const vault = vaultOf(l);
   return (
     <>
@@ -136,7 +136,7 @@ function RaisingBody({ l, now }: { l: LaunchSummary; now: number }) {
         </div>
         {open ? (
           <span className="relative z-10">
-            <ButtonLink href={`/launch/${l.mint}`} size="sm" variant="secondary" aria-label={`Back $${l.symbol}`}>
+            <ButtonLink href={launchHref(l)} size="sm" variant="secondary" aria-label={`Back $${l.symbol}`}>
               Back
             </ButtonLink>
           </span>
@@ -195,7 +195,7 @@ export function LaunchCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <h3 className="h3 min-w-0 truncate text-ink">
-              <Link href={`/launch/${l.mint}`} data-card-link className="outline-none after:absolute after:inset-0 after:content-['']">
+              <Link href={launchHref(l)} data-card-link className="outline-none after:absolute after:inset-0 after:content-['']">
                 {l.name}
               </Link>
             </h3>
@@ -234,7 +234,7 @@ export function LaunchRow({ launch: l, now, flash, fresh }: { launch: LaunchSumm
   const phase = phaseOf(l, now);
   return (
     <Link
-      href={`/launch/${l.mint}`}
+      href={launchHref(l)}
       className={cn(
         "relative flex h-[72px] items-center gap-3 border-b border-line px-1 transition-colors last:border-b-0 hover:bg-raised",
         fresh && "animate-expand-in overflow-hidden [--expand-to:72px]",

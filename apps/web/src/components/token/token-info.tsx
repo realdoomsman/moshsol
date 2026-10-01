@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { api } from "@/lib/api";
 import { pctOf } from "@/lib/format";
+import { launchId } from "@/lib/launch";
 import { useFallbackInterval } from "@/lib/live";
 import { useHolders } from "@/lib/queries";
 import { CONCENTRATION_WARN } from "@/lib/thresholds";
@@ -24,9 +25,9 @@ export interface HolderStats {
   loaded: boolean;
 }
 
-/** Concentration figures from the holder snapshot (the curve and vault accounts are labelled by the indexer). */
+/** Concentration figures from the holder snapshot (the curve/venue and vault accounts are labelled by the indexer). */
 export function useHolderStats(l: LaunchSummary): HolderStats {
-  const { data } = useHolders(l.mint, HOLDERS_LIMIT);
+  const { data } = useHolders(launchId(l), HOLDERS_LIMIT);
   return useMemo(() => {
     const rows = data?.holders ?? [];
     const wallets = rows.filter((h) => h.label === null);
@@ -42,11 +43,11 @@ export function useHolderStats(l: LaunchSummary): HolderStats {
 }
 
 /** Vault-agent trades in the last 24 h (the indexer's agent filter; counted from the newest 500). */
-function useAgentTrades24h(mint: string, now: number) {
+function useAgentTrades24h(id: string, now: number) {
   const interval = useFallbackInterval(10_000);
   const q = useQuery({
-    queryKey: ["trades", mint, "agent-24h"],
-    queryFn: () => api.trades(mint, { limit: 500, agent: true }),
+    queryKey: ["trades", id, "agent-24h"],
+    queryFn: () => api.trades(id, { limit: 500, agent: true }),
     refetchInterval: interval,
   });
   const since = now - 86_400;
@@ -59,7 +60,7 @@ function useAgentTrades24h(mint: string, now: number) {
  */
 export function TokenInfo({ launch: l, now, className }: { launch: LaunchSummary; now: number; className?: string }) {
   const h = useHolderStats(l);
-  const agent24h = useAgentTrades24h(l.mint, now);
+  const agent24h = useAgentTrades24h(launchId(l), now);
   const cells = [
     {
       label: "Vault",

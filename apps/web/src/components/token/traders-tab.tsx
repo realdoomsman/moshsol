@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { fmtSolValue, fmtTokens } from "@/lib/format";
+import { launchId } from "@/lib/launch";
 import { useTraders } from "@/lib/queries";
 import type { LaunchSummary, TraderWindow } from "@/lib/types";
 import { RoleChip } from "../ui/chip";
@@ -30,7 +31,7 @@ export function TradersTab({
   onFilterMaker: (wallet: string) => void;
 }) {
   const [range, setRange] = useState<TraderWindow>("all");
-  const q = useTraders(l.mint, range);
+  const q = useTraders(launchId(l), range);
   const rows = q.data?.traders ?? [];
   const cols = 7;
 

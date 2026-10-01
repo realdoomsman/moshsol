@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Discover } from "@/components/discover/discover";
 import { isToolbarSort, isView } from "@/components/discover/model";
+import { launchId } from "@/lib/launch";
 import { phaseOf } from "@/lib/launch";
 import { Hydrate, prefetch, serverQueryClient } from "@/lib/prefetch";
 import { candlesQuery, launchesQuery } from "@/lib/query-options";
@@ -27,7 +28,7 @@ export default async function DiscoverPage({ searchParams }: { searchParams: Pro
       await prefetch(client, launches);
       const now = Math.floor(Date.now() / 1000);
       const live = (client.getQueryData(launches.queryKey)?.launches ?? []).filter((l) => phaseOf(l, now) === "live");
-      await Promise.all(live.slice(0, SPARKLINE_PREFETCH).map((l) => prefetch(client, candlesQuery(l.mint, 900))));
+      await Promise.all(live.slice(0, SPARKLINE_PREFETCH).map((l) => prefetch(client, candlesQuery(launchId(l), 900))));
     })(),
   ]);
   return (

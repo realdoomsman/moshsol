@@ -27,24 +27,28 @@ const AGENT_STATUS_DEADLINE_MS = 800;
 /** Backers are read live from chain (one RPC call); the rail's role chips can fill in client-side. */
 const BACKERS_DEADLINE_MS = 900;
 
+/** The route is `/launch/[mint]` historically; the param is a launch id: the mint (Holdfast launches) or the launch address (pump launches). */
 type Params = { params: Promise<{ mint: string }> };
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { mint } = await params;
-  if (!parseMint(mint)) return { title: "Launch not found" };
-  const r = await loadLaunch(mint);
-  if (r.state === "missing") return { title: (await launchOnChain(mint)) === false ? "Launch not found" : "New launch" };
+  const { mint: id } = await params;
+  if (!parseMint(id)) return { title: "Launch not found" };
+  const r = await loadLaunch(id);
+  if (r.state === "missing") return { title: (await launchOnChain(id)) === false ? "Launch not found" : "New launch" };
   if (r.state !== "found") return { title: "Launch" };
   const l = r.launch;
   const title = `${l.name} ($${l.symbol})`;
-  const backerPct = l.terms.backerFeeShareBps / 100;
+  const pump = l.venue === "pump";
+  const backerEarn = pump
+    ? `${100 - l.terms.burnShareBps / 100}% of the vault agent's profit (the rest buys and burns the Holdfast token)`
+    : `${l.terms.backerFeeShareBps / 100}% of every trading fee and 100% of the vault agent's profit`;
   const description =
     l.status === "live"
-      ? `$${l.symbol}: ${fmtSolValue(l.marketCapSol)} SOL market cap at ${fmtPrice(l.priceSol)} SOL. The vault holds ${fmtSolValue(lamportsToSol(l.vaultSol))} SOL, traded only by a rate-limited agent; backers get ${backerPct}% of every trading fee and 100% of its profit.`
+      ? `$${l.symbol}: ${fmtSolValue(l.marketCapSol)} SOL market cap at ${fmtPrice(l.priceSol)} SOL${pump ? " on pump.fun" : ""}. The vault holds ${fmtSolValue(lamportsToSol(l.vaultSol))} SOL, traded only by a rate-limited agent; backers get ${backerEarn}.`
       : l.status === "raising"
-        ? `Raising ${fmtSolValue(lamportsToSol(l.raised))} of ${fmtSolValue(lamportsToSol(l.raiseMax))} SOL. Backers make the first buy, earn ${backerPct}% of every trading fee and 100% of the vault agent's profit.`
+        ? `Raising ${fmtSolValue(lamportsToSol(l.raised))} of ${fmtSolValue(lamportsToSol(l.raiseMax))} SOL${pump ? " for a pump.fun token" : ""}. Backers make the first buy and earn ${backerEarn}.`
         : l.status === "woundDown"
-          ? `$${l.symbol} wound down: trading has ended and the curve and vault SOL were credited to its backers.`
+          ? `$${l.symbol} wound down: the vault ${pump ? "was sold into the venue and its SOL was" : "and curve SOL were"} credited to its backers.`
           : `The $${l.symbol} raise closed without launching. Every backer can refund 100%.`;
   return {
     title,
@@ -55,34 +59,34 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function LaunchPage({ params }: Params) {
-  const { mint } = await params;
-  if (!parseMint(mint)) notFound();
+  const { mint: id } = await params;
+  if (!parseMint(id)) notFound();
   const client = serverQueryClient();
   // Most visits land on live launches, so the live layout's data loads alongside the summary
   // (which is shared with generateMetadata) instead of waiting on it.
   const pending = [
     prefetch(client, platformQuery()),
     // The chart counts 1m candles to pick its timeframe; the trades tab is the first one below it.
-    prefetch(client, candlesQuery(mint, 60)),
-    prefetch(client, recentTradesQuery(mint, CHART_TRADES)),
-    prefetch(client, feedHeadQuery(tradeFeed(mint))),
-    prefetch(client, holdersQuery(mint, HOLDERS_LIMIT)),
-    prefetch(client, backersQuery(mint), BACKERS_DEADLINE_MS),
+    prefetch(client, candlesQuery(id, 60)),
+    prefetch(client, recentTradesQuery(id, CHART_TRADES)),
+    prefetch(client, feedHeadQuery(tradeFeed(id))),
+    prefetch(client, holdersQuery(id, HOLDERS_LIMIT)),
+    prefetch(client, backersQuery(id), BACKERS_DEADLINE_MS),
     prefetch(client, agentStatusQuery(), AGENT_STATUS_DEADLINE_MS),
   ];
-  const r = await loadLaunch(mint);
+  const r = await loadLaunch(id);
   // Not indexed: only a 404 if the chain agrees; a launch confirmed seconds ago renders and waits.
-  if (r.state === "missing" && (await launchOnChain(mint)) === false) notFound();
+  if (r.state === "missing" && (await launchOnChain(id)) === false) notFound();
   if (r.state === "found") {
-    client.setQueryData(launchQuery(mint).queryKey, r.launch);
+    client.setQueryData(launchQuery(id).queryKey, r.launch);
     const phase = phaseOf(r.launch, Math.floor(Date.now() / 1000));
-    if (phase === "live" || phase === "woundDown") pending.push(prefetch(client, vaultWithdrawalsQuery(mint)));
-    else pending.push(prefetch(client, feedHeadQuery(depositFeed(mint))), prefetch(client, commentsQuery(mint)));
+    if (phase === "live" || phase === "woundDown") pending.push(prefetch(client, vaultWithdrawalsQuery(id)));
+    else pending.push(prefetch(client, feedHeadQuery(depositFeed(id))), prefetch(client, commentsQuery(r.launch.address)));
   }
   await Promise.all(pending);
   return (
     <Hydrate client={client}>
-      <TokenView mint={mint} />
+      <TokenView id={id} />
     </Hydrate>
   );
 }

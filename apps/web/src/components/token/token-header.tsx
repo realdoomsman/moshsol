@@ -1,13 +1,14 @@
 "use client";
 
 import { timeAgo } from "@holdfast/sdk";
+import { PublicKey } from "@solana/web3.js";
 import { Download, Ellipsis, Link2, Share2, Star } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { fmtSolValue } from "@/lib/format";
 import { SITE_URL } from "@/lib/env";
-import type { Phase } from "@/lib/launch";
+import { launchHref, launchId, type Phase } from "@/lib/launch";
 import type { LaunchSummary } from "@/lib/types";
 import { useWatchlist } from "@/lib/watchlist";
 import { Address } from "../ui/address";
@@ -21,6 +22,7 @@ import { MenuItem, Popover } from "../ui/popover";
 import { TokenAvatar } from "../ui/token-avatar";
 import { displayName } from "../wallet-peek/wallet-peek";
 import { SocialIcon, socialLinks, XLogo } from "./creator-card";
+import { VenueChip } from "./venue-panel";
 
 function PhaseChips({ launch: l, phase }: { launch: LaunchSummary; phase: Phase }) {
   if (phase === "live") return <StatusChip status="live" />;
@@ -31,18 +33,21 @@ function PhaseChips({ launch: l, phase }: { launch: LaunchSummary; phase: Phase 
 }
 
 function shareText(l: LaunchSummary): string {
-  const backerPct = l.terms.backerFeeShareBps / 100;
+  const earn =
+    l.venue === "pump"
+      ? `${100 - l.terms.burnShareBps / 100}% of the vault agent's profit`
+      : `${l.terms.backerFeeShareBps / 100}% of every trading fee and 100% of the vault agent's profit`;
   if (l.status === "live") {
-    return `$${l.symbol} on Holdfast: ${fmtSolValue(l.marketCapSol)} SOL mcap. Backers bought first, earn ${backerPct}% of every trading fee and 100% of the vault agent's profit.`;
+    return `$${l.symbol} on Holdfast: ${fmtSolValue(l.marketCapSol)} SOL mcap${l.venue === "pump" ? " on pump.fun" : ""}. Backers bought first and earn ${earn}.`;
   }
   if (l.status === "raising") {
-    return `Backing $${l.symbol} on Holdfast: backers make the first buy, earn ${backerPct}% of every trading fee and 100% of the vault agent's profit.`;
+    return `Backing $${l.symbol} on Holdfast: backers make the first buy${l.venue === "pump" ? " on pump.fun" : ""} and earn ${earn}.`;
   }
   return `$${l.symbol} on Holdfast`;
 }
 
 function useShare(l: LaunchSummary) {
-  const url = `${SITE_URL}/launch/${l.mint}`;
+  const url = `${SITE_URL}${launchHref(l)}`;
   return {
     url,
     copy: () =>
@@ -51,7 +56,7 @@ function useShare(l: LaunchSummary) {
         () => toast.error("Couldn't copy", { description: "Your browser blocked clipboard access." }),
       ),
     intent: `https://x.com/intent/post?text=${encodeURIComponent(shareText(l))}&url=${encodeURIComponent(url)}`,
-    card: `/launch/${l.mint}/card`,
+    card: `${launchHref(l)}/card`,
   };
 }
 
@@ -98,15 +103,15 @@ function ShareMenu({ launch: l }: { launch: LaunchSummary }) {
   );
 }
 
-function WatchButton({ mint, className }: { mint: string; className?: string }) {
+function WatchButton({ id, className }: { id: string; className?: string }) {
   const { has, toggle } = useWatchlist();
-  const on = has(mint);
+  const on = has(id);
   return (
     <Button
       variant="secondary"
       size="sm"
       aria-pressed={on}
-      onClick={() => toggle(mint)}
+      onClick={() => toggle(id)}
       className={className}
       icon={<Star className={cn("size-4", on && "fill-current")} strokeWidth={1.5} aria-hidden />}
     >
@@ -132,7 +137,7 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
 
   const meta = (
     <>
-      <Address address={l.mint} />
+      <Address address={l.mint === PublicKey.default.toBase58() ? l.address : l.mint} />
       <span aria-hidden className="text-ink-3">
         ·
       </span>
@@ -175,6 +180,7 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
           <span className="ui text-ink-2">${l.symbol}</span>
           <span className="flex items-center gap-1.5">
             <PhaseChips launch={l} phase={phase} />
+            <VenueChip launch={l} />
           </span>
         </div>
         <div className="small mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-ink-3 max-md:hidden">
@@ -218,7 +224,7 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
           </IconButton>
         </span>
         <div className="flex items-center gap-2 max-md:hidden">
-          <WatchButton mint={l.mint} />
+          <WatchButton id={launchId(l)} />
           <ShareMenu launch={l} />
         </div>
       </div>
@@ -253,7 +259,7 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
             </div>
           ) : null}
           <div className="grid grid-cols-2 gap-2">
-            <WatchButton mint={l.mint} className="w-full" />
+            <WatchButton id={launchId(l)} className="w-full" />
             <Button
               variant="secondary"
               size="sm"

@@ -83,7 +83,7 @@ export function specKey(s: ScenarioSpec): string {
 }
 
 export function termsKey(t: SimTerms): string {
-  return `${t.bandBps}/${t.maxImpactBps}/${t.buyBpsPerWindow}/${t.sellBpsPerWindow}/${t.windowSecs}/${t.emaPeriodSecs}/${t.tradeFeeBps}/${t.launchFeeBps}`;
+  return `${t.venue}/${t.bandBps}/${t.maxImpactBps}/${t.buyBpsPerWindow}/${t.sellBpsPerWindow}/${t.windowSecs}/${t.emaPeriodSecs}/${t.tradeFeeBps}/${t.launchFeeBps}/${t.burnShareBps}`;
 }
 
 function variantKey(v: LaunchVariant | undefined): string {
@@ -176,7 +176,7 @@ export class ScenarioBuilder {
     };
     if (spec.model === "fair") return fair;
     // The no-agent public trades depend on the launch (raise, reserve, bundle, fees) and the volume scale, not on the agent terms.
-    const recKey = `${id}|${setup.reserveBps}|${setup.terms.tradeFeeBps}/${setup.terms.launchFeeBps}|×${spec.volumeScale ?? 1}`;
+    const recKey = `${id}|${setup.reserveBps}|${setup.terms.venue}/${setup.terms.tradeFeeBps}/${setup.terms.launchFeeBps}|×${spec.volumeScale ?? 1}`;
     let recorded = this.recordings.get(recKey);
     if (recorded) {
       this.recordings.delete(recKey);

@@ -1,8 +1,8 @@
 import {
   TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
   backerClaimable,
   lamportsToSol,
-  launchPda,
   platformPda,
   tokensToUi,
   type LaunchJson,
@@ -10,10 +10,10 @@ import {
 } from "@holdfast/sdk";
 import { PublicKey } from "@solana/web3.js";
 import type { FastifyInstance } from "fastify";
-import type { LaunchDbRow, Store, TradeDbRow } from "./db";
+import { DEFAULT_PUBKEY, type LaunchDbRow, type SnapshotLaunchDbRow, type Store, type TradeDbRow } from "./db";
 import { parsePubkey, ValidationError } from "./sanitize";
 import { allSummaries, summaryOf } from "./summaries";
-import { activityFromRow, type ChainSync } from "./sync";
+import { activityFromRow, holderTarget, type ChainSync } from "./sync";
 import { ACTIVITY_TYPES, type Candle, type LaunchSummary, type TradeRow } from "./types";
 
 export class NotFoundError extends Error {}
@@ -139,17 +139,20 @@ function buildCandles(row: LaunchDbRow, points: { timestamp: number; price_sol: 
   return out;
 }
 
-/** Launch row by mint (404 unless it has an on-chain snapshot). */
-export function requireLaunch(store: Store, mintRaw: string): LaunchDbRow & { snapshot: string } {
-  const mint = pubkeyParam(mintRaw, "mint");
-  const row = store.launchByMint(mint.toBase58());
+/**
+ * Launch row by address or mint (404 unless it has an on-chain snapshot). Pump launches have no mint until
+ * they launch, so their address is the id that always works; the web links them by it.
+ */
+export function requireLaunch(store: Store, idRaw: string): SnapshotLaunchDbRow {
+  const id = pubkeyParam(idRaw, "launch id");
+  const row = store.launchById(id.toBase58());
   if (!row?.snapshot) throw new NotFoundError("launch not found");
-  return row as LaunchDbRow & { snapshot: string };
+  return row as SnapshotLaunchDbRow;
 }
 
 export function registerRoutes(app: FastifyInstance, { store, client, sync }: RouteDeps): void {
   const connection = client.connection;
-  const launchRow = (mintRaw: string) => requireLaunch(store, mintRaw);
+  const launchRow = (idRaw: string) => requireLaunch(store, idRaw);
 
   app.get("/api/health", async (_req, reply) => {
     const h = await sync.health();
@@ -194,6 +197,9 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
         agentsPaused: pr.agentsPaused,
         maxRaiseLamports: pr.maxRaiseLamports.toString(),
         maxWalletDepositLamports: pr.maxWalletDepositLamports.toString(),
+        holdfastCurveEnabled: pr.holdfastCurveEnabled,
+        burnShareBps: pr.burnShareBps,
+        buybackMint: pr.buybackMint.toBase58(),
       },
     };
   });
@@ -212,17 +218,18 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
         (s) =>
           s.name.toLowerCase().includes(text) ||
           s.symbol.toLowerCase().includes(text) ||
-          s.mint.toLowerCase().includes(text),
+          s.mint.toLowerCase().includes(text) ||
+          s.address.toLowerCase().includes(text),
       );
     }
     sortSummaries(list, sort);
     return { launches: list.slice(offset, offset + limit), total: list.length };
   });
 
-  app.get<{ Params: { mint: string } }>("/api/launches/:mint", async (req) => summaryOf(store, launchRow(req.params.mint)));
+  app.get<{ Params: { id: string } }>("/api/launches/:id", async (req) => summaryOf(store, launchRow(req.params.id)));
 
-  app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/trades", async (req) => {
-    const row = launchRow(req.params.mint);
+  app.get<{ Params: { id: string }; Querystring: Query }>("/api/launches/:id/trades", async (req) => {
+    const row = launchRow(req.params.id);
     const limit = intQuery(req.query, "limit", 100, 500);
     const before = intQuery(req.query, "before", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
     const agentOnly = oneOf(["0", "1"] as const, req.query.agent, "0", "agent") === "1";
@@ -244,8 +251,8 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     return { trades: trades.map(tradeRow) };
   });
 
-  app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/traders", async (req) => {
-    const row = launchRow(req.params.mint);
+  app.get<{ Params: { id: string }; Querystring: Query }>("/api/launches/:id/traders", async (req) => {
+    const row = launchRow(req.params.id);
     const window = oneOf(WINDOWS, req.query.window, "24h", "window");
     const limit = intQuery(req.query, "limit", 20, 100);
     const since = window === "all" ? 0 : Math.floor(Date.now() / 1000) - WINDOW_SECS[window];
@@ -270,14 +277,14 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     };
   });
 
-  app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/candles", async (req) => {
-    const row = launchRow(req.params.mint);
+  app.get<{ Params: { id: string }; Querystring: Query }>("/api/launches/:id/candles", async (req) => {
+    const row = launchRow(req.params.id);
     const tf = oneOf(TIMEFRAMES, req.query.tf, 60, "tf");
     return { candles: buildCandles(row, store.candlePoints(row.address), tf) };
   });
 
-  app.get<{ Params: { mint: string } }>("/api/launches/:mint/backers", async (req) => {
-    const row = launchRow(req.params.mint);
+  app.get<{ Params: { id: string } }>("/api/launches/:id/backers", async (req) => {
+    const row = launchRow(req.params.id);
     const snap = JSON.parse(row.snapshot) as LaunchJson;
     const raised = BigInt(snap.raised);
     const acc = BigInt(snap.accFeePerShare);
@@ -297,8 +304,8 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     return { backers };
   });
 
-  app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/deposits", async (req) => {
-    const row = launchRow(req.params.mint);
+  app.get<{ Params: { id: string }; Querystring: Query }>("/api/launches/:id/deposits", async (req) => {
+    const row = launchRow(req.params.id);
     const limit = intQuery(req.query, "limit", 50, 500);
     const before = intQuery(req.query, "before", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
     return {
@@ -312,15 +319,17 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     };
   });
 
-  app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/holders", async (req) => {
-    const row = launchRow(req.params.mint);
+  app.get<{ Params: { id: string }; Querystring: Query }>("/api/launches/:id/holders", async (req) => {
+    const row = launchRow(req.params.id);
     const limit = intQuery(req.query, "limit", 20, 1000);
-    const set = await sync.updateHolders(row.mint, row.address);
+    // A pump launch has no token (and no holders) until it launches.
+    if (row.mint === DEFAULT_PUBKEY) return { holders: [] };
+    const set = await sync.updateHolders(holderTarget(row));
     return { holders: set.holders.slice(0, limit) };
   });
 
-  app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/activity", async (req) => {
-    const row = launchRow(req.params.mint);
+  app.get<{ Params: { id: string }; Querystring: Query }>("/api/launches/:id/activity", async (req) => {
+    const row = launchRow(req.params.id);
     const limit = intQuery(req.query, "limit", 50, 500);
     const before = intQuery(req.query, "before", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
     const type = req.query.type ? oneOf(ACTIVITY_TYPES, req.query.type, "trade", "type") : null;
@@ -330,11 +339,15 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
   app.get<{ Params: { wallet: string } }>("/api/portfolio/:wallet", async (req) => {
     const owner = pubkeyParam(req.params.wallet, "wallet");
     const wallet = owner.toBase58();
-    const [backerAccounts, tokenAccounts] = await Promise.all([
+    // Holdfast launches are Token-2022 mints, pump launches SPL Token mints.
+    const [backerAccounts, token2022Accounts, tokenAccounts] = await Promise.all([
       client.fetchBackersOf(owner),
       connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_2022_PROGRAM_ID }, "confirmed"),
+      connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_PROGRAM_ID }, "confirmed"),
     ]);
-    const byAddress = new Map(allSummaries(store).map((s) => [s.address, s]));
+    const all = allSummaries(store);
+    const byAddress = new Map(all.map((s) => [s.address, s]));
+    const byMint = new Map(all.filter((s) => s.mint !== DEFAULT_PUBKEY).map((s) => [s.mint, s]));
     const now = Math.floor(Date.now() / 1000);
 
     const backed = [];
@@ -367,7 +380,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
       }));
 
     const balances = new Map<string, bigint>();
-    for (const { account } of tokenAccounts.value) {
+    for (const { account } of [...token2022Accounts.value, ...tokenAccounts.value]) {
       const info: unknown = account.data.parsed?.info;
       if (typeof info !== "object" || info === null || !("mint" in info) || !("tokenAmount" in info)) continue;
       const { mint, tokenAmount } = info;
@@ -377,7 +390,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     }
     const holdings = [];
     for (const [mint, amount] of balances) {
-      const launch = byAddress.get(launchPda(new PublicKey(mint), client.programId).toBase58());
+      const launch = byMint.get(mint);
       if (!launch) continue;
       holdings.push({ launch, amount: amount.toString(), valueSol: tokensToUi(amount) * launch.priceSol });
     }
@@ -398,6 +411,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
       liveLaunches: all.filter((l) => l.status === "live").length,
       raisingLaunches: all.filter((l) => l.status === "raising").length,
       woundDownLaunches: all.filter((l) => l.status === "woundDown").length,
+      pumpLaunches: all.filter((l) => l.venue === "pump").length,
       totalRaisedSol: sum((l) => (l.status === "refunding" ? 0 : lamportsToSol(l.raised))),
       totalVolumeSol: sum((l) => lamportsToSol(l.volumeSol)),
       volume24hSol: store.volumeSince(Math.floor(Date.now() / 1000) - 86_400),
@@ -407,6 +421,9 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
       vaultSol: sum((l) => lamportsToSol(l.vaultSol)),
       vaultTokensValueSol: sum((l) => tokensToUi(l.vaultTokens) * l.priceSol),
       vaultWithdrawnSol: sum((l) => l.vaultWithdrawnSol),
+      buybackPoolSol: sum((l) => lamportsToSol(l.buybackPoolSol)),
+      burnedSol: sum((l) => lamportsToSol(l.burnedSol)),
+      creatorFeesCollectedSol: sum((l) => lamportsToSol(l.creatorFeesCollected)),
     };
   });
 
@@ -427,6 +444,8 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
         solReceived: received.toString(),
       },
       launches: live.map((l) => ({
+        address: l.address,
+        venue: l.venue,
         mint: l.mint,
         symbol: l.symbol,
         name: l.name,
@@ -446,7 +465,9 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
         agentBuys: l.agentBuys,
         agentSells: l.agentSells,
       })),
-      recent: store.agentTrades(50).map((t) => ({ ...tradeRow(t), mint: t.mint, symbol: t.symbol })),
+      recent: store
+        .agentTrades(50)
+        .map((t) => ({ ...tradeRow(t), launch: t.launch, venue: t.venue, mint: t.mint, symbol: t.symbol })),
     };
   });
 }

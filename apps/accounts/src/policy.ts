@@ -1,10 +1,22 @@
 import { createHash } from "node:crypto";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@holdfast/sdk";
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  MPL_TOKEN_METADATA_ID,
+  PROGRAM_ID,
+  PUMP_AMM_PROGRAM_ID,
+  PUMP_FEE_PROGRAM_ID,
+  PUMP_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+} from "@holdfast/sdk";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { ComputeBudgetProgram, PACKET_DATA_SIZE, PublicKey, SystemProgram, VersionedMessage } from "@solana/web3.js";
 import { ed25519Sign } from "./crypto";
 
-/** Programs a custodial wallet signs top-level instructions for (CPIs are the called program's business). */
+/**
+ * Programs a custodial wallet signs top-level instructions for (CPIs are the called program's business).
+ * The pump.fun venue programs are here so a custodial wallet can trade a pump launch's token on
+ * pump.fun / PumpSwap and crank `launch_pump`-style flows that touch them directly.
+ */
 export const ALLOWED_PROGRAMS: Record<string, string> = {
   [PROGRAM_ID.toBase58()]: "Holdfast",
   [SystemProgram.programId.toBase58()]: "System",
@@ -12,8 +24,11 @@ export const ALLOWED_PROGRAMS: Record<string, string> = {
   [ASSOCIATED_TOKEN_PROGRAM_ID.toBase58()]: "Associated Token",
   [TOKEN_2022_PROGRAM_ID.toBase58()]: "Token-2022",
   [TOKEN_PROGRAM_ID.toBase58()]: "SPL Token",
+  [PUMP_PROGRAM_ID.toBase58()]: "pump.fun",
+  [PUMP_AMM_PROGRAM_ID.toBase58()]: "PumpSwap",
+  [PUMP_FEE_PROGRAM_ID.toBase58()]: "pump.fun fees",
+  [MPL_TOKEN_METADATA_ID.toBase58()]: "Metaplex Token Metadata",
   MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr: "Memo",
-  Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo: "Memo (v1)",
 };
 
 /**

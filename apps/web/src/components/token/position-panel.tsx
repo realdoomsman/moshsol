@@ -1,11 +1,12 @@
 "use client";
 
-import { backerClaimable, lamportsToSol, TOTAL_SUPPLY, tokensToUi } from "@holdfast/sdk";
+import { backerClaimable, lamportsToSol, seedKeyOf, TOTAL_SUPPLY, tokensToUi } from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { PublicKey, type TransactionInstruction } from "@solana/web3.js";
+import type { PublicKey, TransactionInstruction } from "@solana/web3.js";
 import type { ReactNode } from "react";
 import { useBackerAccount, useMoshClient, useTokenBalance } from "@/lib/chain";
 import { fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
+import { launchId } from "@/lib/launch";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
 import { Button } from "../ui/button";
@@ -22,24 +23,26 @@ function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
 }
 
 /**
- * Your position (§4.5): holdings, backer share + claimable earnings (fee share, vault agent profit,
- * wind-down payout — one accumulator, one claim), creator fees if you created it.
- * Hidden while disconnected — no "connect to see" wall.
+ * Your position (§4.5): holdings, backer share + claimable earnings (fee share, the backers' share of
+ * vault agent profit, wind-down payout — one accumulator, one claim), creator fees if you created it
+ * (Holdfast launches only: pump launches have no creator share). Hidden while disconnected — no
+ * "connect to see" wall.
  */
 export function PositionPanel({ launch: l, className }: { launch: LaunchSummary; className?: string }) {
   const { publicKey } = useWallet();
   const client = useMoshClient();
   const tx = useTx();
-  const tokens = useTokenBalance(l.mint, publicKey);
-  const backer = useBackerAccount(l.mint, publicKey);
+  const tokens = useTokenBalance(l, publicKey);
+  const backer = useBackerAccount(l, publicKey);
   if (!publicKey) return null;
 
   const deposited = backer.data?.deposited ?? 0n;
   const claimable = backer.data ? backerClaimable(backer.data.deposited, BigInt(l.accFeePerShare), backer.data.feesClaimed) : 0n;
   const share = pctOf(deposited, l.raised);
-  const isCreator = publicKey.toBase58() === l.creator;
+  const isCreator = publicKey.toBase58() === l.creator && l.terms.creatorFeeShareBps > 0;
   const creatorFees = BigInt(l.creatorFeesUnclaimed);
-  const mint = new PublicKey(l.mint);
+  const seedKey = seedKeyOf(l);
+  const pump = l.venue === "pump";
   const held = tokens.data ?? 0n;
   const busy = (label: string) => tx.pending === label;
   const claim = (label: string, amount: bigint, build: (payer: PublicKey) => Promise<TransactionInstruction>) =>
@@ -47,7 +50,7 @@ export function PositionPanel({ launch: l, className }: { launch: LaunchSummary;
       label,
       successMessage: `Claimed ${fmtLamports(amount)} SOL`,
       build: async (payer) => [await build(payer)],
-      invalidate: [["backer", l.mint]],
+      invalidate: [["backer", launchId(l)]],
     });
 
   return (
@@ -77,7 +80,9 @@ export function PositionPanel({ launch: l, className }: { launch: LaunchSummary;
               <Row label="Claimed">{fmtLamports(backer.data?.feesClaimed ?? 0n)} SOL</Row>
             </dl>
             <p className="small text-ink-3">
-              Your fee share, your share of the vault agent&apos;s profit and any wind-down payout add up here. One claim collects all of it.
+              {pump
+                ? `${100 - l.terms.burnShareBps / 100}% of the vault agent's realized profit and any wind-down payout add up here (the rest buys and burns the Holdfast token). One claim collects all of it.`
+                : "Your fee share, your share of the vault agent's profit and any wind-down payout add up here. One claim collects all of it."}
             </p>
             <Button
               variant="accent"
@@ -85,7 +90,7 @@ export function PositionPanel({ launch: l, className }: { launch: LaunchSummary;
               className="justify-self-start"
               disabled={claimable === 0n}
               busy={busy("Claim backer earnings")}
-              onClick={() => claim("Claim backer earnings", claimable, (payer) => client.claimBackerFeesIx(payer, mint))}
+              onClick={() => claim("Claim backer earnings", claimable, (payer) => client.claimBackerFeesIx(payer, seedKey))}
             >
               {busy("Claim backer earnings") && tx.stage
                 ? TX_STAGE_LABEL[tx.stage]
@@ -108,7 +113,7 @@ export function PositionPanel({ launch: l, className }: { launch: LaunchSummary;
               className="justify-self-start"
               disabled={creatorFees === 0n}
               busy={busy("Claim creator fees")}
-              onClick={() => claim("Claim creator fees", creatorFees, (payer) => client.claimCreatorFeesIx(payer, mint))}
+              onClick={() => claim("Claim creator fees", creatorFees, (payer) => client.claimCreatorFeesIx(payer, seedKey))}
             >
               {busy("Claim creator fees") && tx.stage
                 ? TX_STAGE_LABEL[tx.stage]

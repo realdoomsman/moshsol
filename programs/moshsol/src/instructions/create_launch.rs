@@ -8,7 +8,7 @@ use anchor_spl::token_interface::{self, Mint, MintTo, SetAuthority, TokenAccount
 use crate::constants::*;
 use crate::errors::MoshError;
 use crate::events::LaunchCreated;
-use crate::state::{Launch, LaunchStatus, LaunchTerms, Platform};
+use crate::state::{Launch, LaunchStatus, LaunchTerms, Platform, PumpState, Venue};
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct CreateLaunchArgs {
@@ -87,6 +87,7 @@ pub struct CreateLaunch<'info> {
 pub fn create_launch(ctx: Context<CreateLaunch>, args: CreateLaunchArgs) -> Result<()> {
     let params = ctx.accounts.platform.params;
     require!(!params.paused, MoshError::Paused);
+    require!(params.holdfast_curve_enabled, MoshError::HoldfastCurveDisabled);
 
     require!(
         !args.name.trim().is_empty() && args.name.len() <= MAX_NAME_LEN,
@@ -266,6 +267,17 @@ pub fn create_launch(ctx: Context<CreateLaunch>, args: CreateLaunchArgs) -> Resu
         trade_count: 0,
         last_public_trade_slot: 0,
         last_agent_trade_slot: 0,
+        venue: Venue::Holdfast,
+        create_key: mint_key,
+        pump: PumpState::default(),
+        buyback_pool_sol: 0,
+        creator_fees_collected: 0,
+        burned_sol: 0,
+        burned_tokens: 0,
+        last_buyback_ts: 0,
+        name: String::new(),
+        symbol: String::new(),
+        uri: String::new(),
     });
 
     emit!(LaunchCreated {

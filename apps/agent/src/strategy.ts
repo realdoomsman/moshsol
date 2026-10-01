@@ -1,6 +1,8 @@
 import {
   BPS,
+  PUMP_VENUE_FEE_BPS,
   bps,
+  bpsCeil,
   compact,
   countdown,
   fmtPrice,
@@ -13,7 +15,10 @@ import {
   solOut,
   tokensOut,
   tokensToUi,
+  venueOf,
+  type CurveState,
   type LaunchAccount,
+  type LaunchVenue,
 } from "@holdfast/sdk";
 import type { FlowFeatures } from "./flow";
 
@@ -45,8 +50,13 @@ export interface AgentTerms {
   emaPeriodSecs: bigint;
 }
 
-/** Launch fields the agent logic reads, as bigint. */
+/**
+ * Launch fields the agent logic reads, as bigint. The reserves are the launch's own curve on Holdfast
+ * launches and the venue's (bonding curve virtual reserves, or the PumpSwap pool balances) on pump
+ * launches, so `project()` prices exactly what `agent_*` / `agent_*_pump` read.
+ */
 export interface MarketState {
+  venue: LaunchVenue;
   terms: AgentTerms;
   virtualSol: bigint;
   realSol: bigint;
@@ -74,10 +84,20 @@ export interface MarketState {
   agentSolSpent: bigint;
 }
 
-export function marketOf(l: LaunchAccount): MarketState {
+/** `venue` is required for pump launches: their reserves live on pump.fun / PumpSwap (`fetchVenueState`). */
+export function marketOf(l: LaunchAccount, venue?: CurveState): MarketState {
   const b = (v: { toString(): string }) => BigInt(v.toString());
   const t = l.terms;
+  const kind = venueOf(l);
+  let reserves: CurveState;
+  if (kind === "pump") {
+    if (!venue) throw new Error("marketOf: pump launch without its venue state");
+    reserves = venue;
+  } else {
+    reserves = { virtualSol: b(l.virtualSol), realSol: b(l.realSol), tokenReserve: b(l.tokenReserve) };
+  }
   return {
+    venue: kind,
     terms: {
       bandBps: BigInt(t.agentBandBps),
       maxImpactBps: BigInt(t.agentMaxImpactBps),
@@ -86,9 +106,9 @@ export function marketOf(l: LaunchAccount): MarketState {
       windowSecs: BigInt(t.agentWindowSecs),
       emaPeriodSecs: BigInt(t.emaPeriodSecs),
     },
-    virtualSol: b(l.virtualSol),
-    realSol: b(l.realSol),
-    tokenReserve: b(l.tokenReserve),
+    virtualSol: reserves.virtualSol,
+    realSol: reserves.realSol,
+    tokenReserve: reserves.tokenReserve,
     vaultSol: b(l.vaultSol),
     vaultTokens: b(l.vaultTokens),
     vaultCostSol: b(l.vaultCostSol),
@@ -194,11 +214,46 @@ export function project(m: MarketState, now: bigint): Projection {
   };
 }
 
+/**
+ * The venue's taker fee on the agent's own trades: pump.fun and PumpSwap take 1.25% of every fill
+ * (`pump_venue.rs` measures the fill net of it), the Holdfast curve charges agent trades nothing.
+ */
+export function venueFeeBps(m: Pick<MarketState, "venue">): bigint {
+  return m.venue === "pump" ? BigInt(PUMP_VENUE_FEE_BPS) : 0n;
+}
+
+/** Lamports of a buy of `solIn` that reach the reserves (the venue's fee, rounded up, comes off first). */
+export function buyNet(m: Pick<MarketState, "venue">, solIn: bigint): bigint {
+  return solIn - bpsCeil(solIn, venueFeeBps(m));
+}
+
+/** Smallest `solIn` whose net reaches `net` (the identity on the Holdfast curve). */
+export function grossForNet(m: Pick<MarketState, "venue">, net: bigint): bigint {
+  const fee = venueFeeBps(m);
+  return (net * BPS + (BPS - fee) - 1n) / (BPS - fee);
+}
+
+/** Tokens a buy of `solIn` fills (`spent` / `tokens` of `agent_buy*`). */
+export function buyFill(m: Pick<MarketState, "venue">, p: Projection, solIn: bigint): bigint {
+  return tokensOut(p.x, p.y, buyNet(m, solIn));
+}
+
+/**
+ * A sell of `tokensIn`: `gross` leaves the reserves (never more than what is real), `net` is what the
+ * launch receives after the venue's fee (the `sol` of `agent_sell*`, checked against cost basis and `min_sol_out`).
+ */
+export function sellFill(m: Pick<MarketState, "venue" | "realSol">, p: Projection, tokensIn: bigint): { gross: bigint; net: bigint } {
+  const out = solOut(p.x, p.y, tokensIn);
+  const gross = out > m.realSol ? m.realSol : out;
+  return { gross, net: gross - bpsCeil(gross, venueFeeBps(m)) };
+}
+
 /** agent_buy impact check for `solIn` lamports: the move is at most `maxImpactBps` (rounded up). */
-export function buyImpactOk(p: Projection, maxImpactBps: bigint, solIn: bigint): boolean {
-  const out = tokensOut(p.x, p.y, solIn);
-  if (out <= 0n || out >= p.y) return false;
-  return moveBps(p.price, priceQ64(p.x + solIn, p.y - out)) <= maxImpactBps;
+export function buyImpactOk(m: MarketState, p: Projection, solIn: bigint): boolean {
+  const net = buyNet(m, solIn);
+  const out = tokensOut(p.x, p.y, net);
+  if (net <= 0n || out <= 0n || out >= p.y) return false;
+  return moveBps(p.price, priceQ64(p.x + net, p.y - out)) <= m.terms.maxImpactBps;
 }
 
 /** agent_buy path 1: fill price (solIn / tokens) at or below the vault's average cost. */
@@ -218,12 +273,12 @@ export function sellCurveOk(m: MarketState, p: Projection, tokensIn: bigint): bo
   return moveBps(p.price, priceQ64(p.x - out, p.y + tokensIn)) <= m.terms.maxImpactBps;
 }
 
-/** agent_sell cost basis: fill (sol / tokensIn) at least the vault's average cost plus band. */
+/** agent_sell cost basis: net fill (sol / tokensIn) at least the vault's average cost plus band. */
 export function sellAboveCost(m: MarketState, tokensIn: bigint, sol: bigint): boolean {
   return sol * m.vaultTokens * BPS >= tokensIn * m.vaultCostSol * (BPS + m.terms.bandBps);
 }
 
-/** Lamports to buy so spot reaches `target` (Q64), 0 when it already is there. */
+/** Net lamports to add to the reserves so spot reaches `target` (Q64), 0 when it already is there. */
 export function buyToPrice(p: Projection, target: bigint): bigint {
   const xTarget = isqrt((p.x * p.x * target) / p.price);
   return xTarget > p.x ? xTarget - p.x : 0n;
@@ -424,12 +479,13 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, head: string): Pla
   if (m.vaultSol === 0n) return hold("vault_empty", `${head} but vault has no SOL`);
   const room = minBig(proj.buyRemaining, m.vaultSol);
   if (room < s.minTradeLamports) return budgetHold(proj, solStr(proj.buyRemaining));
-  const ideal = buyToPrice(proj, minBig((proj.ema * (BPS - t.bandBps)) / BPS, impactTargets(proj, t.maxImpactBps).up));
+  // `buyToPrice` is the net the reserves take; the agent spends that plus the venue's fee.
+  const ideal = grossForNet(m, buyToPrice(proj, minBig((proj.ema * (BPS - t.bandBps)) / BPS, impactTargets(proj, t.maxImpactBps).up)));
   if (ideal < s.minTradeLamports) return hold("too_small", `${head}, ideal buy ${solStr(ideal)} below minimum`);
 
-  const impactOk = (a: bigint) => buyImpactOk(proj, t.maxImpactBps, a);
+  const impactOk = (a: bigint) => buyImpactOk(m, proj, a);
   // Cost rules are checked against the slippage floor, so any fill the transaction accepts passes them.
-  const worstFill = (a: bigint) => minOut(tokensOut(proj.x, proj.y, a), s.slippageBps);
+  const worstFill = (a: bigint) => minOut(buyFill(m, proj, a), s.slippageBps);
   const hi = minBig(ideal, room);
   let solIn = largestFeasible(hi, (a) => impactOk(a) && buyBelowCost(proj, a, worstFill(a)));
   let how = `at/below vault avg cost ${avgPriceStr(costSol, costTokens)}`;
@@ -447,8 +503,8 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, head: string): Pla
         : `buy-back needs fill ≤ ${avgPriceStr((m.agentSolReceived * (BPS - t.bandBps)) / BPS, m.agentTokensSold)}`;
     return hold("cost_basis", `${head} but ${cost}, ${buyback}`);
   }
-  const expectedTokens = tokensOut(proj.x, proj.y, solIn);
-  const impactBps = moveBps(price, priceQ64(proj.x + solIn, proj.y - expectedTokens));
+  const expectedTokens = buyFill(m, proj, solIn);
+  const impactBps = moveBps(price, priceQ64(proj.x + buyNet(m, solIn), proj.y - expectedTokens));
   return {
     action: "buy",
     kind: "dip",
@@ -489,32 +545,34 @@ export function sellAllowance(p: StrategyParams, mcapMult: number, volumeSol: nu
 function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyParams, flow: FlowFeatures, head: string): Plan {
   const t = m.terms;
   const { x, y, price } = proj;
+  /** Lamports the launch receives for selling `tokens` (net of the venue's fee). */
+  const proceeds = (tokens: bigint) => sellFill(m, proj, tokens).net;
   if (m.vaultTokens === 0n) return hold("vault_empty", `${head} but vault has no tokens`);
   const budget = minBig(proj.sellRemaining, m.vaultTokens);
-  if (budget === 0n || solOut(x, y, budget) < s.minTradeLamports) return budgetHold(proj, tokStr(proj.sellRemaining));
+  if (budget === 0n || proceeds(budget) < s.minTradeLamports) return budgetHold(proj, tokStr(proj.sellRemaining));
   const bundlePrice = Number(m.bundleSol) / Number(m.bundleTokens);
   const keepShare = Math.max(0, Math.min(1, 1 - params.holdSlope * Math.log(Number(x) / Number(y) / bundlePrice)));
   const keep = (m.bundleTokens * BigInt(Math.round(keepShare * 1_000_000))) / 1_000_000n;
   let room = m.vaultTokens > keep ? minBig(budget, m.vaultTokens - keep) : 0n;
-  if (room === 0n || solOut(x, y, room) < s.minTradeLamports) {
+  if (room === 0n || proceeds(room) < s.minTradeLamports) {
     return hold("floor", `${head} but the vault keeps ${tokStr(keep)} at this price (${Math.round(keepShare * 100)}% of the bundle)`);
   }
   // Sell guardrail: proceeds per window (at spot) capped below the on-chain window cap until market cap and traded volume have grown.
-  const windowCapSol = Number(solOut(x, y, minBig(proj.sellCap, m.vaultTokens))) / 1e9;
+  const windowCapSol = Number(proceeds(minBig(proj.sellCap, m.vaultTokens))) / 1e9;
   const mcapMult = Number(x) / Number(y) / bundlePrice;
   const volumeSol = Number(m.volumeSol) / 1e9;
   const allowance = sellAllowance(params, mcapMult, volumeSol, windowCapSol, flow);
   let capNote = "";
   if (allowance.sol < windowCapSol) {
-    const capLamports = BigInt(Math.floor(allowance.sol * 1e9));
-    // Tokens that sell for `capLamports` on the current curve (x·T / (y + T) = cap), minus what this window already sold.
+    // Tokens whose gross (net allowance plus the venue's fee) leaves the current curve (x·T / (y + T) = cap), minus what this window already sold.
+    const capLamports = grossForNet(m, BigInt(Math.floor(allowance.sol * 1e9)));
     const capTokens = capLamports < x ? (y * capLamports) / (x - capLamports) : room;
     const sold = proj.sellCap - proj.sellRemaining;
     const left = capTokens > sold ? capTokens - sold : 0n;
     const cap =
       `mcap ${mcapMult.toFixed(1)}× launch, ${fmtSol(volumeSol, 1)} SOL traded: sell allowance ${fmtSol(allowance.sol, 3)} SOL this window` +
       `${allowance.strong ? ` (strong buy flow ×${params.strongFlowMult.toFixed(1)})` : ""}`;
-    if (left === 0n || solOut(x, y, left) < s.minTradeLamports) return hold("allowance", `${head} but ${cap}, ${solStr(solOut(x, y, sold))} sold`);
+    if (left === 0n || proceeds(left) < s.minTradeLamports) return hold("allowance", `${head} but ${cap}, ${solStr(proceeds(sold))} sold`);
     if (left < room) {
       room = left;
       capNote = `; ${cap}`;
@@ -523,23 +581,25 @@ function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyP
   const floorTarget = (proj.ema * (BPS + t.bandBps)) / BPS;
   const impactTarget = impactTargets(proj, t.maxImpactBps).down;
   const ideal = sellToPrice(proj, floorTarget > impactTarget ? floorTarget : impactTarget);
-  if (ideal === 0n || solOut(x, y, ideal) < s.minTradeLamports) return hold("too_small", `${head}, ideal sell below minimum`);
+  if (ideal === 0n || proceeds(ideal) < s.minTradeLamports) return hold("too_small", `${head}, ideal sell below minimum`);
 
   // Cost rule checked against the slippage floor, so any fill the transaction accepts passes it.
   const tokensIn = largestFeasible(minBig(ideal, room), (a) => {
     if (!sellCurveOk(m, proj, a)) return false;
-    return sellAboveCost(m, a, minOut(solOut(x, y, a), s.slippageBps));
+    return sellAboveCost(m, a, minOut(proceeds(a), s.slippageBps));
   });
-  const expectedSol = solOut(x, y, tokensIn);
+  const fill = sellFill(m, proj, tokensIn);
+  const expectedSol = fill.net;
   if (tokensIn === 0n || expectedSol < s.minTradeLamports) {
-    // Spot (Q64 lamports per base unit) vs cost × (1 + band): if spot fails, no size can pass.
-    if (price * m.vaultTokens * BPS < (m.vaultCostSol << 64n) * (BPS + t.bandBps)) {
+    // Net spot (Q64 lamports per base unit, after the venue's fee) vs cost × (1 + band): if spot fails, no size can pass.
+    const netSpot = (price * (BPS - venueFeeBps(m))) / BPS;
+    if (netSpot * m.vaultTokens * BPS < (m.vaultCostSol << 64n) * (BPS + t.bandBps)) {
       const need = avgPriceStr((m.vaultCostSol * (BPS + t.bandBps)) / BPS, m.vaultTokens);
       return hold("cost_basis", `${head} but fill must be ≥ ${need} (vault avg cost + band)`);
     }
     return hold("impact", `${head}, impact/cost limits leave sell below minimum`);
   }
-  const impactBps = moveBps(price, priceQ64(x - expectedSol, y + tokensIn));
+  const impactBps = moveBps(price, priceQ64(x - fill.gross, y + tokensIn));
   return {
     action: "sell",
     kind: "rally",
@@ -585,8 +645,15 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
   return done(hold("in_band", `price inside band (${dev} vs EMA)`));
 }
 
-/** Display prices (SOL per whole token) for a projection. */
-export function displayPrices(p: Projection) {
+/** Display prices (SOL per whole token) of a decision. */
+export interface DisplayPrices {
+  priceSol: number;
+  emaSol: number;
+  bandLowSol: number;
+  bandHighSol: number;
+}
+
+export function displayPrices(p: Projection): DisplayPrices {
   return {
     priceSol: q64ToSolPerToken(p.price),
     emaSol: q64ToSolPerToken(p.ema),

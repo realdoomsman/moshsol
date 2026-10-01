@@ -1,4 +1,4 @@
-import { ACC_PRECISION, BPS, LAMPORTS_PER_SOL_BIG, Q64, TOKEN_UNIT, TOTAL_SUPPLY } from "./constants";
+import { ACC_PRECISION, BPS, LAMPORTS_PER_SOL_BIG, PUMP_VENUE_FEE_BPS, Q64, TOKEN_UNIT, TOTAL_SUPPLY } from "./constants";
 
 /** Exact mirrors of programs/moshsol/src/math.rs (all bigint, floor semantics unless noted). */
 
@@ -167,6 +167,58 @@ export function previewBundle(p: {
     bundleSol: spent,
     bundleTokens: tokens,
     vaultSol: net - spent,
+    supplyPct: Number((tokens * 10_000n) / TOTAL_SUPPLY) / 100,
+    priceAfter: spotPrice(curve),
+    marketCapAfter: marketCapSol(curve),
+  };
+}
+
+/** pump.fun `Global` initial curve (`tests/program/fixtures/pump_global.json`): what every new token starts from. */
+export const PUMP_INITIAL_VIRTUAL_SOL = 30_000_000_000n;
+export const PUMP_INITIAL_VIRTUAL_TOKENS = 1_073_000_000_000_000n;
+export const PUMP_INITIAL_REAL_TOKENS = 793_100_000_000_000n;
+/**
+ * What pump.fun `create` + the launch's first buy take out of the raise before the bundle: rent of
+ * the bonding curve, its token account, the Metaplex metadata, the mint and the pump authority's
+ * volume accumulator (0.02038 SOL measured on a localnet with the mainnet programs; `launch_pump`
+ * measures the real figure).
+ */
+export const PUMP_CREATE_COST_LAMPORTS = 20_400_000n;
+/** `PUMP_BUY_FEE_HEADROOM_BPS`: the bundle is sized with this much room for the venue fee. */
+const PUMP_BUY_FEE_HEADROOM_BPS = 300;
+
+/**
+ * Mirrors the bundle buy of `launch_pump` on a fresh pump.fun curve: net = raised − launch fee;
+ * the create cost comes off first, the bundle budget is `1 − reserve` of the rest, the token amount
+ * is the fee-free quote of the budget minus 3% headroom capped at `bundleSupplyBps` of supply and
+ * the curve's real token reserves, and what is spent is that amount's cost plus the venue fee.
+ */
+export function previewPumpBundle(p: {
+  raised: bigint;
+  launchFeeBps: number;
+  reserveBps: number;
+  bundleSupplyBps: number;
+}): BundlePreview {
+  const launchFee = bps(p.raised, p.launchFeeBps);
+  const net = p.raised - launchFee;
+  const remaining = net > PUMP_CREATE_COST_LAMPORTS ? net - PUMP_CREATE_COST_LAMPORTS : 0n;
+  const budget = remaining - bps(remaining, p.reserveBps);
+  const sized = budget - bps(budget, PUMP_BUY_FEE_HEADROOM_BPS);
+  const x = PUMP_INITIAL_VIRTUAL_SOL;
+  const y = PUMP_INITIAL_VIRTUAL_TOKENS;
+  let tokens = tokensOut(x, y, sized);
+  const cap = bps(TOTAL_SUPPLY, p.bundleSupplyBps);
+  if (tokens > cap) tokens = cap;
+  if (tokens > PUMP_INITIAL_REAL_TOKENS) tokens = PUMP_INITIAL_REAL_TOKENS;
+  const cost = solInForTokens(x, y, tokens);
+  let spent = cost + bpsCeil(cost, PUMP_VENUE_FEE_BPS);
+  if (spent > budget) spent = budget;
+  const curve = { virtualSol: x, realSol: cost, tokenReserve: y - tokens };
+  return {
+    launchFee,
+    bundleSol: spent,
+    bundleTokens: tokens,
+    vaultSol: remaining - spent,
     supplyPct: Number((tokens * 10_000n) / TOTAL_SUPPLY) / 100,
     priceAfter: spotPrice(curve),
     marketCapAfter: marketCapSol(curve),

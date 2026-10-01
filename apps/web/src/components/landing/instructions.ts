@@ -74,7 +74,7 @@ const KNOWN: Record<string, { group: InstructionGroup; caller: string; moves: st
     group: "Trading",
     caller: "Anyone",
     moves: "Your tokens → curve; SOL → you; trade fee",
-    description: "Sells back into the curve. Liquidity never migrates, so the curve is always there to sell into.",
+    description: "Sells back into the Holdfast curve (legacy launches only; pump.fun launches trade on pump.fun). The curve's liquidity never migrates, so it is always there to sell into.",
   },
   agent_buy: {
     group: "Vault agent",

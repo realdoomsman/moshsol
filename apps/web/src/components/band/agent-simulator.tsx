@@ -1,13 +1,16 @@
 "use client";
 
-import { fmtPrice } from "@holdfast/sdk";
+import { fmtPrice, type CurveState } from "@holdfast/sdk";
 import { Check, ChevronDown, ChevronUp, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useVenueCurve } from "@/lib/chain";
 import { useNow } from "@/lib/hooks";
 import type { LaunchSummary } from "@/lib/types";
 import { Button } from "../ui/button";
 import { cn } from "../ui/cn";
+import { EmptyState } from "../ui/empty-state";
+import { Skeleton } from "../ui/skeleton";
 import { fmtDeviation, simulateAgent, simulatorDomain, simulatorPresets, type SimAction, type SimDecision } from "./model";
 import { useElementSize } from "./use-size";
 
@@ -61,21 +64,29 @@ const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 /**
  * The agent simulator (§4.2 §5): the launch's band, EMA and vault cost line with a draggable price
  * handle. Every position is evaluated with `simulateAgent` — the on-chain agent rules from the
- * launch's frozen terms, applied to its real vault, window budgets and curve — and the decision
- * card updates as you drag. `compact` is the hero variant (no presets, summary overlay).
+ * launch's frozen terms, applied to its real vault, window budgets and the venue's reserves (the
+ * Holdfast curve, or the pump.fun curve / PumpSwap pool read from chain) — and the decision card
+ * updates as you drag. `compact` is the hero variant (no presets, summary overlay).
  */
 export function AgentSimulator({ launch, compact = false, className }: { launch: LaunchSummary; compact?: boolean; className?: string }) {
+  const curve = useVenueCurve(launch);
+  if (curve === undefined) return <Skeleton className={cn(compact ? "h-[300px]" : "h-[560px]", "w-full rounded-md", className)} />;
+  if (curve === null) return <EmptyState className={className}>The venue&rsquo;s reserves can&rsquo;t be read right now, so there is nothing to simulate.</EmptyState>;
+  return <Simulator launch={launch} curve={curve} compact={compact} className={className} />;
+}
+
+function Simulator({ launch, curve, compact, className }: { launch: LaunchSummary; curve: CurveState; compact: boolean; className?: string }) {
   const nowSec = useNow(15_000);
   /** A preset outside the everyday range (the dump below cost) widens the domain to show it; drags never do. */
   const [jump, setJump] = useState<number | null>(null);
-  const domain = useMemo(() => simulatorDomain(launch, nowSec, jump), [launch, nowSec, jump]);
-  const presets = useMemo(() => simulatorPresets(launch, nowSec), [launch, nowSec]);
+  const domain = useMemo(() => simulatorDomain(launch, curve, nowSec, jump), [launch, curve, nowSec, jump]);
+  const presets = useMemo(() => simulatorPresets(launch, curve, nowSec), [launch, curve, nowSec]);
   const [chosen, setChosen] = useState<number | null>(null);
   /** The curve can't trade below its floor, so neither can the handle. */
   const lowest = Math.max(domain.min, domain.floor);
   const clamp = (p: number) => Math.min(domain.max, Math.max(lowest, p));
   const price = clamp(chosen ?? launch.priceSol);
-  const decision = useMemo(() => simulateAgent(launch, price, nowSec), [launch, price, nowSec]);
+  const decision = useMemo(() => simulateAgent(launch, curve, price, nowSec), [launch, curve, price, nowSec]);
 
   const height = compact ? 300 : 560;
   const hatchId = `floor-hatch-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;

@@ -13,7 +13,7 @@ import { ProgressBar } from "@/components/ui/progress";
 import { Sparkline } from "@/components/ui/sparkline";
 import { TokenAvatar } from "@/components/ui/token-avatar";
 import { fmtSolValue } from "@/lib/format";
-import { phaseOf } from "@/lib/launch";
+import { launchHref, launchId, phaseOf } from "@/lib/launch";
 import { useFallbackInterval, useLiveEvents } from "@/lib/live";
 import type { LaunchSummary } from "@/lib/types";
 import { trendingQuery } from "@/lib/users";
@@ -59,7 +59,7 @@ function Head({ l, href, value, sub }: { l: LaunchSummary; href: string; value: 
 }
 
 function TrendingPanel({ launch: l, kingSince, now }: { launch: LaunchSummary; kingSince: number | null; now: number }) {
-  const spark = useDaySpark(l.mint, true, now);
+  const spark = useDaySpark(launchId(l), true, now);
   const vault = vaultOf(l);
   return (
     <article className={PANEL}>
@@ -74,7 +74,7 @@ function TrendingPanel({ launch: l, kingSince, now }: { launch: LaunchSummary; k
       </div>
       <Head
         l={l}
-        href={`/launch/${l.mint}`}
+        href={launchHref(l)}
         value={<NumberTicker value={l.marketCapSol} format={(v) => `${fmtSolValue(v)} SOL`} />}
         sub={
           <>
@@ -105,7 +105,7 @@ function ClosingPanel({ launch: l }: { launch: LaunchSummary }) {
       <div className="label text-ink-3">Closing soonest</div>
       <Head
         l={l}
-        href={`/launch/${l.mint}`}
+        href={launchHref(l)}
         value={
           <>
             {fmtSolValue(raised)} <span className="text-ink-3">/ {fmtSolValue(max)} SOL</span>
@@ -119,7 +119,7 @@ function ClosingPanel({ launch: l }: { launch: LaunchSummary }) {
           <Countdown to={l.raiseDeadline} prefix="Closes" /> · {l.backerCount} {l.backerCount === 1 ? "backer" : "backers"}
         </div>
         <span className="relative z-10">
-          <ButtonLink href={`/launch/${l.mint}`} size="sm" variant="secondary" arrow>
+          <ButtonLink href={launchHref(l)} size="sm" variant="secondary" arrow>
             Back
           </ButtonLink>
         </span>
@@ -143,7 +143,7 @@ export function Spotlight({ launches, now }: { launches: LaunchSummary[]; now: n
   const king = trending.data?.king;
   const top = king?.launch ?? trending.data?.top[0];
   // Prefer the list's copy: it's refreshed by the websocket more often than /api/trending.
-  const topLaunch = top ? (launches.find((l) => l.mint === top.mint) ?? top) : undefined;
+  const topLaunch = top ? (launches.find((l) => l.address === top.address) ?? top) : undefined;
   const closing = launches
     .filter((l) => phaseOf(l, now) === "raising")
     .sort((a, b) => a.raiseDeadline - b.raiseDeadline)[0];

@@ -1,10 +1,11 @@
 "use client";
 
-import { agentZones, fmtPrice, lamportsToSol, previewBundle, timeAgo, TOTAL_SUPPLY } from "@holdfast/sdk";
+import { agentZones, fmtPrice, lamportsToSol, previewBundle, previewPumpBundle, timeAgo, TOTAL_SUPPLY } from "@holdfast/sdk";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
+import { launchHref, launchId } from "@/lib/launch";
 import { useAgentStatus, useBackers, useLaunches } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { Mark } from "../brand/mark";
@@ -27,7 +28,7 @@ import { TokenAvatar } from "../ui/token-avatar";
 function Head({ launch: l, right }: { launch: LaunchSummary; right?: ReactNode }) {
   return (
     <Link
-      href={`/launch/${l.mint}`}
+      href={launchHref(l)}
       className="flex items-center gap-3 border-b border-line px-5 py-3 transition-colors hover:bg-raised"
     >
       <TokenAvatar src={l.image} symbol={l.symbol} mint={l.mint} size={32} />
@@ -76,13 +77,8 @@ export function RaiseFallback() {
   const raised = BigInt(l.raised);
   const min = BigInt(l.raiseMin);
   const basis = raised >= min ? raised : min;
-  const preview = previewBundle({
-    raised: basis,
-    virtualSol: BigInt(l.virtualSol),
-    launchFeeBps: l.terms.launchFeeBps,
-    reserveBps: l.reserveBps,
-    bundleSupplyBps: l.bundleSupplyBps,
-  });
+  const terms = { raised: basis, launchFeeBps: l.terms.launchFeeBps, reserveBps: l.reserveBps, bundleSupplyBps: l.bundleSupplyBps };
+  const preview = l.venue === "pump" ? previewPumpBundle(terms) : previewBundle({ ...terms, virtualSol: BigInt(l.virtualSol) });
   return (
     <div>
       <Head launch={l} right={<span className="small num text-ink-2">Closes in {formatCountdown(l.raiseDeadline - nowSec)}</span>} />
@@ -184,7 +180,7 @@ export function ClaimFallback() {
 }
 
 function BackerLedger({ seed }: { seed: LaunchSummary }) {
-  const backers = useBackers(seed.mint);
+  const backers = useBackers(launchId(seed));
   const rows = (backers.data?.backers ?? []).slice(0, 4);
   return (
     <div>

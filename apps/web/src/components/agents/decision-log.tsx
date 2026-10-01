@@ -4,6 +4,7 @@ import { fmtPrice, timeAgo } from "@holdfast/sdk";
 import Link from "next/link";
 import { useState } from "react";
 import { fmtLamports, fmtTokens } from "@/lib/format";
+import { launchHref } from "@/lib/launch";
 import type { AgentDecision, AgentStatus } from "@/lib/types";
 import { decisionHeadline, decisionLabel } from "../band/model";
 import { Address } from "../ui/address";
@@ -84,7 +85,7 @@ export function DecisionLog({ log, now, loading }: { log: LogEntry[]; now: numbe
           >
             <span className="small num text-ink-3">{timeAgo(d.at, now)}</span>
             <span className="flex items-center gap-2 md:contents">
-              <Link href={`/launch/${d.mint}`} className="ui text-ink hover:underline hover:decoration-ink-3/60 hover:underline-offset-2">
+              <Link href={launchHref(d)} className="ui text-ink hover:underline hover:decoration-ink-3/60 hover:underline-offset-2">
                 ${d.symbol ?? d.mint.slice(0, 4)}
               </Link>
               <span className="md:hidden">

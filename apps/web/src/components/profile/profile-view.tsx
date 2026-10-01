@@ -21,6 +21,7 @@ import { fmtJoined } from "@/components/wallet-peek/wallet-peek";
 import { explorerAddress, explorerTx } from "@/lib/explorer";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
+import { launchHref, launchId, type LaunchRef } from "@/lib/launch";
 import { useFallbackInterval, useLiveEvents } from "@/lib/live";
 import { useLaunches, usePortfolio } from "@/lib/queries";
 import type { ActivityEvent } from "@/lib/types";
@@ -31,12 +32,12 @@ type Tab = "created" | "backed" | "holdings" | "activity";
 
 const sol = (v: number) => `${fmtSolValue(v)} SOL`;
 
-function TokenCell({ mint, name, symbol, image }: { mint: string; name: string; symbol: string; image: string | null }) {
+function TokenCell({ l }: { l: LaunchRef & { name: string; symbol: string; image: string | null } }) {
   return (
-    <Link href={`/launch/${mint}`} className="flex min-w-0 items-center gap-2.5 hover:text-ink">
-      <TokenAvatar src={image} symbol={symbol} mint={mint} size={24} />
-      <span className="max-w-44 truncate text-ink">{name}</span>
-      <span className="text-ink-3">${symbol}</span>
+    <Link href={launchHref(l)} className="flex min-w-0 items-center gap-2.5 hover:text-ink">
+      <TokenAvatar src={l.image} symbol={l.symbol} mint={l.mint} size={24} />
+      <span className="max-w-44 truncate text-ink">{l.name}</span>
+      <span className="text-ink-3">${l.symbol}</span>
     </Link>
   );
 }
@@ -127,16 +128,16 @@ function Created({ user, own }: { user: UserProfile; own: boolean }) {
       </EmptyState>
     );
   }
-  const byMint = new Map((launches.data?.launches ?? []).map((l) => [l.mint, l]));
+  const byAddress = new Map((launches.data?.launches ?? []).map((l) => [l.address, l]));
   return (
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       {user.launches.map((u) => {
-        const l = byMint.get(u.mint);
-        if (l) return <LaunchCard key={u.mint} launch={l} now={now} />;
+        const l = byAddress.get(u.address);
+        if (l) return <LaunchCard key={u.address} launch={l} now={now} />;
         return (
           <Link
-            key={u.mint}
-            href={`/launch/${u.mint}`}
+            key={u.address}
+            href={launchHref(u)}
             className="flex items-center gap-3 rounded-md border border-line bg-surface p-4 transition-colors hover:border-line-2 hover:bg-raised"
           >
             <TokenAvatar src={u.image} symbol={u.symbol} mint={u.mint} size={56} />
@@ -169,9 +170,9 @@ function Backed({ user }: { user: UserProfile }) {
         </THead>
         <tbody>
           {user.backed.map((b) => (
-            <TR key={b.mint}>
+            <TR key={b.address}>
               <TD>
-                <TokenCell {...b} />
+                <TokenCell l={b} />
               </TD>
               <TD>
                 <StatusChip status={b.status} />
@@ -213,9 +214,9 @@ function Holdings({ wallet }: { wallet: string }) {
         </THead>
         <tbody>
           {holdings.map((h) => (
-            <TR key={h.launch.mint}>
+            <TR key={launchId(h.launch)}>
               <TD>
-                <TokenCell mint={h.launch.mint} name={h.launch.name} symbol={h.launch.symbol} image={h.launch.image} />
+                <TokenCell l={h.launch} />
               </TD>
               <TD align="right">{fmtTokens(h.amount)}</TD>
               <TD align="right">{sol(h.valueSol)}</TD>
@@ -281,6 +282,14 @@ function describe(e: ActivityEvent): string {
       return `${tick} wound down: ${amount} credited to backers`;
     case "vault_withdrawn":
       return `Admin withdrew ${amount}${e.tokenAmount && BigInt(e.tokenAmount) > 0n ? ` + ${fmtTokens(e.tokenAmount)} ${tick}` : ""} from the ${tick} vault`;
+    case "creator_fees_collected":
+      return `Collected ${amount} of pump.fun creator fees for ${tick}`;
+    case "buyback_burned":
+      return `${tick} spent ${amount} of its buyback pool${e.tokenAmount && BigInt(e.tokenAmount) > 0n ? ` and burned ${fmtTokens(e.tokenAmount)}` : ""}`;
+    case "graduated":
+      return `${tick} graduated to PumpSwap`;
+    case "migrated":
+      return `${tick} migrated to the current program layout`;
   }
 }
 
@@ -314,7 +323,7 @@ function Activity({ wallet }: { wallet: string }) {
           {events.map((e) => (
             <TR key={String(e.id)}>
               <TD className="w-full max-md:whitespace-normal">
-                <Link href={`/launch/${e.mint}`} className="flex min-w-0 items-center gap-2.5 hover:text-ink">
+                <Link href={launchHref(e)} className="flex min-w-0 items-center gap-2.5 hover:text-ink">
                   <TokenAvatar src={e.image} symbol={e.symbol} mint={e.mint} size={24} />
                   <span className={e.type === "trade" ? (e.isBuy ? "text-up" : "text-down") : "text-ink"}>{describe(e)}</span>
                 </Link>

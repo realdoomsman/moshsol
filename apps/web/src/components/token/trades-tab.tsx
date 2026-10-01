@@ -8,6 +8,7 @@ import { ListFilter, X } from "lucide-react";
 import { useState } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import { useDebounced } from "@/lib/hooks";
+import { launchId } from "@/lib/launch";
 import { tradeKey, useTradeFeed, type PagedFeed } from "@/lib/queries";
 import type { TradeFilter } from "@/lib/query-options";
 import type { LaunchSummary, TradeRow } from "@/lib/types";
@@ -153,7 +154,7 @@ export function TradesTab({
   const me = publicKey?.toBase58() ?? null;
   const minSolDebounced = useDebounced(filters.minSol, 400);
   const minSol = Number(minSolDebounced) > 0 ? Number(minSolDebounced) : 0;
-  const feed = useTradeFeed(l.mint, toQuery(filters, roles, me, minSol));
+  const feed = useTradeFeed(launchId(l), toQuery(filters, roles, me, minSol));
   const fresh = useFreshKeys(feed.headKeys);
   const [makerDraft, setMakerDraft] = useState("");
   const makerInvalid = makerDraft.trim() !== "" && !isAddress(makerDraft.trim());

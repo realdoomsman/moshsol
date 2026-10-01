@@ -4,6 +4,7 @@ import { tokensToUi } from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useState } from "react";
 import { fmtSolValue, fmtTokens } from "@/lib/format";
+import { launchId } from "@/lib/launch";
 import { useHolders } from "@/lib/queries";
 import { CONCENTRATION_WARN } from "@/lib/thresholds";
 import type { LaunchSummary } from "@/lib/types";
@@ -73,7 +74,7 @@ export function HoldersTab({
   onFilterMaker: (wallet: string) => void;
 }) {
   const [limit, setLimit] = useState(HOLDERS_LIMIT);
-  const q = useHolders(l.mint, limit);
+  const q = useHolders(launchId(l), limit);
   const { publicKey } = useWallet();
   const me = publicKey?.toBase58();
   const rows = q.data?.holders ?? [];

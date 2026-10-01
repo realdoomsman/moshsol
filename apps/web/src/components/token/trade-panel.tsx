@@ -58,9 +58,10 @@ function QuoteRow({ label, children, tone }: { label: ReactNode; children: React
 }
 
 /**
- * Trade panel (§4.5): Buy/Sell (the active side fills up/down and the CTA follows it), amount in SOL
- * or tokens with presets, settings modal, live quote rows from the curve maths. Logged out it stays
- * fully interactive; only the CTA becomes "Connect wallet".
+ * Trade panel (§4.5, Holdfast-curve launches only; pump launches link out to pump.fun instead):
+ * Buy/Sell (the active side fills up/down and the CTA follows it), amount in SOL or tokens with
+ * presets, settings modal, live quote rows from the curve maths. Logged out it stays fully
+ * interactive; only the CTA becomes "Connect wallet".
  */
 export function TradePanel({
   launch: l,
@@ -81,7 +82,7 @@ export function TradePanel({
   const client = useMoshClient();
   const platform = usePlatform();
   const sol = useSolBalance(publicKey);
-  const tokens = useTokenBalance(l.mint, publicKey);
+  const tokens = useTokenBalance(l, publicKey);
   const tx = useTx();
   const settings = useTradeSettings();
   const { slippageBps } = settings;

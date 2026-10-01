@@ -23,6 +23,11 @@ const VALIDATOR_LOG = path.join(ROOT, ".localnet", "validator.log");
 
 /** [command, args] running `args` in the validator's environment: WSL on Windows. */
 const inShell = (...args) => (WIN ? ["wsl", args] : [args[0], args.slice(1)]);
+// `wsl` only forwards the variables WSLENV names: pass localnet.sh's options through.
+if (WIN) {
+  const forwarded = ["CLONE_PUMP", "CLONE_URL", "RPC_PORT", "FAUCET_PORT", "GOSSIP_PORT", "DYNAMIC_PORT_RANGE", "LEDGER", "LEDGER_LIMIT"];
+  process.env.WSLENV = [process.env.WSLENV, ...forwarded].filter(Boolean).join(":");
+}
 
 async function rpcHealthy() {
   try {

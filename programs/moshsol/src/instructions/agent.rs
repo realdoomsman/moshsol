@@ -6,7 +6,7 @@ use crate::constants::*;
 use crate::errors::MoshError;
 use crate::events::{Trade, VaultProfitShared};
 use crate::math;
-use crate::state::{Launch, LaunchStatus, Platform};
+use crate::state::{Launch, LaunchStatus, Platform, Venue};
 
 /// Agents can only move value between the launch's own curve and its own vault (and credit
 /// realized profit to backers). No account outside the launch can receive anything from these
@@ -24,7 +24,8 @@ pub struct AgentTrade<'info> {
         mut,
         seeds = [LAUNCH_SEED, mint.key().as_ref()],
         bump = launch.bump,
-        has_one = mint
+        has_one = mint,
+        constraint = launch.venue == Venue::Holdfast @ MoshError::WrongVenue
     )]
     pub launch: Box<Account<'info, Launch>>,
     pub mint: Box<InterfaceAccount<'info, Mint>>,
@@ -238,6 +239,7 @@ pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) ->
             launch: launch.key(),
             mint: mint_key,
             amount: profit,
+            to_buyback_pool: 0,
             timestamp: now,
         });
     }

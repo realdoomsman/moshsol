@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import type { LaunchStatus } from "@holdfast/sdk";
+import type { LaunchStatus, LaunchVenue } from "@holdfast/sdk";
 import { request } from "./api";
 import { INDEXER_URL } from "./env";
 import { signedMessage, type SignMessage } from "./signed";
@@ -34,6 +34,8 @@ export interface UserStats {
 
 export interface UserLaunch {
   mint: string;
+  address: string;
+  venue: LaunchVenue;
   name: string;
   symbol: string;
   image: string | null;
@@ -52,6 +54,8 @@ export interface UserLaunch {
 
 export interface UserBacked {
   mint: string;
+  address: string;
+  venue: LaunchVenue;
   name: string;
   symbol: string;
   image: string | null;
@@ -128,6 +132,8 @@ export interface TraderEntry extends WalletEntry {
 export interface LaunchEntry {
   rank: number;
   mint: string;
+  address: string;
+  venue: LaunchVenue;
   name: string;
   symbol: string;
   image: string | null;

@@ -2,7 +2,7 @@ import { PublicKey } from "@solana/web3.js";
 import idl from "./idl/moshsol.json";
 
 export const PROGRAM_ID = new PublicKey(idl.address);
-export { TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
+export { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 export const BPF_LOADER_UPGRADEABLE_PROGRAM_ID = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
 export const SEEDS = {
@@ -11,6 +11,7 @@ export const SEEDS = {
   curve: "curve",
   vault: "vault",
   backer: "backer",
+  pumpAuthority: "pump-authority",
 } as const;
 
 export const TOKEN_DECIMALS = 6;
@@ -32,7 +33,23 @@ export const LIMITS = {
   maxReserveBps: 8_000,
   maxProofLen: 24,
   maxRaiseLamports: 100_000n * 1_000_000_000n,
+  maxBurnShareBps: 5_000,
 } as const;
+
+/** `buyback_burn` guards (programs/moshsol/src/constants.rs). */
+export const BUYBACK = {
+  minLamports: 1_000_000n,
+  maxVenueBps: 500,
+  minIntervalSecs: 60,
+  minFillBps: 9_700,
+} as const;
+
+/**
+ * The venue's taker fee on both pump.fun (protocol 95 + creator 30 bps) and PumpSwap (lp 2 +
+ * protocol 93 + creator 30 bps), from their fee configs (`tests/program/fixtures/*_fee_config.json`).
+ * What `quoteBuy` / `quoteSell` take as `tradeFeeBps` for a pump launch's venue.
+ */
+export const PUMP_VENUE_FEE_BPS = 125;
 
 /** `wind_down` opens once a launch has been live this long… */
 export const WIND_DOWN_MIN_AGE_SECS = 3 * 86_400;

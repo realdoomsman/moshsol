@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { CLUSTER_NAME } from "@/lib/env";
+import { launchHref, launchId } from "@/lib/launch";
 import { useLaunch, useLaunches } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { AgentSimulator } from "../band/agent-simulator";
@@ -20,8 +21,8 @@ export function SimulatorPanel() {
   const live = useLaunches({ status: "live", sort: "trending" });
   const [picked, setPicked] = useState<string | null>(null);
   const options = live.data?.launches ?? [];
-  const initial = options.find((l) => l.mint === picked) ?? seed;
-  if (initial) return <Seeded key={initial.mint} initial={initial} options={options} onPick={setPicked} />;
+  const initial = options.find((l) => launchId(l) === picked) ?? seed;
+  if (initial) return <Seeded key={launchId(initial)} initial={initial} options={options} onPick={setPicked} />;
   if (failed) {
     return (
       <ErrorState onRetry={retry} retrying={retrying}>
@@ -36,8 +37,8 @@ export function SimulatorPanel() {
   );
 }
 
-function Seeded({ initial, options, onPick }: { initial: LaunchSummary; options: LaunchSummary[]; onPick: (mint: string) => void }) {
-  const fresh = useLaunch(initial.mint);
+function Seeded({ initial, options, onPick }: { initial: LaunchSummary; options: LaunchSummary[]; onPick: (id: string) => void }) {
+  const fresh = useLaunch(launchId(initial));
   const launch = fresh.data ?? initial;
   return (
     <div>
@@ -48,16 +49,16 @@ function Seeded({ initial, options, onPick }: { initial: LaunchSummary; options:
             prefix="Seeded with"
             size="sm"
             align="end"
-            value={launch.mint}
+            value={launchId(launch)}
             onChange={onPick}
-            options={options.map((l) => ({ value: l.mint, label: `$${l.symbol}`, hint: l.name }))}
+            options={options.map((l) => ({ value: launchId(l), label: `$${l.symbol}`, hint: l.name }))}
           />
         </div>
       ) : null}
       <AgentSimulator launch={launch} />
       <p className="micro mt-3 text-ink-3">
         Seeded with{" "}
-        <Link href={`/launch/${launch.mint}`} className="text-ink-2 underline decoration-ink-3/60 underline-offset-4 hover:text-ink">
+        <Link href={launchHref(launch)} className="text-ink-2 underline decoration-ink-3/60 underline-offset-4 hover:text-ink">
           ${launch.symbol}
         </Link>
         &rsquo;s live vault, curve and window budgets on {CLUSTER_NAME}. Nothing is sent; this is the program&rsquo;s arithmetic.

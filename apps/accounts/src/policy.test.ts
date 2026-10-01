@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createPublicKey, verify } from "node:crypto";
 import { test } from "node:test";
-import { PROGRAM_ID } from "@holdfast/sdk";
+import { PROGRAM_ID, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID } from "@holdfast/sdk";
 import {
   ComputeBudgetProgram,
   Keypair,
@@ -17,10 +17,10 @@ import { PolicyError, checkTransaction, signChecked } from "./policy";
 const owner = Keypair.generate();
 const blockhash = Keypair.generate().publicKey.toBase58();
 
-/** A Holdfast-program instruction (the policy looks at the program, not the data). */
-function holdfastIx(extraSigner?: PublicKey): TransactionInstruction {
+/** An instruction for `programId` (the policy looks at the program, not the data). */
+function ixFor(programId: PublicKey, extraSigner?: PublicKey): TransactionInstruction {
   return new TransactionInstruction({
-    programId: PROGRAM_ID,
+    programId,
     keys: [
       { pubkey: owner.publicKey, isSigner: true, isWritable: true },
       ...(extraSigner ? [{ pubkey: extraSigner, isSigner: true, isWritable: true }] : []),
@@ -28,6 +28,8 @@ function holdfastIx(extraSigner?: PublicKey): TransactionInstruction {
     data: Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]),
   });
 }
+
+const holdfastIx = (extraSigner?: PublicKey) => ixFor(PROGRAM_ID, extraSigner);
 
 function legacy(ixs: TransactionInstruction[], feePayer = owner.publicKey): Transaction {
   return new Transaction({ feePayer, blockhash, lastValidBlockHeight: 1 }).add(...ixs);
@@ -52,6 +54,14 @@ test("signs a buy-shaped transaction and keeps signatures other signers already 
   const signed = Transaction.from(signChecked(raw, checkTransaction(raw, owner.publicKey), owner.secretKey));
   assert.ok(signed.verifySignatures(), "fee payer and mint signatures both verify");
   assert.ok(signed.signatures.some((s) => s.publicKey.equals(mint.publicKey) && s.signature !== null));
+});
+
+test("signs pump.fun / PumpSwap venue trades (where pump launches are traded)", () => {
+  for (const program of [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID]) {
+    const raw = wire(legacy([ComputeBudgetProgram.setComputeUnitLimit({ units: 120_000 }), ixFor(program)]));
+    const signed = Transaction.from(signChecked(raw, checkTransaction(raw, owner.publicKey), owner.secretKey));
+    assert.ok(signed.verifySignatures());
+  }
 });
 
 test("signs versioned (v0) transactions", () => {

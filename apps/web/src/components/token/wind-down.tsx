@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  pumpRefOf,
+  seedKeyOf,
   WIND_DOWN_IDLE_SECS,
   WIND_DOWN_MIN_AGE_SECS,
   windDownOpensAt,
@@ -9,10 +11,10 @@ import {
 } from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { PublicKey } from "@solana/web3.js";
 import type { ReactNode } from "react";
 import { useMoshClient, useWindDownBlocker } from "@/lib/chain";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
+import { launchId, VENUE_LABEL, venueKindOf } from "@/lib/launch";
 import { useVaultWithdrawals } from "@/lib/queries";
 import { humanError, TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
@@ -38,6 +40,7 @@ function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
 
 function blockerText(blocker: WindDownBlocker, l: LaunchSummary, now: number): string {
   const opens = `Opens in ${formatCountdown(windDownOpensAt(l) - now)}`;
+  const venue = l.venue === "pump" ? "venue" : "curve";
   switch (blocker) {
     case "notLive":
       return "Only a live launch can wind down.";
@@ -46,14 +49,15 @@ function blockerText(blocker: WindDownBlocker, l: LaunchSummary, now: number): s
     case "recentTrade":
       return `${opens}: it needs ${IDLE_HOURS} h without a trade.`;
     case "outsideHolders":
-      return `Not now: wallets outside the curve and vault still hold $${l.symbol}. Every token has to be back in the curve or vault (or burned).`;
+      return `Not now: wallets outside the ${venue} and vault still hold $${l.symbol}. Every token has to be back in the ${venue} or vault (or burned).`;
   }
 }
 
 /**
  * Wind-down (§4.5 rail). Live: the rules, when they open, and a "Wind down" button for any wallet
  * once `windDownBlocker` (status, age, idle time, real token balances) returns null. Wound down:
- * when it happened, the SOL credited to backers and the tokens returned to the curve.
+ * when it happened, the SOL credited to backers and the tokens returned to the curve (Holdfast) or
+ * sold into the venue (pump).
  */
 export function WindDownCard({ launch: l, now, className }: { launch: LaunchSummary; now: number; className?: string }) {
   const { publicKey } = useWallet();
@@ -62,7 +66,8 @@ export function WindDownCard({ launch: l, now, className }: { launch: LaunchSumm
   const tx = useTx();
   const timing = windDownTimingBlocker(l, now);
   // Balances are only worth reading once the clock rules pass (the SDK checks those first anyway).
-  const chain = useWindDownBlocker(l.mint, l.status === "live" && timing === null);
+  const chain = useWindDownBlocker(l, l.status === "live" && timing === null);
+  const pump = l.venue === "pump";
 
   if (l.status === "woundDown") {
     const w = l.woundDown;
@@ -70,8 +75,8 @@ export function WindDownCard({ launch: l, now, className }: { launch: LaunchSumm
       <Panel title="Wind-down" aside={<StatusChip status="woundDown" />} className={className}>
         <div className="grid gap-4 px-4 pb-4">
           <p className="small text-ink-2">
-            Trading has ended for good. The curve and vault SOL were credited to the backers; each backer collects their share with
-            the claim button under Your position.
+            Trading on Holdfast has ended for good. The {pump ? "vault's tokens were sold into the venue and the proceeds plus the vault SOL" : "curve and vault SOL"} were
+            credited to the backers; each backer collects their share with the claim button under Your position.
           </p>
           <dl className="small grid gap-2">
             {w ? (
@@ -85,7 +90,7 @@ export function WindDownCard({ launch: l, now, className }: { launch: LaunchSumm
                   </span>
                 </Row>
                 <Row label="Credited to backers">{fmtSolValue(w.solToBackers)} SOL</Row>
-                <Row label="Returned to the curve">
+                <Row label={pump ? "Sold into the venue" : "Returned to the curve"}>
                   {fmtTokens(w.tokensReturned)} ${l.symbol}
                 </Row>
               </>
@@ -121,9 +126,9 @@ export function WindDownCard({ launch: l, now, className }: { launch: LaunchSumm
         onClick={() =>
           void tx.run({
             label,
-            successMessage: `$${l.symbol} wound down. The curve and vault SOL are credited to backers.`,
-            build: async (payer) => [await client.windDownIx(payer, new PublicKey(l.mint))],
-            invalidate: [["backer", l.mint], ["wind-down", l.mint]],
+            successMessage: `$${l.symbol} wound down. ${pump ? "The vault was sold into the venue and the SOL is" : "The curve and vault SOL are"} credited to backers.`,
+            build: async (payer) => [pump ? await client.windDownPumpIx(payer, pumpRefOf(l)) : await client.windDownIx(payer, seedKeyOf(l))],
+            invalidate: [["backer", launchId(l)], ["wind-down", launchId(l)]],
           })
         }
       >
@@ -136,9 +141,11 @@ export function WindDownCard({ launch: l, now, className }: { launch: LaunchSumm
     <Panel title="Wind-down" className={className}>
       <div className="grid gap-3 px-4 pb-4">
         <p className="small text-ink-2">
-          Once this launch is {MIN_AGE_DAYS} days old, has gone {IDLE_HOURS} h without a trade and nobody outside the curve and vault
-          holds ${l.symbol}, any wallet can wind it down: vault tokens go back to the curve, the curve and vault SOL are credited to
-          backers, and trading stops for good.
+          Once this launch is {MIN_AGE_DAYS} days old, has gone {IDLE_HOURS} h without a trade and nobody outside the{" "}
+          {pump ? VENUE_LABEL[venueKindOf(l)] : "curve"} and vault holds ${l.symbol}, any wallet can wind it down:{" "}
+          {pump
+            ? "the vault's tokens are sold into the venue and the proceeds plus the vault SOL are credited to backers; the buyback pool stays for the crank."
+            : "vault tokens go back to the curve, the curve and vault SOL are credited to backers, and trading stops for good."}
         </p>
         {status}
       </div>
@@ -151,7 +158,7 @@ export function WindDownCard({ launch: l, now, className }: { launch: LaunchSumm
  * launch's vault — SOL, tokens, recipient and transaction — from the indexer's `vault_withdrawn` events.
  */
 export function AdminWithdrawals({ launch: l, now, className }: { launch: LaunchSummary; now: number; className?: string }) {
-  const q = useVaultWithdrawals(l.mint);
+  const q = useVaultWithdrawals(launchId(l));
   const rows = q.data?.events ?? [];
   const tokens = BigInt(l.vaultWithdrawnTokens);
   return (

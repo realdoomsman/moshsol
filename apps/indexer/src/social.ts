@@ -90,6 +90,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
       }
       return {
         id: c.id,
+        launch: c.launch,
         mint: c.mint,
         wallet: c.wallet,
         name: c.author_name,
@@ -112,15 +113,15 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
 
   // ---------------- comments ----------------
 
-  app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/comments", async (req) => {
-    const launch = requireLaunch(store, req.params.mint);
+  app.get<{ Params: { id: string }; Querystring: Query }>("/api/launches/:id/comments", async (req) => {
+    const launch = requireLaunch(store, req.params.id);
     const limit = intQuery(req.query, "limit", 50, 200);
     const before = intQuery(req.query, "before", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
     const replyTo = req.query.replyTo ? positiveInt(req.query.replyTo, "replyTo") : null;
-    const rows = store.comments(launch.mint, before, limit, replyTo);
+    const rows = store.comments(launch.address, before, limit, replyTo);
     return {
       comments: commentRows(launch, rows),
-      total: store.commentTotal(launch.mint),
+      total: store.commentTotal(launch.address),
       nextBefore: rows.length === limit && limit > 0 ? rows[rows.length - 1].id : null,
     };
   });
@@ -128,13 +129,13 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
   app.get<{ Params: { id: string } }>("/api/comments/:id", async (req) => {
     const c = store.comment(positiveInt(req.params.id, "id"));
     if (!c || c.deleted_at !== null) throw new NotFoundError("comment not found");
-    const launch = store.launchByMint(c.mint);
+    const launch = store.launch(c.launch);
     if (!launch) throw new NotFoundError("comment not found");
     return { comment: commentRows(launch, [c])[0] };
   });
 
-  app.post<{ Params: { mint: string } }>(
-    "/api/launches/:mint/comments",
+  app.post<{ Params: { id: string } }>(
+    "/api/launches/:id/comments",
     { bodyLimit: WRITE_BODY_LIMIT },
     async (req, reply) => {
       const now = Date.now();
@@ -147,14 +148,15 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
       const signature = stringField(body, "signature", 128);
       const rawText = stringField(body, "body", 4 * COMMENT_MAX_CHARS);
       const replyTo = body.replyTo === undefined || body.replyTo === null ? null : positiveInt(body.replyTo, "replyTo");
-      const launch = requireLaunch(store, req.params.mint);
+      const launch = requireLaunch(store, req.params.id);
       const text = cleanText(rawText, "body", COMMENT_MAX_CHARS, { multiline: true });
       if (!text) throw new ValidationError("body must not be empty");
 
       const nowSecs = Math.floor(now / 1000);
+      // Signed for the launch address: a pump launch has no mint of its own while raising.
       const ts = verifySignedMessage(
         { wallet, message, signature },
-        { kind: "comment", subject: launch.mint, payload: rawText },
+        { kind: "comment", subject: launch.address, payload: rawText },
         nowSecs,
       );
       claimMessage(wallet, message, ts, nowSecs);
@@ -164,16 +166,16 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
       }
       if (replyTo !== null) {
         const parent = store.comment(replyTo);
-        if (!parent || parent.mint !== launch.mint || parent.deleted_at !== null) {
+        if (!parent || parent.launch !== launch.address || parent.deleted_at !== null) {
           throw new ValidationError("replyTo must be a visible comment on this launch");
         }
       }
-      if (store.hasRecentDuplicate(wallet, launch.mint, text, nowSecs - DUPLICATE_WINDOW_SECS)) {
+      if (store.hasRecentDuplicate(wallet, launch.address, text, nowSecs - DUPLICATE_WINDOW_SECS)) {
         throw new HttpError(409, "you already posted this comment here recently");
       }
 
       const id = store.insertComment({
-        mint: launch.mint,
+        launch: launch.address,
         wallet,
         body: text,
         reply_to: replyTo,
@@ -182,8 +184,8 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
         message,
       });
       const comment = commentRows(launch, [store.comment(id)!])[0];
-      hub.broadcast({ type: "comment", mint: launch.mint, comment });
-      req.log.info({ id, mint: launch.mint, wallet, replyTo }, "comment posted");
+      hub.broadcast({ type: "comment", launch: launch.address, comment });
+      req.log.info({ id, launch: launch.address, wallet, replyTo }, "comment posted");
       return reply.code(201).send({ comment });
     },
   );
@@ -198,10 +200,17 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
     const nowSecs = Math.floor(Date.now() / 1000);
     const deleted = store.softDeleteComment(id, nowSecs);
     if (deleted) {
-      hub.broadcast({ type: "comment_deleted", mint: c.mint, id });
-      req.log.warn({ id, mint: c.mint, wallet: c.wallet }, "comment removed by moderator");
+      hub.broadcast({ type: "comment_deleted", launch: c.launch, id });
+      req.log.warn({ id, launch: c.launch, wallet: c.wallet }, "comment removed by moderator");
     }
-    return { ok: true, id, mint: c.mint, deletedAt: deleted ? nowSecs : c.deleted_at, alreadyDeleted: !deleted };
+    return {
+      ok: true,
+      id,
+      launch: c.launch,
+      mint: c.mint,
+      deletedAt: deleted ? nowSecs : c.deleted_at,
+      alreadyDeleted: !deleted,
+    };
   });
 
   // ---------------- profiles ----------------
@@ -313,6 +322,8 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
       backerClaimed += claimed;
       backerClaimableTotal += claimable;
       backed.push({
+        address: row.address,
+        venue: row.venue,
         mint: row.mint,
         name: row.meta_name ?? row.onchain_name,
         symbol: row.meta_symbol ?? row.onchain_symbol,
@@ -363,6 +374,8 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
         firstSeen: store.walletFirstSeen(wallet),
       },
       launches: created.map((l) => ({
+        address: l.address,
+        venue: l.venue,
         mint: l.mint,
         name: l.name,
         symbol: l.symbol,

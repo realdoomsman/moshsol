@@ -2,23 +2,28 @@ import {
   TOTAL_SUPPLY,
   lamportsToSol,
   launchToJson,
+  marketCapSol,
   q64ToSolPerToken,
   spotPrice,
   statusOf,
+  venueOf,
   type LaunchAccount,
+  type LaunchJson,
   type MoshClient,
   type MoshEvent,
   type PlatformAccount,
+  type VenueState,
 } from "@holdfast/sdk";
 import { PublicKey, type ConfirmedSignatureInfo, type Connection } from "@solana/web3.js";
 import type { FastifyBaseLogger } from "fastify";
-import type { ActivityDbRow, EventDbRow, MetaUpdate, Store } from "./db";
-import type { HolderSet, Holders } from "./holders";
+import { DEFAULT_PUBKEY, type ActivityDbRow, type EventDbRow, type LaunchDbRow, type MetaUpdate, type Store } from "./db";
+import type { HolderSet, HolderTarget, Holders } from "./holders";
 import type { Hub } from "./hub";
 import { LogsStream } from "./logs-stream";
 import { UnfetchableUriError, loadMetadata } from "./metadata";
 import { summaryOf } from "./summaries";
 import type { ActivityEvent } from "./types";
+import { loadVenueStates, type VenueTarget } from "./venue";
 
 export interface SyncOptions {
   pollMs: number;
@@ -70,6 +75,8 @@ export function activityFromRow(r: ActivityDbRow): ActivityEvent {
     type: r.type,
     signature: r.signature,
     timestamp: r.timestamp,
+    launch: r.launch,
+    venue: r.venue,
     mint: r.mint,
     symbol: r.symbol,
     name: r.name,
@@ -80,7 +87,23 @@ export function activityFromRow(r: ActivityDbRow): ActivityEvent {
   if (r.is_buy !== null) ev.isBuy = r.is_buy === 1;
   if (r.sol_amount !== null) ev.solAmount = r.sol_amount;
   if (r.token_amount !== null) ev.tokenAmount = r.token_amount;
+  if (r.ref !== null) ev.ref = r.ref;
   return ev;
+}
+
+/**
+ * What the holder loader needs to know about a launch: pump launches hold SPL Token accounts and their
+ * venue's own account is the bonding curve's ATA (the pool's base account once graduated).
+ */
+export function holderTarget(row: LaunchDbRow & { snapshot: string }): HolderTarget {
+  const snap = JSON.parse(row.snapshot) as LaunchJson;
+  return { address: row.address, mint: row.mint, venue: row.venue, graduated: snap.pump.graduated };
+}
+
+/** The venue read a launched pump launch needs for its price; null for Holdfast launches and unlaunched pump launches. */
+function venueTargetOf(address: string, account: LaunchAccount): VenueTarget | null {
+  if (venueOf(account) !== "pump" || account.mint.equals(PublicKey.default)) return null;
+  return { address, mint: account.mint, graduated: account.pump.graduated };
 }
 
 /**
@@ -430,6 +453,7 @@ export class ChainSync {
       is_agent: null,
       is_buy: null,
       token_amount: null,
+      ref: null,
     };
     const activity = (row: Pick<EventDbRow, "type" | "actor" | "sol_amount"> & Partial<EventDbRow>) =>
       this.store.insertEvent({ ...base, ...row });
@@ -437,9 +461,12 @@ export class ChainSync {
     switch (ev.name) {
       case "launchCreated": {
         const e = ev.data;
+        // A pump launch has no mint until `launch_pump`: its event carries the default pubkey.
+        const mint = e.mint.toBase58();
         this.store.upsertCreatedLaunch({
           address: launch,
-          mint: e.mint.toBase58(),
+          mint,
+          venue: mint === DEFAULT_PUBKEY ? "pump" : "holdfast",
           creator: e.creator.toBase58(),
           idx: Number(e.index.toString()),
           status: "raising",
@@ -470,8 +497,9 @@ export class ChainSync {
       }
       case "launched": {
         const e = ev.data;
+        // Holdfast: the curve price after the bundle buy. Pump: the bonding curve's price after it.
         const price = q64ToSolPerToken(BigInt(e.priceQ64.toString()));
-        this.store.setLaunched(launch, price, base.timestamp, lamportsToSol(e.bundleSol.toString()));
+        this.store.setLaunched(launch, e.mint.toBase58(), price, base.timestamp, lamportsToSol(e.bundleSol.toString()));
         return {
           launch,
           inserted: activity({
@@ -545,7 +573,8 @@ export class ChainSync {
         // Not part of the public activity feed; the launch snapshot refresh reflects it.
         return { launch, inserted: false };
       case "vaultProfitShared":
-        // Emitted right after the agent sell's `trade` event: the realized profit credited to backers.
+        // Emitted right after the agent sell's `trade` event: the realized profit (pump launches: `toBuybackPool`
+        // of it went to the buyback pool instead of backers; the snapshot's `buybackPoolSol` shows that).
         return {
           launch,
           inserted: activity({ type: "profit_shared", actor: null, sol_amount: ev.data.amount.toString() }),
@@ -570,6 +599,28 @@ export class ChainSync {
             token_amount: ev.data.tokens.toString(),
           }),
         };
+      case "creatorFeesCollected":
+        // `collect_pump_fees`: pump.fun / PumpSwap creator fees swept into the launch (25% buyback pool, 75% vault).
+        return {
+          launch,
+          inserted: activity({ type: "creator_fees_collected", actor: null, sol_amount: ev.data.amount.toString() }),
+        };
+      case "buybackBurned":
+        return {
+          launch,
+          inserted: activity({
+            type: "buyback_burned",
+            actor: null,
+            sol_amount: ev.data.sol.toString(),
+            token_amount: ev.data.tokens.toString(),
+            ref: ev.data.buybackMint.toBase58(),
+          }),
+        };
+      case "pumpGraduated":
+        return { launch, inserted: activity({ type: "graduated", actor: null, sol_amount: null, ref: ev.data.pool.toBase58() }) };
+      case "launchMigrated":
+        // The admin's one-time layout migration after the program upgrade.
+        return { launch, inserted: activity({ type: "migrated", actor: null, sol_amount: null }) };
     }
   }
 
@@ -592,7 +643,10 @@ export class ChainSync {
           const key = new PublicKey(address);
           const epoch = this.epoch;
           const res = await this.client.program.account.launch.fetchNullableAndContext(key, "confirmed");
-          if (res.data) await this.applySnapshot(key, res.data, res.context.slot, epoch);
+          if (!res.data) continue;
+          const target = venueTargetOf(address, res.data);
+          const venue = target ? (await loadVenueStates(this.connection, [target])).get(address) : undefined;
+          await this.applySnapshot(key, res.data, res.context.slot, epoch, venue);
         } while (this.refreshAgain.has(address) && !this.stopped);
       } catch (err) {
         this.log.warn({ address, error: errorText(err) }, "launch refresh failed");
@@ -606,21 +660,34 @@ export class ChainSync {
 
   /**
    * Upserts a snapshot if it is at least as new as the stored one; broadcasts on change. Dropped when
-   * the index was wiped (`epoch` moved) after the account was fetched.
+   * the index was wiped (`epoch` moved) after the account was fetched. `venue` is a launched pump
+   * launch's current reserves (null when its venue account is missing): they replace the snapshot's
+   * `priceSol` / `marketCapSol`, which the account itself can't know.
    */
-  private async applySnapshot(key: PublicKey, account: LaunchAccount, slot: number, epoch: number): Promise<void> {
+  private async applySnapshot(
+    key: PublicKey,
+    account: LaunchAccount,
+    slot: number,
+    epoch: number,
+    venue: VenueState | null | undefined,
+  ): Promise<void> {
     if (epoch !== this.epoch) return;
     const address = key.toBase58();
+    const pump = venueOf(account) === "pump";
     if (!this.store.launch(address)) {
-      // Discovered from the account (its `launchCreated` is not in our history): use on-mint metadata.
-      const meta = await this.client.fetchTokenMeta(account.mint).catch((err: unknown) => {
-        this.log.warn({ err, address }, "token metadata fetch failed");
-        return null;
-      });
+      // Discovered from the account (its `launchCreated` is not in our history). Pump launches carry their
+      // name/symbol/uri; Holdfast launches keep them on the mint's Token-2022 metadata.
+      const meta = pump
+        ? { name: account.name, symbol: account.symbol, uri: account.uri }
+        : await this.client.fetchTokenMeta(account.mint).catch((err: unknown) => {
+            this.log.warn({ err, address }, "token metadata fetch failed");
+            return null;
+          });
       if (epoch !== this.epoch) return;
       this.store.insertLaunch({
         address,
         mint: account.mint.toBase58(),
+        venue: pump ? "pump" : "holdfast",
         creator: account.creator.toBase58(),
         idx: Number(account.index.toString()),
         status: statusOf(account),
@@ -637,21 +704,44 @@ export class ChainSync {
     if (slot < row.snapshot_slot) return;
 
     const json = launchToJson(key, account);
+    if (pump) {
+      // Live reserves price the venue. A completed curve (pump.fun withdrew it, `graduate_pump` not run yet)
+      // or a missing account has nothing to quote: keep the last price we saw rather than dropping to 0.
+      if (venue && venue.curve.tokenReserve > 0n) {
+        json.priceSol = spotPrice(venue.curve);
+        json.marketCapSol = marketCapSol(venue.curve);
+      } else if (row.snapshot) {
+        const prev = JSON.parse(row.snapshot) as LaunchJson;
+        json.priceSol = prev.priceSol;
+        json.marketCapSol = prev.marketCapSol;
+      }
+    }
     if ((json.status === "live" || json.status === "woundDown") && row.launch_price === null) {
-      // Missed the `launched` event: the bundle is the curve's first buy, so its post-trade price is exact.
-      const price = spotPrice({
-        virtualSol: BigInt(json.virtualSol),
-        realSol: BigInt(json.bundleSol),
-        tokenReserve: TOTAL_SUPPLY - BigInt(json.bundleTokens),
-      });
-      this.store.setLaunched(address, price, json.launchedAt, Number(json.bundleSol) / 1e9);
+      // Missed the `launched` event. Holdfast: the bundle is the curve's first buy, so its post-trade price is
+      // exact. Pump: the venue has traded since; its current price is the best reference left.
+      const price = pump
+        ? json.priceSol
+        : spotPrice({
+            virtualSol: BigInt(json.virtualSol),
+            realSol: BigInt(json.bundleSol),
+            tokenReserve: TOTAL_SUPPLY - BigInt(json.bundleTokens),
+          });
+      if (price > 0) this.store.setLaunched(address, json.mint, price, json.launchedAt, Number(json.bundleSol) / 1e9);
     }
     const snapshot = JSON.stringify(json);
     if (snapshot === row.snapshot) {
       this.store.setSnapshotSlot(address, slot);
       return;
     }
-    this.store.setSnapshot(address, snapshot, slot, json.status);
+    this.store.setSnapshot({
+      address,
+      snapshot,
+      slot,
+      status: json.status,
+      mint: json.mint,
+      venue: json.venue,
+      pumpMeta: pump ? { name: json.name, symbol: json.symbol, uri: json.uri } : null,
+    });
     this.broadcastLaunch(address);
   }
 
@@ -660,7 +750,10 @@ export class ChainSync {
     if (launch) this.hub.broadcast({ type: "launch", launch });
   }
 
-  /** All launch accounts in one getProgramAccounts call, plus platform, metadata retries and holder counts. */
+  /**
+   * All launch accounts in one getProgramAccounts call, the venue reserves of every launched pump launch in
+   * getMultipleAccountsInfo batches, then platform, metadata retries and holder counts.
+   */
   private async fullRefresh(): Promise<void> {
     const epoch = this.epoch;
     const res = await this.connection.getProgramAccounts(this.client.programId, {
@@ -668,9 +761,14 @@ export class ChainSync {
       withContext: true,
       filters: [{ memcmp: this.launchDisc }],
     });
-    for (const { pubkey, account } of res.value) {
-      const decoded = this.client.program.coder.accounts.decode<LaunchAccount>("launch", account.data);
-      await this.applySnapshot(pubkey, decoded, res.context.slot, epoch);
+    const decoded = res.value.map(({ pubkey, account }) => ({
+      pubkey,
+      account: this.client.program.coder.accounts.decode<LaunchAccount>("launch", account.data),
+    }));
+    const targets = decoded.flatMap(({ pubkey, account }) => venueTargetOf(pubkey.toBase58(), account) ?? []);
+    const venues = await loadVenueStates(this.connection, targets);
+    for (const { pubkey, account } of decoded) {
+      await this.applySnapshot(pubkey, account, res.context.slot, epoch, venues.get(pubkey.toBase58()));
     }
     this.platform = await this.client.fetchPlatform();
     for (const row of this.store.launchesWithMetaDue(Date.now(), META_MAX_ATTEMPTS)) void this.fetchMetadata(row.address);
@@ -681,25 +779,26 @@ export class ChainSync {
     const now = Date.now();
     const aggs = this.store.tradeAggregates(Math.floor(now / 1000));
     for (const row of this.store.launches()) {
+      // Only live launches have outside holders (a raising pump launch has no mint at all).
       if (row.status !== "live") continue;
       const lastTradeMs = (aggs.get(row.address)?.last_ts ?? row.launch_ts ?? 0) * 1000;
       const fresh = now - row.holders_at < this.opts.holdersTtlMs || lastTradeMs < row.holders_at;
       // top_holder_pct is null on rows loaded before that column existed: refresh them once.
       if (row.holders_at !== 0 && row.top_holder_pct !== null && fresh) continue;
       // Holder counts are best-effort decoration; an RPC hiccup here must never fail the sync loop.
-      await this.updateHolders(row.mint, row.address).catch((err: unknown) => {
+      await this.updateHolders(holderTarget(row)).catch((err: unknown) => {
         this.log.warn({ mint: row.mint, error: String((err as Error)?.message ?? err) }, "holders refresh failed");
       });
     }
   }
 
   /** Loads holders for a launch (30s cache) and persists count + top holder share; broadcasts when either changed. */
-  async updateHolders(mint: string, address: string): Promise<HolderSet> {
-    const set = await this.holders.get(mint, address);
-    const row = this.store.launch(address);
+  async updateHolders(target: HolderTarget): Promise<HolderSet> {
+    const set = await this.holders.get(target);
+    const row = this.store.launch(target.address);
     if (!row || row.holders_at >= set.at) return set;
-    this.store.setHolders(address, set.count, set.topPct, set.at);
-    if (row.holders !== set.count || row.top_holder_pct !== set.topPct) this.broadcastLaunch(address);
+    this.store.setHolders(target.address, set.count, set.topPct, set.at);
+    if (row.holders !== set.count || row.top_holder_pct !== set.topPct) this.broadcastLaunch(target.address);
     return set;
   }
 

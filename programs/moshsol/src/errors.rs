@@ -72,4 +72,20 @@ pub enum MoshError {
     RecentTrade,
     #[msg("Tokens are held outside the curve and vault; the launch can't wind down")]
     OutsideHolders,
+    #[msg("This instruction is for the other venue (Holdfast curve vs pump.fun)")]
+    WrongVenue,
+    #[msg("Launches on the Holdfast curve are closed; create a pump.fun launch")]
+    HoldfastCurveDisabled,
+    #[msg("A venue account is missing, has the wrong owner or the wrong layout")]
+    InvalidVenueAccount,
+    #[msg("The pump.fun curve is complete; migrate it and run graduate_pump")]
+    CurveComplete,
+    #[msg("The launch has not graduated to PumpSwap (or already has)")]
+    NotGraduated,
+    #[msg("The platform has no buyback mint yet")]
+    BuybackMintUnset,
+    #[msg("Buyback below the minimum size or too soon after the last one")]
+    BuybackThrottled,
+    #[msg("Account already uses the current layout")]
+    AlreadyMigrated,
 }

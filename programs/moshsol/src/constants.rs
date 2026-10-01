@@ -3,6 +3,10 @@ pub const LAUNCH_SEED: &[u8] = b"launch";
 pub const CURVE_SEED: &[u8] = b"curve";
 pub const VAULT_SEED: &[u8] = b"vault";
 pub const BACKER_SEED: &[u8] = b"backer";
+/// System-owned PDA that is the pump.fun / PumpSwap `user` of a pump launch (the launch
+/// account itself is program-owned, so the system program can't debit it) and the authority of
+/// the launch's SPL token accounts. Holds no lamports between instructions.
+pub const PUMP_AUTHORITY_SEED: &[u8] = b"pump-authority";
 
 pub const TOKEN_DECIMALS: u8 = 6;
 /// 1,000,000,000 tokens with 6 decimals. Entire supply is minted to the curve at creation
@@ -34,6 +38,22 @@ pub const MIN_EMA_PERIOD_SECS: u32 = 300;
 pub const MAX_EMA_PERIOD_SECS: u32 = 7 * 86_400;
 pub const MIN_VIRTUAL_SOL: u64 = 1_000_000_000; // 1 SOL
 pub const MAX_VIRTUAL_SOL: u64 = 1_000_000_000_000; // 1000 SOL
+/// `burn_share_bps` (share of creator fees and agent profit that goes to the buyback-and-burn
+/// pool) can never exceed half.
+pub const MAX_BURN_SHARE_BPS: u16 = 5_000;
+pub const DEFAULT_BURN_SHARE_BPS: u16 = 2_500;
+/// `buyback_burn` guards: no dust-sized buys, at most this share of the Holdfast token venue's
+/// quote reserves per call, and at least this long between calls per launch.
+pub const MIN_BUYBACK_LAMPORTS: u64 = 1_000_000; // 0.001 SOL
+pub const BUYBACK_MAX_VENUE_BPS: u16 = 500; // 5% of the venue's quote reserves
+pub const BUYBACK_MIN_INTERVAL_SECS: i64 = 60;
+/// In-program slippage floor of a buyback: the fill must return at least this share of the
+/// fee-free constant-product quote from the venue's reserves.
+pub const BUYBACK_MIN_FILL_BPS: u16 = 9_700;
+/// Fee headroom assumed when sizing the bundle buy on pump.fun from the fee-free quote, so the
+/// `buy(amount, max_sol_cost)` never fails on the venue's fee (1.25% today) and the remainder
+/// stays in the vault.
+pub const PUMP_BUY_FEE_HEADROOM_BPS: u16 = 300;
 
 pub const MIN_RAISE_DURATION_SECS: i64 = 60;
 pub const MAX_RAISE_DURATION_SECS: i64 = 14 * 86_400;

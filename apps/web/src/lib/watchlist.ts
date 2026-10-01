@@ -3,9 +3,9 @@
 import { useCallback, useSyncExternalStore } from "react";
 
 /**
- * Watchlist ★ (brief #29): mints saved in this browser (localStorage), shared by the token page
- * star and Discover's "Watching" filter. Renders empty on the server and while hydrating, then the
- * stored list; stays in sync across components and tabs.
+ * Watchlist ★ (brief #29): launch ids (`launchId`: mint or address) saved in this browser
+ * (localStorage), shared by the token page star and Discover's "Watching" filter. Renders empty on
+ * the server and while hydrating, then the stored list; stays in sync across components and tabs.
  */
 const KEY = "holdfast:watchlist";
 const EMPTY: readonly string[] = [];
@@ -44,12 +44,12 @@ function write(next: readonly string[]) {
   listeners.forEach((fn) => fn());
 }
 
-export function useWatchlist(): { mints: readonly string[]; has: (mint: string) => boolean; toggle: (mint: string) => void } {
-  const mints = useSyncExternalStore(subscribe, read, () => EMPTY);
-  const has = useCallback((mint: string) => mints.includes(mint), [mints]);
-  const toggle = useCallback((mint: string) => {
+export function useWatchlist(): { ids: readonly string[]; has: (id: string) => boolean; toggle: (id: string) => void } {
+  const ids = useSyncExternalStore(subscribe, read, () => EMPTY);
+  const has = useCallback((id: string) => ids.includes(id), [ids]);
+  const toggle = useCallback((id: string) => {
     const current = read();
-    write(current.includes(mint) ? current.filter((m) => m !== mint) : [mint, ...current]);
+    write(current.includes(id) ? current.filter((m) => m !== id) : [id, ...current]);
   }, []);
-  return { mints, has, toggle };
+  return { ids, has, toggle };
 }

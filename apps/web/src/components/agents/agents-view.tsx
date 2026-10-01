@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo, type ReactNode } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
+import { launchHref } from "@/lib/launch";
 import { useAgents, useAgentStatus, useLaunches, usePlatform } from "@/lib/queries";
 import { useAgentHeartbeat } from "@/lib/status";
 import type { AgentDecision, LaunchSummary } from "@/lib/types";
@@ -133,7 +134,7 @@ function AgentTrades({ now }: { now: number }) {
             <TR key={`${t.signature}:${t.mint}:${t.isBuy ? "b" : "s"}`} agent>
               <TD className="text-ink-3">{timeAgo(t.timestamp, now)}</TD>
               <TD>
-                <Link href={`/launch/${t.mint}`} className="ui text-ink hover:underline hover:decoration-ink-3/60 hover:underline-offset-2">
+                <Link href={launchHref(t)} className="ui text-ink hover:underline hover:decoration-ink-3/60 hover:underline-offset-2">
                   ${t.symbol}
                 </Link>
               </TD>

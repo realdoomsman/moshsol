@@ -50,39 +50,39 @@ export function useLaunches(p: { status: LaunchFilter; sort: LaunchSort; q?: str
   });
 }
 
-/** Launch summary. Retries 404s briefly: a launch created seconds ago may not be indexed yet. */
-export function useLaunch(mint: string) {
+/** Launch summary by `launchId` (or whatever id the URL carries). Retries 404s briefly: a launch created seconds ago may not be indexed yet. */
+export function useLaunch(id: string) {
   const interval = useFallbackInterval(5_000);
   return useQuery({
-    ...launchQuery(mint),
+    ...launchQuery(id),
     refetchInterval: (q) => (q.state.error instanceof ApiError && q.state.error.status === 404 ? 1_500 : interval),
     retry: (count, err) => !(err instanceof ApiError && err.status === 404) && count < 3,
   });
 }
 
 /** Recent trades for chart overlays (EMA per bucket, agent markers). */
-export function useTrades(mint: string, limit: number, enabled = true) {
+export function useTrades(id: string, limit: number, enabled = true) {
   const interval = useFallbackInterval(5_000);
   return useQuery({
-    ...recentTradesQuery(mint, limit),
+    ...recentTradesQuery(id, limit),
     refetchInterval: interval,
     enabled,
   });
 }
 
-export function useCandles(mint: string, tf: Timeframe, enabled = true) {
+export function useCandles(id: string, tf: Timeframe, enabled = true) {
   const interval = useFallbackInterval(5_000);
   return useQuery({
-    ...candlesQuery(mint, tf),
+    ...candlesQuery(id, tf),
     refetchInterval: interval,
     enabled,
     placeholderData: (prev) => prev,
   });
 }
 
-export function useBackers(mint: string) {
+export function useBackers(id: string) {
   const interval = useFallbackInterval(8_000);
-  return useQuery({ ...backersQuery(mint), refetchInterval: interval });
+  return useQuery({ ...backersQuery(id), refetchInterval: interval });
 }
 
 export interface PagedFeed<T> {
@@ -183,29 +183,29 @@ export const tradeKey = (t: TradeRow) => `${t.signature}:${t.isBuy ? "b" : "s"}:
 const depositKey = (d: DepositRow) => `${d.signature}:${d.amount}`;
 
 /** Trades feed with server-side filters (see `TradeFilter`); each filter combination pages on its own. */
-export function useTradeFeed(mint: string, filter: TradeFilter = {}): PagedFeed<TradeRow> {
+export function useTradeFeed(id: string, filter: TradeFilter = {}): PagedFeed<TradeRow> {
   const interval = useFallbackInterval(5_000);
   const key = JSON.stringify(filter);
   // `key` captures every filter field, so the feed only changes when the filter's content does.
-  const feed = useMemo(() => tradeFeed(mint, filter), [mint, key]);
+  const feed = useMemo(() => tradeFeed(id, filter), [id, key]);
   return usePagedFeed({ feed, interval, rowKey: tradeKey });
 }
 
-export function useTraders(mint: string, window: TraderWindow) {
+export function useTraders(id: string, window: TraderWindow) {
   const interval = useFallbackInterval(10_000);
-  return useQuery({ ...tradersQuery(mint, window), refetchInterval: interval, placeholderData: (prev) => prev });
+  return useQuery({ ...tradersQuery(id, window), refetchInterval: interval, placeholderData: (prev) => prev });
 }
 
-export function useDepositFeed(mint: string): PagedFeed<DepositRow> {
+export function useDepositFeed(id: string): PagedFeed<DepositRow> {
   const interval = useFallbackInterval(8_000);
-  const feed = useMemo(() => depositFeed(mint), [mint]);
+  const feed = useMemo(() => depositFeed(id), [id]);
   return usePagedFeed({ feed, interval, rowKey: depositKey });
 }
 
-export function useHolders(mint: string, limit: number) {
+export function useHolders(id: string, limit: number) {
   const interval = useFallbackInterval(10_000);
   return useQuery({
-    ...holdersQuery(mint, limit),
+    ...holdersQuery(id, limit),
     refetchInterval: interval,
     placeholderData: (prev) => prev,
   });
@@ -225,9 +225,9 @@ export function useActivity() {
   return useQuery({ ...activityQuery(), refetchInterval: interval });
 }
 
-export function useVaultWithdrawals(mint: string) {
+export function useVaultWithdrawals(id: string) {
   const interval = useFallbackInterval(15_000);
-  return useQuery({ ...vaultWithdrawalsQuery(mint), refetchInterval: interval });
+  return useQuery({ ...vaultWithdrawalsQuery(id), refetchInterval: interval });
 }
 
 export function useAgents() {

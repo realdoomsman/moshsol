@@ -3,6 +3,7 @@
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useState } from "react";
 import { fmtLamports, fmtSolValue } from "@/lib/format";
+import { launchId } from "@/lib/launch";
 import { useBackers } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { Chip, RoleChip } from "../ui/chip";
@@ -20,7 +21,7 @@ const PAGE = 50;
  * vault agent profit, wind-down payout: one accumulator, one claim).
  */
 export function BackersTab({ launch: l, onFilterMaker }: { launch: LaunchSummary; onFilterMaker?: (wallet: string) => void }) {
-  const q = useBackers(l.mint);
+  const q = useBackers(launchId(l));
   const { publicKey } = useWallet();
   const me = publicKey?.toBase58();
   const [shown, setShown] = useState(PAGE);
@@ -62,7 +63,9 @@ export function BackersTab({ launch: l, onFilterMaker }: { launch: LaunchSummary
               <EmptyState>
                 {l.status === "refunding"
                   ? "Every deposit has been refunded. Refunded backer accounts close on-chain."
-                  : "No backers yet. Deposits fund the first buy and earn a share of every trade plus all of the vault agent's profit."}
+                  : l.venue === "pump"
+                    ? `No backers yet. Deposits fund the first buy on pump.fun and earn ${100 - l.terms.burnShareBps / 100}% of the vault agent's profit.`
+                    : "No backers yet. Deposits fund the first buy and earn a share of every trade plus all of the vault agent's profit."}
               </EmptyState>
             </TableMessage>
           ) : (

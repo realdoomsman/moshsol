@@ -23,6 +23,8 @@ log("started", {
   strategy: cfg.strategy,
   slippageBps: cfg.slippageBps,
   priorityFee: cfg.priorityFee,
+  crankMs: cfg.crankMs,
+  lookupTable: cfg.alt?.toBase58() ?? `(${cfg.altFile})`,
   status: `http://${cfg.statusHost}:${cfg.statusPort}/status`,
 });
 

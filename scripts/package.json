@@ -8,6 +8,7 @@
     "simulate": "tsx src/simulate.ts",
     "handoff": "tsx src/handoff.ts",
     "upgrade": "tsx src/upgrade.ts",
+    "migrate": "tsx src/migrate.ts",
     "preflight": "tsx src/preflight.ts",
     "record:demos": "tsx src/record-demos.ts",
     "typecheck": "tsc --noEmit"

@@ -4,6 +4,7 @@ import { timeAgo } from "@holdfast/sdk";
 import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { useNow } from "@/lib/hooks";
+import { launchHref } from "@/lib/launch";
 import { useAgentStatus } from "@/lib/queries";
 import { AGENT_STALE_SECS } from "@/lib/status";
 import { ActionTag } from "../band/agent-simulator";
@@ -85,7 +86,7 @@ export function AgentLive() {
                     fresh && "[--expand-to:120px] [animation:var(--animate-expand-in),var(--animate-row-agent)]",
                   )}
                 >
-                  <Link href={`/launch/${d.mint}`} className="ui truncate text-ink hover:underline">
+                  <Link href={launchHref(d)} className="ui truncate text-ink hover:underline">
                     ${d.symbol ?? d.mint.slice(0, 4)}
                   </Link>
                   <span>

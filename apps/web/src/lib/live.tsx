@@ -14,8 +14,12 @@ interface LiveContext {
 
 const Ctx = createContext<LiveContext>({ connected: false, subscribe: () => () => undefined });
 
-/** Per-mint query families refreshed whenever the indexer reports an on-chain event for that mint. */
-const MINT_KEYS = [
+/**
+ * Per-launch query families refreshed whenever the indexer reports an on-chain event for that
+ * launch. They are keyed by `launchId` (mint on Holdfast launches, address on pump launches), so an
+ * event invalidates both ids; the other one finds nothing.
+ */
+const LAUNCH_KEYS = [
   "trades",
   "traders",
   "candles",
@@ -78,19 +82,24 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           qc.setQueryData<{ events: ActivityEvent[] }>(["activity"], (old) =>
             old ? { events: [event, ...old.events.filter((e) => e.id !== event.id)].slice(0, 80) } : old,
           );
-          for (const key of MINT_KEYS) qc.invalidateQueries({ queryKey: [key, event.mint] });
+          for (const key of LAUNCH_KEYS) for (const id of [event.mint, event.launch]) qc.invalidateQueries({ queryKey: [key, id] });
           refreshLists();
           listeners.current.forEach((fn) => fn(event));
         } else if (msg.type === "launch") {
           const launch = msg.launch;
-          const key = ["launch", launch.mint];
-          // A fetch started before the indexer saw the change would overwrite this newer push.
-          void qc.cancelQueries({ queryKey: key, exact: true }).then(() => qc.setQueryData<LaunchSummary>(key, launch));
+          // A page may hold the summary under either id (the URL accepts both); only cached queries
+          // get the push, so no dead entries pile up for launches nobody is looking at.
+          for (const id of [launch.mint, launch.address]) {
+            const key = ["launch", id];
+            if (!qc.getQueryCache().find({ queryKey: key, exact: true })) continue;
+            // A fetch started before the indexer saw the change would overwrite this newer push.
+            void qc.cancelQueries({ queryKey: key, exact: true }).then(() => qc.setQueryData<LaunchSummary>(key, launch));
+          }
           refreshLists();
         } else if (msg.type === "comment") {
-          const { mint, comment } = msg;
+          const { launch, comment } = msg;
           // Newest-first head page: prepend the comment and bump its parent's reply count.
-          qc.setQueryData<CommentsPage>(["comments", mint, "head"], (old) =>
+          qc.setQueryData<CommentsPage>(["comments", launch, "head"], (old) =>
             old && !old.comments.some((c) => c.id === comment.id)
               ? {
                   ...old,
@@ -102,12 +111,12 @@ export function LiveProvider({ children }: { children: ReactNode }) {
                 }
               : old,
           );
-          if (comment.replyTo !== null) qc.invalidateQueries({ queryKey: ["comments", mint, "replies"] });
+          if (comment.replyTo !== null) qc.invalidateQueries({ queryKey: ["comments", launch, "replies"] });
           // The launch summary carries the visible comment count.
-          qc.invalidateQueries({ queryKey: ["launch", mint], exact: true });
+          for (const id of [launch, comment.mint]) qc.invalidateQueries({ queryKey: ["launch", id], exact: true });
         } else if (msg.type === "comment_deleted") {
-          qc.invalidateQueries({ queryKey: ["comments", msg.mint] });
-          qc.invalidateQueries({ queryKey: ["launch", msg.mint], exact: true });
+          qc.invalidateQueries({ queryKey: ["comments", msg.launch] });
+          qc.invalidateQueries({ queryKey: ["launch", msg.launch], exact: true });
         } else if (msg.type === "reset") {
           void qc.invalidateQueries();
         }
@@ -149,8 +158,8 @@ export function useFallbackInterval(ms = 5_000): number {
   return useLive().connected ? 30_000 : ms;
 }
 
-/** Subscribe to live activity events, optionally for a single mint. */
-export function useLiveEvents(fn: Listener, mint?: string) {
+/** Subscribe to live activity events, optionally for a single launch (`launchId`: its mint or address). */
+export function useLiveEvents(fn: Listener, id?: string) {
   const { subscribe } = useLive();
   const ref = useRef(fn);
   useEffect(() => {
@@ -159,8 +168,8 @@ export function useLiveEvents(fn: Listener, mint?: string) {
   useEffect(
     () =>
       subscribe((e) => {
-        if (!mint || e.mint === mint) ref.current(e);
+        if (!id || e.mint === id || e.launch === id) ref.current(e);
       }),
-    [subscribe, mint],
+    [subscribe, id],
   );
 }

@@ -130,6 +130,10 @@ async function createRaise(
 ): Promise<PublicKey> {
   const platform = await client.fetchPlatform();
   if (!platform) throw new Error("platform not initialized — run `pnpm setup:localnet` first");
+  // The demo loops record the in-app trade panel, which only Holdfast-curve launches have.
+  if (!platform.params.holdfastCurveEnabled) {
+    throw new Error("the Holdfast curve is disabled on this platform: run `HOLDFAST_CURVE=1 pnpm setup:localnet --update` first");
+  }
   const mint = Keypair.generate();
   const ix = await client.createLaunchIx({
     creator: creator.publicKey,

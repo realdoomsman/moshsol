@@ -112,7 +112,8 @@ export type Moshsol = {
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "launch.create_key",
+                "account": "launch"
               }
             ]
           }
@@ -125,25 +126,10 @@ export type Moshsol = {
         },
         {
           "name": "vaultTokens",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "launch"
-              }
-            ]
-          }
+          "docs": [
+            "The vault's token account: the program PDA (Holdfast) or the pump authority's ATA."
+          ],
+          "writable": true
         },
         {
           "name": "feeRecipient",
@@ -154,8 +140,13 @@ export type Moshsol = {
           "writable": true
         },
         {
-          "name": "tokenProgram",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "name": "tokenAuthority",
+          "docs": [
+            "PDA (pump launches); verified in the handler against the venue."
+          ]
+        },
+        {
+          "name": "tokenProgram"
         }
       ],
       "args": [
@@ -296,6 +287,132 @@ export type Moshsol = {
       ]
     },
     {
+      "name": "agentBuyPump",
+      "discriminator": [
+        90,
+        159,
+        177,
+        183,
+        140,
+        5,
+        20,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "agent",
+          "docs": [
+            "Fronts the transient WSOL account rent on PumpSwap (returned in the same instruction)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.create_key",
+                "account": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "pumpAuthority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  117,
+                  109,
+                  112,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultTokens",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "solIn",
+          "type": "u64"
+        },
+        {
+          "name": "minTokensOut",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "agentSell",
       "discriminator": [
         122,
@@ -408,6 +525,132 @@ export type Moshsol = {
         {
           "name": "tokenProgram",
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": [
+        {
+          "name": "tokensIn",
+          "type": "u64"
+        },
+        {
+          "name": "minSolOut",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "agentSellPump",
+      "discriminator": [
+        145,
+        198,
+        183,
+        177,
+        229,
+        236,
+        144,
+        101
+      ],
+      "accounts": [
+        {
+          "name": "agent",
+          "docs": [
+            "Fronts the transient WSOL account rent on PumpSwap (returned in the same instruction)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.create_key",
+                "account": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "pumpAuthority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  117,
+                  109,
+                  112,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultTokens",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": [
@@ -572,6 +815,142 @@ export type Moshsol = {
       ]
     },
     {
+      "name": "buybackBurn",
+      "discriminator": [
+        20,
+        254,
+        58,
+        252,
+        209,
+        32,
+        111,
+        97
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "docs": [
+            "The platform's agent authority: it sizes and times the buyback and prices the floor",
+            "off-chain. Pays the launch's token account for the buyback mint once; fronts WSOL rent",
+            "on PumpSwap."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.create_key",
+                "account": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pumpAuthority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  117,
+                  109,
+                  112,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "buybackMint",
+          "docs": [
+            "refuses the unset default"
+          ],
+          "writable": true
+        },
+        {
+          "name": "burnTokens",
+          "writable": true
+        },
+        {
+          "name": "buybackCurve"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "maxSol",
+          "type": "u64"
+        },
+        {
+          "name": "minTokensOut",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "cancelLaunch",
       "discriminator": [
         120,
@@ -609,7 +988,7 @@ export type Moshsol = {
               },
               {
                 "kind": "account",
-                "path": "launch.mint",
+                "path": "launch.create_key",
                 "account": "launch"
               }
             ]
@@ -657,7 +1036,7 @@ export type Moshsol = {
               },
               {
                 "kind": "account",
-                "path": "launch.mint",
+                "path": "launch.create_key",
                 "account": "launch"
               }
             ]
@@ -735,11 +1114,78 @@ export type Moshsol = {
               },
               {
                 "kind": "account",
-                "path": "launch.mint",
+                "path": "launch.create_key",
                 "account": "launch"
               }
             ]
           }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "collectPumpFees",
+      "discriminator": [
+        117,
+        129,
+        9,
+        79,
+        108,
+        55,
+        145,
+        38
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "docs": [
+            "Fronts the transient WSOL account rent on PumpSwap (returned in the same instruction)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.create_key",
+                "account": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creatorVault",
+          "writable": true
+        },
+        {
+          "name": "pumpEventAuthority"
+        },
+        {
+          "name": "pumpProgram",
+          "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -880,6 +1326,95 @@ export type Moshsol = {
       ]
     },
     {
+      "name": "createLaunchPump",
+      "discriminator": [
+        206,
+        27,
+        189,
+        23,
+        180,
+        23,
+        134,
+        125
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "feeRecipient",
+          "writable": true
+        },
+        {
+          "name": "createKey",
+          "docs": [
+            "One-time signer that seeds the launch PDA (the mint doesn't exist until `launch_pump`)."
+          ],
+          "signer": true
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "createKey"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "createLaunchPumpArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "deposit",
       "discriminator": [
         242,
@@ -935,7 +1470,7 @@ export type Moshsol = {
               },
               {
                 "kind": "account",
-                "path": "launch.mint",
+                "path": "launch.create_key",
                 "account": "launch"
               }
             ]
@@ -990,6 +1525,52 @@ export type Moshsol = {
           }
         }
       ]
+    },
+    {
+      "name": "graduatePump",
+      "discriminator": [
+        54,
+        147,
+        28,
+        222,
+        119,
+        18,
+        29,
+        130
+      ],
+      "accounts": [
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.create_key",
+                "account": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "bondingCurve"
+        },
+        {
+          "name": "pool"
+        }
+      ],
+      "args": []
     },
     {
       "name": "initializePlatform",
@@ -1237,6 +1818,281 @@ export type Moshsol = {
       "args": []
     },
     {
+      "name": "launchPump",
+      "discriminator": [
+        163,
+        44,
+        244,
+        189,
+        85,
+        31,
+        115,
+        175
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "docs": [
+            "Pays the vault token account's rent (never refunded; it outlives the launch)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.create_key",
+                "account": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pumpAuthority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  117,
+                  109,
+                  112,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "Ephemeral keypair; pump.fun creates the mint at this address."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mintAuthority"
+        },
+        {
+          "name": "bondingCurve",
+          "writable": true
+        },
+        {
+          "name": "associatedBondingCurve",
+          "writable": true
+        },
+        {
+          "name": "global"
+        },
+        {
+          "name": "mplTokenMetadata",
+          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        },
+        {
+          "name": "metadata",
+          "writable": true
+        },
+        {
+          "name": "eventAuthority"
+        },
+        {
+          "name": "pumpProgram",
+          "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        },
+        {
+          "name": "vaultTokens",
+          "writable": true
+        },
+        {
+          "name": "feeRecipient",
+          "writable": true
+        },
+        {
+          "name": "creatorVault",
+          "writable": true
+        },
+        {
+          "name": "globalVolumeAccumulator"
+        },
+        {
+          "name": "userVolumeAccumulator",
+          "writable": true
+        },
+        {
+          "name": "feeConfig"
+        },
+        {
+          "name": "feeProgram",
+          "address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+        },
+        {
+          "name": "bondingCurveV2"
+        },
+        {
+          "name": "buybackFeeRecipient",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "migrateLaunch",
+      "docs": [
+        "One-time per pre-pump launch after the upgrade: grows it to the current layout."
+      ],
+      "discriminator": [
+        19,
+        199,
+        119,
+        103,
+        13,
+        30,
+        12,
+        205
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "platform"
+          ]
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "docs": [
+            "its PDA seeds are checked against the decoded mint."
+          ],
+          "writable": true
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "migratePlatform",
+      "docs": [
+        "One-time after the pump upgrade: grows the platform account to the current layout."
+      ],
+      "discriminator": [
+        199,
+        188,
+        136,
+        113,
+        2,
+        148,
+        42,
+        14
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "docs": [
+            "account no longer fits it."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "proposeAdmin",
       "discriminator": [
         121,
@@ -1324,7 +2180,7 @@ export type Moshsol = {
               },
               {
                 "kind": "account",
-                "path": "launch.mint",
+                "path": "launch.create_key",
                 "account": "launch"
               }
             ]
@@ -1601,7 +2457,7 @@ export type Moshsol = {
               },
               {
                 "kind": "account",
-                "path": "launch.mint",
+                "path": "launch.create_key",
                 "account": "launch"
               }
             ]
@@ -1763,6 +2619,103 @@ export type Moshsol = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "windDownPump",
+      "discriminator": [
+        207,
+        217,
+        240,
+        125,
+        166,
+        186,
+        165,
+        97
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "docs": [
+            "Fronts the transient WSOL account rent on PumpSwap (returned in the same instruction)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.create_key",
+                "account": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "pumpAuthority",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  117,
+                  109,
+                  112,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultTokens",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -1821,6 +2774,19 @@ export type Moshsol = {
       ]
     },
     {
+      "name": "buybackBurned",
+      "discriminator": [
+        186,
+        84,
+        241,
+        202,
+        152,
+        185,
+        0,
+        115
+      ]
+    },
+    {
       "name": "creatorFeesClaimed",
       "discriminator": [
         189,
@@ -1831,6 +2797,19 @@ export type Moshsol = {
         179,
         131,
         1
+      ]
+    },
+    {
+      "name": "creatorFeesCollected",
+      "discriminator": [
+        117,
+        190,
+        177,
+        156,
+        222,
+        94,
+        28,
+        227
       ]
     },
     {
@@ -1873,6 +2852,19 @@ export type Moshsol = {
       ]
     },
     {
+      "name": "launchMigrated",
+      "discriminator": [
+        135,
+        27,
+        61,
+        35,
+        85,
+        170,
+        159,
+        33
+      ]
+    },
+    {
       "name": "launched",
       "discriminator": [
         209,
@@ -1896,6 +2888,19 @@ export type Moshsol = {
         64,
         122,
         35
+      ]
+    },
+    {
+      "name": "pumpGraduated",
+      "discriminator": [
+        222,
+        175,
+        173,
+        175,
+        194,
+        145,
+        189,
+        81
       ]
     },
     {
@@ -2139,6 +3144,46 @@ export type Moshsol = {
       "code": 6034,
       "name": "outsideHolders",
       "msg": "Tokens are held outside the curve and vault; the launch can't wind down"
+    },
+    {
+      "code": 6035,
+      "name": "wrongVenue",
+      "msg": "This instruction is for the other venue (Holdfast curve vs pump.fun)"
+    },
+    {
+      "code": 6036,
+      "name": "holdfastCurveDisabled",
+      "msg": "Launches on the Holdfast curve are closed; create a pump.fun launch"
+    },
+    {
+      "code": 6037,
+      "name": "invalidVenueAccount",
+      "msg": "A venue account is missing, has the wrong owner or the wrong layout"
+    },
+    {
+      "code": 6038,
+      "name": "curveComplete",
+      "msg": "The pump.fun curve is complete; migrate it and run graduate_pump"
+    },
+    {
+      "code": 6039,
+      "name": "notGraduated",
+      "msg": "The launch has not graduated to PumpSwap (or already has)"
+    },
+    {
+      "code": 6040,
+      "name": "buybackMintUnset",
+      "msg": "The platform has no buyback mint yet"
+    },
+    {
+      "code": 6041,
+      "name": "buybackThrottled",
+      "msg": "Buyback below the minimum size or too soon after the last one"
+    },
+    {
+      "code": 6042,
+      "name": "alreadyMigrated",
+      "msg": "Account already uses the current layout"
     }
   ],
   "types": [
@@ -2188,6 +3233,38 @@ export type Moshsol = {
           },
           {
             "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "buybackBurned",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "buybackMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "sol",
+            "type": "u64"
+          },
+          {
+            "name": "tokens",
+            "type": "u64"
+          },
+          {
+            "name": "buybackPoolSol",
             "type": "u64"
           },
           {
@@ -2285,6 +3362,89 @@ export type Moshsol = {
       }
     },
     {
+      "name": "createLaunchPumpArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "symbol",
+            "type": "string"
+          },
+          {
+            "name": "uri",
+            "type": "string"
+          },
+          {
+            "name": "raiseMin",
+            "type": "u64"
+          },
+          {
+            "name": "raiseMax",
+            "type": "u64"
+          },
+          {
+            "name": "maxPerWallet",
+            "docs": [
+              "0 = no per-wallet cap"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "durationSecs",
+            "type": "i64"
+          },
+          {
+            "name": "whitelistRoot",
+            "docs": [
+              "All zero = open raise"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "bundleSupplyBps",
+            "docs": [
+              "Max share of supply the bundle buys at launch"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "reserveBps",
+            "docs": [
+              "Share of the raise kept as SOL in the vault for agents to buy dips"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "expectedTerms",
+            "docs": [
+              "Terms the creator reviewed; must equal `LaunchTerms::pump` of the platform now."
+            ],
+            "type": {
+              "defined": {
+                "name": "launchTerms"
+              }
+            }
+          },
+          {
+            "name": "maxCreateFeeLamports",
+            "docs": [
+              "Most the creator agreed to pay as the flat create fee."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "creatorFeesClaimed",
       "type": {
         "kind": "struct",
@@ -2299,6 +3459,46 @@ export type Moshsol = {
           },
           {
             "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "creatorFeesCollected",
+      "docs": [
+        "pump.fun / PumpSwap creator fees swept into the launch and split between the buyback pool",
+        "and vault SOL (or backers once the launch is wound down)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "toBuybackPool",
+            "type": "u64"
+          },
+          {
+            "name": "toVault",
+            "type": "u64"
+          },
+          {
+            "name": "toBackers",
             "type": "u64"
           },
           {
@@ -2576,13 +3776,79 @@ export type Moshsol = {
             "docs": [
               "Slot of the last public buy/sell and of the last agent trade. Agents can't trade in a slot",
               "that already saw a public trade, and public trades can't follow an agent trade in the same",
-              "slot, so nobody can wrap a vault trade atomically (one transaction or one bundle)."
+              "slot, so nobody can wrap a vault trade atomically (one transaction or one bundle).",
+              "Pump launches don't see public trades, so only `last_agent_trade_slot` moves there."
             ],
             "type": "u64"
           },
           {
             "name": "lastAgentTradeSlot",
             "type": "u64"
+          },
+          {
+            "name": "venue",
+            "type": {
+              "defined": {
+                "name": "venue"
+              }
+            }
+          },
+          {
+            "name": "createKey",
+            "docs": [
+              "Second seed of the launch PDA: the mint for Holdfast launches, a one-time signer for",
+              "pump launches (whose mint doesn't exist until `launch_pump`)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "pump",
+            "type": {
+              "defined": {
+                "name": "pumpState"
+              }
+            }
+          },
+          {
+            "name": "buybackPoolSol",
+            "docs": [
+              "SOL waiting to be spent by `buyback_burn` on the Holdfast token."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "creatorFeesCollected",
+            "docs": [
+              "Cumulative pump.fun / PumpSwap creator fees swept into the launch."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "burnedSol",
+            "type": "u64"
+          },
+          {
+            "name": "burnedTokens",
+            "type": "u64"
+          },
+          {
+            "name": "lastBuybackTs",
+            "type": "i64"
+          },
+          {
+            "name": "name",
+            "docs": [
+              "Token metadata for pump launches, handed to pump.fun `create` at `launch_pump`."
+            ],
+            "type": "string"
+          },
+          {
+            "name": "symbol",
+            "type": "string"
+          },
+          {
+            "name": "uri",
+            "type": "string"
           }
         ]
       }
@@ -2668,6 +3934,26 @@ export type Moshsol = {
       }
     },
     {
+      "name": "launchMigrated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
       "name": "launchStatus",
       "type": {
         "kind": "enum",
@@ -2735,6 +4021,14 @@ export type Moshsol = {
           {
             "name": "emaPeriodSecs",
             "type": "u32"
+          },
+          {
+            "name": "burnShareBps",
+            "docs": [
+              "Share of creator fees and agent profit routed to the buyback-and-burn pool (pump",
+              "launches; 0 on launches created before it existed)."
+            ],
+            "type": "u16"
           }
         ]
       }
@@ -2965,6 +4259,88 @@ export type Moshsol = {
               "`max_per_wallet`; 0 = no platform cap."
             ],
             "type": "u64"
+          },
+          {
+            "name": "holdfastCurveEnabled",
+            "docs": [
+              "Whether `create_launch` (a launch on Holdfast's own curve) is still open. Off on",
+              "mainnet: new launches are pump.fun tokens (`create_launch_pump`)."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "burnShareBps",
+            "docs": [
+              "Share of a pump launch's creator fees and of the agent's realized profit that goes to",
+              "the Holdfast buyback-and-burn pool; the rest goes to vault SOL / backers."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "buybackMint",
+            "docs": [
+              "The Holdfast token `buyback_burn` buys and burns. `Pubkey::default()` = not set yet: the",
+              "crank refuses and the pools keep accruing."
+            ],
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pumpGraduated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pumpState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bondingCurve",
+            "docs": [
+              "pump.fun bonding curve of `mint` (set at `launch_pump`)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "docs": [
+              "PumpSwap pool, recorded by `graduate_pump` once the curve completed and migrated."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "graduated",
+            "type": "bool"
+          },
+          {
+            "name": "authorityBump",
+            "docs": [
+              "Bump of the system-owned `[PUMP_AUTHORITY_SEED, launch]` PDA that is the venue `user`",
+              "and the authority of the vault token account."
+            ],
+            "type": "u8"
           }
         ]
       }
@@ -3067,8 +4443,9 @@ export type Moshsol = {
     {
       "name": "vaultProfitShared",
       "docs": [
-        "Realized profit of an agent sell (fill minus the average cost of the tokens sold), credited",
-        "in full to backers through the fee accumulator."
+        "Realized profit of an agent sell (fill minus the average cost of the tokens sold). Holdfast",
+        "launches credit it in full to backers; pump launches send `burn_share` of it to the",
+        "buyback pool and the rest to backers."
       ],
       "type": {
         "kind": "struct",
@@ -3083,6 +4460,10 @@ export type Moshsol = {
           },
           {
             "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "toBuybackPool",
             "type": "u64"
           },
           {
@@ -3130,6 +4511,23 @@ export type Moshsol = {
           {
             "name": "timestamp",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "venue",
+      "docs": [
+        "Where a launch's token trades."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "holdfast"
+          },
+          {
+            "name": "pump"
           }
         ]
       }

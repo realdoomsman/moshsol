@@ -1,4 +1,4 @@
-import type { LaunchJson } from "@holdfast/sdk";
+import type { LaunchJson, LaunchVenue } from "@holdfast/sdk";
 
 /** Wire types of the indexer HTTP/WS API (see the shared contract). */
 
@@ -36,6 +36,10 @@ export interface LaunchSummary extends LaunchJson {
   vaultWithdrawnTokens: string;
   /** The permissionless wind-down (`WoundDown` event); null while not wound down (or its event wasn't indexed). */
   woundDown: { timestamp: number; solToBackers: number; tokensReturned: string; signature: string } | null;
+  /** Pump launches: the `PumpGraduated` event (`graduate_pump` recorded the PumpSwap pool); null before. */
+  graduation: { timestamp: number; signature: string; pool: string } | null;
+  /** Pump launches: permissionless crank history from the indexed `CreatorFeesCollected` / `BuybackBurned` events. */
+  cranks: { creatorFeeCollections: number; buybacks: number; lastCollectedAt: number | null; lastBuybackAt: number | null };
 }
 
 export interface TradeRow {
@@ -68,6 +72,10 @@ export const ACTIVITY_TYPES = [
   "profit_shared",
   "wound_down",
   "vault_withdrawn",
+  "creator_fees_collected",
+  "buyback_burned",
+  "graduated",
+  "migrated",
 ] as const;
 
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
@@ -77,6 +85,9 @@ export interface ActivityEvent {
   type: ActivityType;
   signature: string;
   timestamp: number;
+  /** Launch address (the stable key: a pump launch's `mint` is the default pubkey while raising). */
+  launch: string;
+  venue: LaunchVenue;
   mint: string;
   symbol: string;
   name: string;
@@ -86,6 +97,8 @@ export interface ActivityEvent {
   isBuy?: boolean;
   solAmount?: string;
   tokenAmount?: string;
+  /** `graduated`: the PumpSwap pool; `buyback_burned`: the mint bought and burned. */
+  ref?: string;
 }
 
 export interface Candle {
@@ -101,11 +114,14 @@ export interface HolderRow {
   owner: string;
   amount: string;
   pct: number;
-  label: "curve" | "vault" | null;
+  /** The venue's own token account (Holdfast curve PDA, pump.fun bonding curve or PumpSwap pool) or the vault. */
+  label: "curve" | "pool" | "vault" | null;
 }
 
 export interface CommentRow {
   id: number;
+  /** Launch address. */
+  launch: string;
   mint: string;
   /** Author wallet. */
   wallet: string;
@@ -127,7 +143,7 @@ export interface CommentRow {
 export type WsMessage =
   | { type: "event"; event: ActivityEvent }
   | { type: "launch"; launch: LaunchSummary }
-  | { type: "comment"; mint: string; comment: CommentRow }
-  | { type: "comment_deleted"; mint: string; id: number }
+  | { type: "comment"; launch: string; comment: CommentRow }
+  | { type: "comment_deleted"; launch: string; id: number }
   /** The chain was reset (new genesis) and the index was rebuilt: clients should drop cached data and refetch. */
   | { type: "reset"; genesisHash: string };

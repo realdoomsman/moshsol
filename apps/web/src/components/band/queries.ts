@@ -6,10 +6,10 @@ import type { Trending } from "@/lib/users";
 import { mostTraded } from "./model";
 
 /** Recent vault-agent trades for the chart markers (`/trades?agent=1`); under the `trades` prefix the websocket refreshes. */
-export const agentTradesQuery = (mint: string) =>
+export const agentTradesQuery = (id: string) =>
   queryOptions({
-    queryKey: ["trades", mint, "agent-recent", 100],
-    queryFn: async () => (await api.trades(mint, { limit: 100, agent: true })).trades,
+    queryKey: ["trades", id, "agent-recent", 100],
+    queryFn: async () => (await api.trades(id, { limit: 100, agent: true })).trades,
   });
 
 /** Live launches for the hero fallback (shared with "On Holdfast now"). */

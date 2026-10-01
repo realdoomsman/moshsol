@@ -33,7 +33,7 @@ interface LaunchInfo {
 }
 
 function launchInfos(store: Store): Map<string, LaunchInfo> {
-  return new Map(store.launches().map((row) => [row.address, { row, snap: JSON.parse(row.snapshot!) as LaunchJson }]));
+  return new Map(store.launches().map((row) => [row.address, { row, snap: JSON.parse(row.snapshot) as LaunchJson }]));
 }
 
 /** Share of `fees` lamports going to one side of the split (`bps` of 10 000). */
@@ -139,6 +139,8 @@ function launchesBoard(store: Store, window: Window, since: number): Entry[] {
     // Growth vs the price at the window start (last trade before it), else vs the launch price.
     const ref = (window === "all" ? null : store.priceAt(row.address, since)) ?? row.launch_price;
     out.push({
+      address: row.address,
+      venue: row.venue,
       mint: row.mint,
       name: row.meta_name ?? row.onchain_name,
       symbol: row.meta_symbol ?? row.onchain_symbol,
@@ -175,7 +177,7 @@ function rankTrending(list: LaunchSummary[]): LaunchSummary[] {
 
 export function registerDiscoveryRoutes(app: FastifyInstance, { store }: { store: Store }): void {
   const boards = new Map<string, { at: number; entries: Entry[] }>();
-  let king: { mint: string; since: number } | null = null;
+  let king: { address: string; since: number } | null = null;
 
   app.get<{ Querystring: Query }>("/api/leaderboard", async (req) => {
     const kind = oneOf(KINDS, req.query.kind, "traders", "kind");
@@ -231,8 +233,10 @@ export function registerDiscoveryRoutes(app: FastifyInstance, { store }: { store
     const addrPrefix = raw.length >= 3 && BASE58_RE.test(raw) ? raw : null;
 
     const launches = store.searchLaunches(text, addrPrefix, SEARCH_MAX).map((row) => {
-      const snap = JSON.parse(row.snapshot!) as LaunchJson;
+      const snap = JSON.parse(row.snapshot) as LaunchJson;
       return {
+        address: row.address,
+        venue: row.venue,
         mint: row.mint,
         name: row.meta_name ?? row.onchain_name,
         symbol: row.meta_symbol ?? row.onchain_symbol,
@@ -262,7 +266,7 @@ export function registerDiscoveryRoutes(app: FastifyInstance, { store }: { store
     const top = ranked[0];
     const nowSecs = Math.floor(Date.now() / 1000);
     if (top && top.trades1h > 0) {
-      if (king?.mint !== top.mint) king = { mint: top.mint, since: nowSecs };
+      if (king?.address !== top.address) king = { address: top.address, since: nowSecs };
     } else {
       king = null;
     }

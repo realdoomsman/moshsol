@@ -1,4 +1,4 @@
-import { Keypair } from "@solana/web3.js";
+import { Keypair, PublicKey } from "@solana/web3.js";
 import { DEFAULT_PRIORITY_FEE, type PriorityFeeBounds } from "@holdfast/sdk";
 import fs from "node:fs";
 import path from "node:path";
@@ -23,6 +23,22 @@ export interface AgentConfig {
   /** µlamports per CU: the fee-market estimate clamped to [floor, cap]. */
   priorityFee: PriorityFeeBounds;
   maxBackoffMs: number;
+  /** Permissionless pump cranks (fee collection, buyback, graduation): per-launch check interval. */
+  crankMs: number;
+  /** JSON file remembering the agent's address lookup table per cluster (genesis hash → address). */
+  altFile: string;
+  /** `AGENT_ALT`: use this lookup table instead of creating/remembering one. */
+  alt: PublicKey | null;
+}
+
+function pubkey(name: string): PublicKey | null {
+  const raw = process.env[name]?.trim();
+  if (!raw) return null;
+  try {
+    return new PublicKey(raw);
+  } catch {
+    throw new Error(`${name} must be a base58 public key, got "${raw}"`);
+  }
 }
 
 function int(name: string, fallback: number, lo: number, hi: number): number {
@@ -80,6 +96,9 @@ export function loadConfig(): AgentConfig {
     slippageBps: int("SLIPPAGE_BPS", 100, 0, 9_999),
     priorityFee: { floor: priorityFloor, cap: priorityCap },
     maxBackoffMs: 300_000,
+    crankMs: int("CRANK_MS", 60_000, 1_000, 86_400_000),
+    altFile: path.resolve(REPO_ROOT, process.env.ALT_FILE?.trim() || "apps/agent/.alt.json"),
+    alt: pubkey("AGENT_ALT"),
   };
 }
 

@@ -19,8 +19,8 @@ export default function TermsPage() {
           body: (
             <>
               <P>
-                Holdfast is a website and API in front of a Solana program: people raise SOL for a token, launch it on a
-                bonding curve, and a vault agent trades each launch&apos;s vault under on-chain rules. We are not a broker,
+                Holdfast is a website and API in front of a Solana program: people raise SOL for a token, launch it on
+                pump.fun (or, for legacy launches, the Holdfast bonding curve), and a vault agent trades each launch&apos;s vault under on-chain rules. We are not a broker,
                 exchange or adviser, and nothing here is investment advice.
               </P>
               <P>

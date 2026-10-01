@@ -17,7 +17,7 @@ export function faqItems(p: PlatformInfo["params"] | null): Qa[] {
   return [
     {
       q: "Can the creator dump the bundle?",
-      a: "No. The bundle is bought by the launch instruction and held in the vault, and the creator has no instruction that touches it. Only the vault agent trades it, on the launch's own curve, within its rules. The platform admin can withdraw vault SOL and tokens with admin_withdraw_vault; every withdrawal is on-chain and shown on the launch page.",
+      a: "No. The bundle is bought by the launch instruction and held in the vault, and the creator has no instruction that touches it. Only the vault agent trades it, on the launch's venue (pump.fun for new launches, the Holdfast curve for the two legacy launches), within its rules. The platform admin can withdraw vault SOL and tokens with admin_withdraw_vault; every withdrawal is on-chain and shown on the launch page.",
       href: "/docs/the-vault",
       more: "The vault",
     },
@@ -48,8 +48,8 @@ export function faqItems(p: PlatformInfo["params"] | null): Qa[] {
       more: "Agent rules",
     },
     {
-      q: "Does the token migrate to a DEX?",
-      a: "No. Liquidity lives on the Holdfast curve, and no instruction takes it out while anyone else holds the token: the admin's vault withdrawal can't touch it, and wind_down only pays it to backers once nobody outside the curve and vault holds any.",
+      q: "Where does the token trade?",
+      a: "New launches are pump.fun tokens: the raise creates the token on pump.fun's bonding curve, buys the bundle there before anyone else can, and public trading happens on pump.fun (PumpSwap after graduation), not on this site. pump.fun pays the launch its creator fees: 25% buys and burns the Holdfast token, 75% goes to the vault. The two launches created before this change keep trading on the Holdfast curve, whose liquidity never migrates.",
       href: "/docs/for-traders",
       more: "For traders",
     },

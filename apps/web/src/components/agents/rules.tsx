@@ -83,7 +83,7 @@ export function RulesSheet({ platform, launches }: { platform: PlatformInfo | un
       </div>
     );
   }
-  const launch = launches.find((l) => l.mint === scope);
+  const launch = launches.find((l) => l.address === scope);
   const list = launch
     ? rows(launch.terms, platform, `$${launch.symbol} terms`)
     : rows(platform.params, platform, "launch terms");
@@ -105,7 +105,7 @@ export function RulesSheet({ platform, launches }: { platform: PlatformInfo | un
           onChange={setScope}
           options={[
             { value: "platform", label: "Platform defaults" },
-            ...launches.map((l) => ({ value: l.mint, label: `$${l.symbol}`, hint: l.name })),
+            ...launches.map((l) => ({ value: l.address, label: `$${l.symbol}`, hint: l.name })),
           ]}
         />
       </div>

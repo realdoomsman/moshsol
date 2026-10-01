@@ -60,7 +60,7 @@ export function verifySignedMessage(
 ): number {
   const lines = req.message.split("\n");
   if (lines.length !== 4 || lines[0] !== `holdfast:${expected.kind}:v1`) {
-    throw new ValidationError(`message must be "holdfast:${expected.kind}:v1\\n<${expected.kind === "comment" ? "mint" : "wallet"}>\\n<sha256 hex>\\n<unix seconds>"`);
+    throw new ValidationError(`message must be "holdfast:${expected.kind}:v1\\n<${expected.kind === "comment" ? "launch" : "wallet"}>\\n<sha256 hex>\\n<unix seconds>"`);
   }
   const [, subject, hash, tsRaw] = lines;
   if (subject !== expected.subject) throw new ValidationError(`message is signed for ${subject}, not ${expected.subject}`);

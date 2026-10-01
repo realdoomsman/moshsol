@@ -1,6 +1,6 @@
 "use client";
 
-import { fmtPrice, lamportsToSol, previewBundle } from "@holdfast/sdk";
+import { fmtPrice, lamportsToSol, previewBundle, previewPumpBundle } from "@holdfast/sdk";
 import { useMemo, type ReactNode } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import type { Phase } from "@/lib/launch";
@@ -21,22 +21,15 @@ function Cell({ label, rule, children }: { label: string; rule?: string; childre
   );
 }
 
-/** What the `launch` instruction would do with the raise as it stands (exact program maths). */
+/** What the `launch` / `launch_pump` instruction would do with the raise as it stands (exact program maths). */
 function LaunchedNow({ launch: l }: { launch: LaunchSummary }) {
   const raised = BigInt(l.raised);
-  const b = useMemo(
-    () =>
-      raised > 0n
-        ? previewBundle({
-            raised,
-            virtualSol: BigInt(l.virtualSol),
-            launchFeeBps: l.terms.launchFeeBps,
-            reserveBps: l.reserveBps,
-            bundleSupplyBps: l.bundleSupplyBps,
-          })
-        : null,
-    [raised, l.virtualSol, l.terms.launchFeeBps, l.reserveBps, l.bundleSupplyBps],
-  );
+  const pump = l.venue === "pump";
+  const b = useMemo(() => {
+    if (raised <= 0n) return null;
+    const terms = { raised, launchFeeBps: l.terms.launchFeeBps, reserveBps: l.reserveBps, bundleSupplyBps: l.bundleSupplyBps };
+    return pump ? previewPumpBundle(terms) : previewBundle({ ...terms, virtualSol: BigInt(l.virtualSol) });
+  }, [raised, pump, l.virtualSol, l.terms.launchFeeBps, l.reserveBps, l.bundleSupplyBps]);
   return (
     <div className="border-t border-line">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-4 pt-4 pb-2">
@@ -47,14 +40,14 @@ function LaunchedNow({ launch: l }: { launch: LaunchSummary }) {
       </div>
       {b ? (
         <dl className="grid grid-cols-2 border-t border-line sm:grid-cols-3 [&>*]:border-line max-sm:[&>*:nth-child(even)]:border-l max-sm:[&>*:nth-child(n+3)]:border-t sm:[&>*:not(:nth-child(3n+1))]:border-l sm:[&>*:nth-child(n+4)]:border-t">
-          <Cell label="Bundle buys" rule="The first buy, made with the raise before anyone can trade. It goes straight into the vault.">
+          <Cell label="Bundle buys" rule={`The first buy, made with the raise${pump ? " on pump.fun's bonding curve, in the same transaction that creates the token" : ""} before anyone can trade. It goes straight into the vault.`}>
             {fmtPct(b.supplyPct)} of supply
           </Cell>
           <Cell label="Vault tokens">{fmtTokens(b.bundleTokens)}</Cell>
           <Cell label="Vault SOL" rule="Kept in the vault for the agent to buy dips with.">
             {fmtLamports(b.vaultSol)} SOL
           </Cell>
-          <Cell label="SOL into the curve">{fmtLamports(b.bundleSol)} SOL</Cell>
+          <Cell label={pump ? "SOL into pump.fun" : "SOL into the curve"}>{fmtLamports(b.bundleSol)} SOL</Cell>
           <Cell label="Start price">{fmtPrice(b.priceAfter)}</Cell>
           <Cell label="Start mcap">{fmtSolValue(b.marketCapAfter)} SOL</Cell>
         </dl>

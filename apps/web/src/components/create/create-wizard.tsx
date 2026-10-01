@@ -1,6 +1,6 @@
 "use client";
 
-import { buildWhitelist, LIMITS, OPEN_WHITELIST_ROOT, timeAgo } from "@holdfast/sdk";
+import { buildWhitelist, launchPda, LIMITS, OPEN_WHITELIST_ROOT, timeAgo } from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { Keypair } from "@solana/web3.js";
@@ -44,8 +44,10 @@ const NO_STEPS_SHOWN = [false, false, false, false];
 /**
  * Create wizard (§4.6): stepper · form · sticky live preview on desktop; a progress bar, a
  * Preview sheet and a sticky Back/Continue bar on smaller screens. The draft autosaves to
- * localStorage and is offered back with "Resume draft?". Chain logic (metadata upload, one
- * `create_launch` transaction signed with a fresh mint keypair) is unchanged from the old form.
+ * localStorage and is offered back with "Resume draft?". Chain logic: metadata upload, then one
+ * transaction — `create_launch_pump` signed with a one-time create key (the pump.fun token itself is
+ * created at launch), or `create_launch` with a fresh mint keypair while the platform still allows
+ * launches on the Holdfast curve (`holdfastCurveEnabled`).
  */
 export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
   const router = useRouter();
@@ -233,33 +235,37 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
       return;
     }
 
-    const mint = Keypair.generate();
+    // Pump launches: the one-time create key seeds the launch PDA (the token is created on pump.fun
+    // at launch). Holdfast launches: the fresh mint keypair seeds it.
+    const seed = Keypair.generate();
     const signature = await tx.run({
       label: `Create $${d.symbol}`,
       successMessage: `$${d.symbol} raise is open`,
-      signers: [mint],
+      signers: [seed],
       build: async (payer) => {
         const onChain = await client.fetchPlatform();
         if (!onChain) throw new Error("Platform is not initialized on this cluster");
         if (!params) throw new Error("Platform terms are still loading");
+        const args = {
+          creator: payer,
+          feeRecipient: onChain.feeRecipient,
+          name: d.name,
+          symbol: d.symbol,
+          uri,
+          raiseMin: d.raiseMin,
+          raiseMax: d.raiseMax,
+          maxPerWallet: d.maxPerWallet,
+          durationSecs: d.durationSecs,
+          whitelistRoot: d.whitelist ? buildWhitelist(d.whitelist).root : OPEN_WHITELIST_ROOT,
+          bundleSupplyBps: d.bundleSupplyBps,
+          reserveBps: d.reserveBps,
+          // The terms shown in this wizard; the program refuses the launch if they changed.
+          terms: params,
+        };
         return [
-          await client.createLaunchIx({
-            creator: payer,
-            mint: mint.publicKey,
-            feeRecipient: onChain.feeRecipient,
-            name: d.name,
-            symbol: d.symbol,
-            uri,
-            raiseMin: d.raiseMin,
-            raiseMax: d.raiseMax,
-            maxPerWallet: d.maxPerWallet,
-            durationSecs: d.durationSecs,
-            whitelistRoot: d.whitelist ? buildWhitelist(d.whitelist).root : OPEN_WHITELIST_ROOT,
-            bundleSupplyBps: d.bundleSupplyBps,
-            reserveBps: d.reserveBps,
-            // The terms shown in this wizard; the program refuses the launch if they changed.
-            terms: params,
-          }),
+          params.holdfastCurveEnabled
+            ? await client.createLaunchIx({ ...args, mint: seed.publicKey })
+            : await client.createLaunchPumpIx({ ...args, createKey: seed.publicKey }),
         ];
       },
     });
@@ -270,7 +276,7 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
     }
     setAutosave(false);
     clearDraft();
-    router.replace(`/create?launched=${mint.publicKey.toBase58()}&tx=${signature}`);
+    router.replace(`/create?launched=${(params?.holdfastCurveEnabled ? seed.publicKey : launchPda(seed.publicKey)).toBase58()}&tx=${signature}`);
   };
 
   const summaries = [
@@ -323,7 +329,9 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
         </div>
       ) : (
         <p className="small text-center text-ink-3">
-          One transaction creates the mint, revokes its mint authority and opens the raise.
+          {params?.holdfastCurveEnabled
+            ? "One transaction creates the mint, revokes its mint authority and opens the raise."
+            : "One transaction opens the raise; the pump.fun token is created when the raise launches."}
         </p>
       )}
     </div>
@@ -359,7 +367,7 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
       <header className="grid gap-1">
         <h1 className="display-m text-ink">Create a launch</h1>
         <p className="body text-ink-2">
-          Open a raise. When it closes, the pooled SOL buys the first slice of supply and holds it in the launch&rsquo;s vault.{" "}
+          Open a raise. When it closes, the pooled SOL buys the first slice of supply{params?.holdfastCurveEnabled ? "" : " on pump.fun"} and holds it in the launch&rsquo;s vault.{" "}
           <Link href="/docs/how-it-works" className="whitespace-nowrap text-ink underline decoration-ink-3/60 underline-offset-2 hover:decoration-ink">
             How it works ›
           </Link>

@@ -1,5 +1,6 @@
 export * from "./constants";
 export * from "./pda";
+export * from "./pump";
 export * from "./math";
 export * from "./merkle";
 export * from "./format";

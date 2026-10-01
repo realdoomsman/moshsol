@@ -4,6 +4,10 @@
  * trading, and 1 cancelled launch with a refund. Every run creates new launches; wallets are
  * reused from `.localnet/seed/` and topped up by airdrop.
  *
+ * Launches open on the platform's venue: pump.fun tokens (the validator must run with CLONE_PUMP=1;
+ * public trades go straight to pump.fun's curve) unless the Holdfast curve is enabled (`HOLDFAST_CURVE=1`
+ * at setup), in which case they trade on the program's own curve as before.
+ *
  * Env: RPC_URL (default http://127.0.0.1:8899), INDEXER_URL (default http://127.0.0.1:8787),
  *      SEED_TRADE_SECS (default 150) — wall time of the trading phase.
  */
@@ -14,20 +18,21 @@ import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.j
 import {
   OPEN_WHITELIST_ROOT,
   buildWhitelist,
-  curveOf,
   describeError,
   fmtPrice,
   lamportsToSol,
+  launchToJson,
   minOut,
   quoteBuy,
   quoteSell,
   solToLamports,
+  splAta,
   tokenAta,
-  type LaunchAccount,
+  type LaunchJson,
   type MoshClient,
   type Whitelist,
 } from "@holdfast/sdk";
-import { LOCALNET_DIR, RPC_URL, airdrop, clientFor, loadOrCreateKeypair, send } from "./common";
+import { LOCALNET_DIR, RPC_URL, VenueTrader, airdrop, clientFor, createRaise, launchRaise, loadOrCreateKeypair, send, venueCurveOf, venueFeeBps } from "./common";
 
 const INDEXER_URL = (process.env.INDEXER_URL ?? "http://127.0.0.1:8787").replace(/\/+$/, "");
 const TRADE_SECS = Number(process.env.SEED_TRADE_SECS ?? 150);
@@ -308,8 +313,9 @@ async function upload(plan: Plan, whitelist: string[] | null): Promise<string> {
   return body.uri;
 }
 
-async function tokenBalance(connection: Connection, owner: PublicKey, mint: PublicKey): Promise<bigint> {
-  const ata = tokenAta(owner, mint);
+async function tokenBalance(connection: Connection, owner: PublicKey, l: LaunchJson): Promise<bigint> {
+  const mint = new PublicKey(l.mint);
+  const ata = l.venue === "pump" ? splAta(owner, mint) : tokenAta(owner, mint);
   if (!(await connection.getAccountInfo(ata, "confirmed"))) return 0n;
   return BigInt((await connection.getTokenAccountBalance(ata, "confirmed")).value.amount);
 }
@@ -321,7 +327,9 @@ const buySize = () => Math.round((0.15 + Math.random() ** 2 * 3.8) * 1_000) / 1_
 
 interface Created {
   plan: Plan;
-  mint: PublicKey;
+  /** The launch PDA's second seed: what deposits, refunds and claims key on. */
+  seedKey: PublicKey;
+  address: PublicKey;
 }
 
 async function main(): Promise<void> {
@@ -346,6 +354,7 @@ async function main(): Promise<void> {
   if (!platform) throw new Error("platform not initialized — run `pnpm setup:localnet` first");
 
   const creatorOf = (p: Plan) => creators[p.creator - 1]!;
+  const snapshot = async (address: PublicKey, seedKey: PublicKey) => launchToJson(address, (await client.fetchLaunch(seedKey))!);
   const backerOf = (i: number) => backers[i - 1]!;
   const created: Created[] = [];
 
@@ -357,11 +366,7 @@ async function main(): Promise<void> {
       whitelist = buildWhitelist([...[3, 4, 6, 1].map((i) => backerOf(i).publicKey), ...outsiders]);
     }
     const uri = await upload(plan, whitelist?.members ?? null);
-    const mint = Keypair.generate();
-    const createIx = await client.createLaunchIx({
-      creator: creator.publicKey,
-      mint: mint.publicKey,
-      feeRecipient: platform.feeRecipient,
+    const { address, seedKey } = await createRaise(client, creator, platform, {
       name: plan.name,
       symbol: plan.symbol,
       uri,
@@ -372,33 +377,32 @@ async function main(): Promise<void> {
       whitelistRoot: whitelist?.root ?? OPEN_WHITELIST_ROOT,
       bundleSupplyBps: plan.bundleSupplyBps,
       reserveBps: plan.reserveBps,
-      terms: platform.params,
     });
-    await send(client, creator, [createIx], [mint]);
-    console.log(`created ${plan.symbol.padEnd(5)} ${mint.publicKey.toBase58()} (${plan.kind})`);
+    const venue = platform.params.holdfastCurveEnabled ? "Holdfast curve" : "pump.fun";
+    console.log(`created ${plan.symbol.padEnd(5)} ${address.toBase58()} (${plan.kind}, ${venue})`);
 
     for (const [i, amount] of plan.deposits) {
       const backer = backerOf(i);
       const proof = whitelist ? whitelist.proof(backer.publicKey) : [];
       if (proof === null) throw new Error(`backer-${i} is not on the ${plan.symbol} whitelist`);
-      const ix = await client.depositIx(backer.publicKey, mint.publicKey, solToLamports(amount), proof);
+      const ix = await client.depositIx(backer.publicKey, seedKey, solToLamports(amount), proof);
       await send(client, backer, [ix]);
       console.log(`  backer-${i} deposited ${amount} SOL`);
     }
 
     if (plan.kind === "live") {
-      await send(client, creator, [await client.launchIx(creator.publicKey, mint.publicKey)]);
-      const l = (await client.fetchLaunch(mint.publicKey))!;
+      const mint = await launchRaise(client, creator, await snapshot(address, seedKey));
+      const l = await snapshot(address, seedKey);
       console.log(
-        `  launched: bundle ${lamportsToSol(l.bundleSol.toString())} SOL → vault ${lamportsToSol(l.vaultSol.toString())} SOL`,
+        `  launched ${mint.toBase58()}: bundle ${lamportsToSol(l.bundleSol)} SOL → vault ${lamportsToSol(l.vaultSol)} SOL`,
       );
     } else if (plan.kind === "cancelled") {
-      await send(client, creator, [await client.cancelLaunchIx(creator.publicKey, mint.publicKey)]);
+      await send(client, creator, [await client.cancelLaunchIx(creator.publicKey, seedKey)]);
       const [first] = plan.deposits[0]!;
-      await send(client, backerOf(first), [await client.refundIx(backerOf(first).publicKey, mint.publicKey)]);
+      await send(client, backerOf(first), [await client.refundIx(backerOf(first).publicKey, seedKey)]);
       console.log(`  cancelled; backer-${first} refunded`);
     }
-    created.push({ plan, mint: mint.publicKey });
+    created.push({ plan, seedKey, address });
   }
 
   // ------------------------------------------------ trading phase
@@ -409,23 +413,25 @@ async function main(): Promise<void> {
   let failures = 0;
   console.log(`trading for ${TRADE_SECS}s across ${live.map((c) => c.plan.symbol).join(", ")}…`);
 
+  const venueTrader = new VenueTrader(client);
   const trade = async (c: Created, trader: Keypair, wantBuy: boolean) => {
-    const l: LaunchAccount = (await client.fetchLaunch(c.mint))!;
-    const feeBps = l.terms.tradeFeeBps;
-    const held = await tokenBalance(connection, trader.publicKey, c.mint);
+    const l = await snapshot(c.address, c.seedKey);
+    const curve = await venueCurveOf(connection, l);
+    if (!curve) throw new Error(`${c.plan.symbol} has no venue to trade on`);
+    const feeBps = venueFeeBps(l);
+    const held = await tokenBalance(connection, trader.publicKey, l);
     const who = `trader-${traders.indexOf(trader) + 1}`;
     if (wantBuy || held === 0n) {
       const amount = buySize();
       const lamports = solToLamports(amount);
-      const q = quoteBuy(curveOf(l), lamports, feeBps);
-      const ix = await client.buyIx(trader.publicKey, c.mint, lamports, minOut(q.tokensOut, SLIPPAGE_BPS));
-      await send(client, trader, [ix]);
+      const q = quoteBuy(curve, lamports, feeBps);
+      await send(client, trader, await venueTrader.buyIxs(trader.publicKey, l, lamports, minOut(q.tokensOut, SLIPPAGE_BPS)));
       console.log(`  ${c.plan.symbol.padEnd(5)} ${who} buy  ${amount.toFixed(3)} SOL → price ${fmtPrice(q.priceAfter)}`);
     } else {
       const pct = 20 + Math.floor(Math.random() * 60);
       const tokens = (held * BigInt(pct)) / 100n;
-      const q = quoteSell(curveOf(l), tokens, feeBps);
-      await send(client, trader, [await client.sellIx(trader.publicKey, c.mint, tokens, minOut(q.solOut, SLIPPAGE_BPS))]);
+      const q = quoteSell(curve, tokens, feeBps);
+      await send(client, trader, await venueTrader.sellIxs(trader.publicKey, l, tokens, minOut(q.solOut, SLIPPAGE_BPS)));
       console.log(
         `  ${c.plan.symbol.padEnd(5)} ${who} sell ${pct}% → ${lamportsToSol(q.solOut).toFixed(3)} SOL, price ${fmtPrice(q.priceAfter)}`,
       );
@@ -452,14 +458,17 @@ async function main(): Promise<void> {
 
   // ------------------------------------------------ fee claims
   const mosh = live[0]!;
-  await send(client, backerOf(1), [await client.claimBackerFeesIx(backerOf(1).publicKey, mosh.mint)]);
-  await send(client, creatorOf(mosh.plan), [await client.claimCreatorFeesIx(creatorOf(mosh.plan).publicKey, mosh.mint)]);
-  console.log(`claimed backer-1 + creator fees on ${mosh.plan.symbol}`);
+  await send(client, backerOf(1), [await client.claimBackerFeesIx(backerOf(1).publicKey, mosh.seedKey)]);
+  if (platform.params.holdfastCurveEnabled) {
+    // pump.fun launches have no creator share: nothing to claim there.
+    await send(client, creatorOf(mosh.plan), [await client.claimCreatorFeesIx(creatorOf(mosh.plan).publicKey, mosh.seedKey)]);
+  }
+  console.log(`claimed backer-1${platform.params.holdfastCurveEnabled ? " + creator" : ""} fees on ${mosh.plan.symbol}`);
 
   const summary = {
     ranAt: new Date().toISOString(),
     indexer: INDEXER_URL,
-    launches: Object.fromEntries(created.map((c) => [c.plan.symbol, { mint: c.mint.toBase58(), kind: c.plan.kind }])),
+    launches: Object.fromEntries(created.map((c) => [c.plan.symbol, { address: c.address.toBase58(), kind: c.plan.kind }])),
     wallets: {
       creators: creators.map((k) => k.publicKey.toBase58()),
       backers: backers.map((k) => k.publicKey.toBase58()),

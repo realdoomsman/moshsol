@@ -1,5 +1,5 @@
 import { lamportsToSol, type LaunchJson } from "@holdfast/sdk";
-import type { LaunchDbRow, Store, TradeAggDbRow, VaultEventAggDbRow } from "./db";
+import type { LaunchDbRow, PumpEventAggDbRow, Store, TradeAggDbRow, VaultEventAggDbRow } from "./db";
 import type { LaunchSummary } from "./types";
 
 function toSummary(
@@ -7,6 +7,7 @@ function toSummary(
   row: LaunchDbRow,
   agg: TradeAggDbRow | undefined,
   vault: VaultEventAggDbRow | undefined,
+  pump: PumpEventAggDbRow | undefined,
   now: number,
 ): LaunchSummary {
   const snap = JSON.parse(row.snapshot!) as LaunchJson;
@@ -50,13 +51,30 @@ function toSummary(
             signature: vault.wound_down_sig ?? "",
           }
         : null,
+    graduation:
+      pump?.graduated_ts != null
+        ? { timestamp: pump.graduated_ts, signature: pump.graduated_sig ?? "", pool: pump.graduated_pool ?? snap.pump.pool }
+        : null,
+    cranks: {
+      creatorFeeCollections: pump?.fee_collections ?? 0,
+      buybacks: pump?.buybacks ?? 0,
+      lastCollectedAt: pump?.last_collected_ts ?? null,
+      lastBuybackAt: pump?.last_buyback_ts ?? null,
+    },
   };
 }
 
 export function summaryOf(store: Store, row: LaunchDbRow | undefined): LaunchSummary | null {
   if (!row?.snapshot) return null;
   const now = Math.floor(Date.now() / 1000);
-  return toSummary(store, row, store.tradeAggregate(row.address, now), store.vaultEventAggregate(row.address), now);
+  return toSummary(
+    store,
+    row,
+    store.tradeAggregate(row.address, now),
+    store.vaultEventAggregate(row.address),
+    store.pumpEventAggregate(row.address),
+    now,
+  );
 }
 
 /** Every launch with a snapshot, newest first. */
@@ -64,7 +82,10 @@ export function allSummaries(store: Store): LaunchSummary[] {
   const now = Math.floor(Date.now() / 1000);
   const aggs = store.tradeAggregates(now);
   const vault = store.vaultEventAggregates();
-  return store.launches().map((row) => toSummary(store, row, aggs.get(row.address), vault.get(row.address), now));
+  const pump = store.pumpEventAggregates();
+  return store
+    .launches()
+    .map((row) => toSummary(store, row, aggs.get(row.address), vault.get(row.address), pump.get(row.address), now));
 }
 
 /** Summaries for a subset of launch rows (rows without a snapshot are skipped). */
@@ -72,7 +93,16 @@ export function summariesOf(store: Store, rows: LaunchDbRow[]): LaunchSummary[] 
   const now = Math.floor(Date.now() / 1000);
   return rows.flatMap((row) =>
     row.snapshot
-      ? [toSummary(store, row, store.tradeAggregate(row.address, now), store.vaultEventAggregate(row.address), now)]
+      ? [
+          toSummary(
+            store,
+            row,
+            store.tradeAggregate(row.address, now),
+            store.vaultEventAggregate(row.address),
+            store.pumpEventAggregate(row.address),
+            now,
+          ),
+        ]
       : [],
   );
 }

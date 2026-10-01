@@ -1,4 +1,4 @@
-import { publicBuy } from "./program";
+import { publicBuy, publicFeeBps } from "./program";
 import { T0, type Market, type PublicFlow, type Recording, type Rng } from "./sim";
 
 /**
@@ -99,7 +99,7 @@ export function preroll(market: Market, logTarget: number): void {
   const x = Number(c.virtualSol + c.realSol);
   const d = logTarget - Math.log(x / Number(c.tokenReserve));
   if (d > 1e-6) {
-    const gross = Math.floor((x * (Math.exp(d / 2) - 1)) / (1 - Number(c.terms.tradeFeeBps) / 10_000));
+    const gross = Math.floor((x * (Math.exp(d / 2) - 1)) / (1 - Number(publicFeeBps(c)) / 10_000));
     const res = publicBuy(c, BigInt(gross), 0n, BigInt(T0), 0);
     if (!res.ok) throw new Error(`preroll buy failed: ${res.error}`);
   }
@@ -305,7 +305,7 @@ export class TraderMixFlow implements PublicFlow {
   private tokensForSol(m: Market, sol: number, held: bigint): bigint {
     const c = m.chain;
     const x = Number(c.virtualSol + c.realSol) / 1e9;
-    const gross = sol / (1 - Number(c.terms.tradeFeeBps) / 10_000);
+    const gross = sol / (1 - Number(publicFeeBps(c)) / 10_000);
     if (gross >= x * 0.9) return held;
     const want = BigInt(Math.floor((gross * Number(c.tokenReserve)) / (x - gross)));
     return want * 100n >= held * 85n ? held : want;

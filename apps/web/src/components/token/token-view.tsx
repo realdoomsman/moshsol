@@ -1,15 +1,16 @@
 "use client";
 
 import { agentZones, type LaunchStatus } from "@holdfast/sdk";
+import { ArrowUpRight } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { ApiError } from "@/lib/api";
 import { useMediaQuery, useNow } from "@/lib/hooks";
-import { phaseOf, type Phase } from "@/lib/launch";
+import { launchId, phaseOf, pumpTradeUrl, VENUE_LABEL, venueKindOf, type Phase } from "@/lib/launch";
 import { useLaunch } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { RefundGlyph } from "../brand/glyphs";
 import { ClampLoader } from "../brand/clamp-lock-animation";
-import { Button, ButtonLink } from "../ui/button";
+import { Button, ButtonAnchor, ButtonLink } from "../ui/button";
 import { cn } from "../ui/cn";
 import { Sheet } from "../ui/dialog";
 import { EmptyState } from "../ui/empty-state";
@@ -26,6 +27,7 @@ import { TokenHeader } from "./token-header";
 import { TokenInfo } from "./token-info";
 import { TradePanel, type Side } from "./trade-panel";
 import { NO_FILTERS, type TradeFilters } from "./trades-tab";
+import { BuybackCard, TradeOnPumpPanel } from "./venue-panel";
 import { VaultCard } from "./vault-card";
 import { VerifyCard } from "./verify-card";
 import { AdminWithdrawals, WindDownCard } from "./wind-down";
@@ -100,7 +102,11 @@ function BottomBar({ children }: { children: ReactNode }) {
   );
 }
 
-/** Live and wound-down launches: chart, activity and the trade rail (read-only once wound down). */
+/**
+ * Live and wound-down launches: chart, activity and the trade rail (read-only once wound down).
+ * Pump launches trade on pump.fun, so their rail links out instead of quoting the curve, and adds
+ * the buyback-and-burn card.
+ */
 function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLaunched: boolean }) {
   const now = useNow(5_000);
   const zones = useMemo(() => agentZones(l, now), [l, now]);
@@ -113,6 +119,7 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
   const [side, setSide] = useState<Side>("buy");
   const [sheet, setSheet] = useState(false);
   const woundDown = l.status === "woundDown";
+  const pump = l.venue === "pump";
 
   const reveal = () => requestAnimationFrame(() => document.getElementById("activity")?.scrollIntoView({ block: "start" }));
   const filterMaker = (wallet: string) => {
@@ -138,8 +145,8 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
     <div className="grid gap-3">
       {woundDown ? (
         <div role="status" className="body rounded-md bg-raised px-4 py-3 text-ink">
-          This launch wound down. Trading has ended for good; the curve and vault SOL were credited to the backers, who claim
-          it under Your position.
+          This launch wound down. {pump ? "The vault was sold into the venue and its SOL" : "Trading has ended for good; the curve and vault SOL"} credited
+          to the backers, who claim it under Your position.
         </div>
       ) : null}
       <SectionTabs value={section} onChange={setSection} />
@@ -153,11 +160,16 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
         }
         rail={
           <>
-            <div className="max-lg:hidden">
-              <TradePanel launch={l} side={side} onSideChange={setSide} />
-            </div>
+            {pump ? (
+              <TradeOnPumpPanel launch={l} className={shownIn("chart")} />
+            ) : (
+              <div className="max-lg:hidden">
+                <TradePanel launch={l} side={side} onSideChange={setSide} />
+              </div>
+            )}
             <PositionPanel launch={l} className={shownIn("chart")} />
             <TokenInfo launch={l} now={now} className={shownIn("chart")} />
+            {pump ? <BuybackCard launch={l} now={now} className={shownIn("vault")} /> : null}
             {woundDown ? null : (
               <div className={shownIn("vault")}>
                 <VaultCard launch={l} zones={zones} justLaunched={justLaunched} onAgentLog={openAgentLog} />
@@ -185,10 +197,20 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
         }
       />
       <BottomBar>
-        {woundDown ? (
+        {woundDown && !pump ? (
           <Button variant="secondary" size="lg" className="flex-1" disabled>
             Trading has ended
           </Button>
+        ) : pump ? (
+          <ButtonAnchor
+            href={pumpTradeUrl(l)}
+            variant="accent"
+            size="lg"
+            className="flex-1"
+            icon={<ArrowUpRight className="size-4" strokeWidth={1.5} aria-hidden />}
+          >
+            Trade on {VENUE_LABEL[venueKindOf(l)]}
+          </ButtonAnchor>
         ) : (
           <>
             <Button
@@ -216,9 +238,11 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
           </>
         )}
       </BottomBar>
-      <Sheet open={sheet} onOpenChange={setSheet} title={`Trade $${l.symbol}`} hideTitle>
-        <TradePanel launch={l} side={side} onSideChange={setSide} bare />
-      </Sheet>
+      {pump ? null : (
+        <Sheet open={sheet} onOpenChange={setSheet} title={`Trade $${l.symbol}`} hideTitle>
+          <TradePanel launch={l} side={side} onSideChange={setSide} bare />
+        </Sheet>
+      )}
     </div>
   );
 }
@@ -312,10 +336,11 @@ function TokenSkeleton() {
 /**
  * Token page `/launch/[mint]` (§4.5): header, then the live layout (chart, activity, trade rail;
  * read-only once wound down) or the raise layout (raise panel, back/refund rail) by phase. A launch
- * confirmed seconds ago renders an "indexing" state until the indexer has it.
+ * confirmed seconds ago renders an "indexing" state until the indexer has it. `id` is whatever the
+ * URL carries (address or mint); everything below works from the fetched summary.
  */
-export function TokenView({ mint }: { mint: string }) {
-  const { data, error, isLoading } = useLaunch(mint);
+export function TokenView({ id }: { id: string }) {
+  const { data, error, isLoading } = useLaunch(id);
   const now = useNow();
   const [openedAt] = useState(() => Math.floor(Date.now() / 1000));
   // The clamp plays only when the launch goes live while this page is open (§3.3 launch moment).
@@ -354,9 +379,9 @@ export function TokenView({ mint }: { mint: string }) {
     <div className="grid gap-6 max-lg:pb-16">
       <TokenHeader launch={data} phase={phase} now={now} />
       {phase === "live" || phase === "woundDown" ? (
-        <LiveLayout key={data.mint} launch={data} justLaunched={firstStatus === "raising"} />
+        <LiveLayout key={launchId(data)} launch={data} justLaunched={firstStatus === "raising"} />
       ) : (
-        <RaiseLayout key={data.mint} launch={data} phase={phase} />
+        <RaiseLayout key={launchId(data)} launch={data} phase={phase} />
       )}
     </div>
   );

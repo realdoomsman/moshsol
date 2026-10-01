@@ -4,7 +4,8 @@
  *
  * - Trades every live launch from a pool of trader wallets: momentum chasers, mean-reverters and noise
  *   traders, log-normal sizes, and the occasional whale pump or dump (which is what makes the vault
- *   agents step in).
+ *   agents step in). pump.fun launches are traded on pump.fun's curve directly (the validator needs
+ *   CLONE_PUMP=1); graduated ones (PumpSwap) are left to the agent.
  * - Now and then opens a raise (generated name + SVG art uploaded to the indexer), fills it with
  *   deposits from sim backers and launches it once the minimum is met.
  * - Backers and creators claim their fees from time to time.
@@ -23,27 +24,32 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Connection, LAMPORTS_PER_SOL, Keypair, PublicKey } from "@solana/web3.js";
 import {
   OPEN_WHITELIST_ROOT,
+  PUMP_INITIAL_VIRTUAL_SOL,
+  PUMP_INITIAL_VIRTUAL_TOKENS,
   TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
   TOTAL_SUPPLY,
   backerClaimable,
   compact,
-  curveOf,
   describeError,
   fmtPrice,
   lamportsToSol,
   launchToJson,
+  marketCapSol,
   minOut,
   projectEma,
   quoteBuy,
   quoteSell,
+  seedKeyOf,
   solToLamports,
   spotPrice,
   tokensToUi,
+  type CurveState,
   type LaunchJson,
   type MoshClient,
   type PlatformAccount,
 } from "@holdfast/sdk";
-import { LOCALNET_DIR, RPC_URL, airdrop, clientFor, loadOrCreateKeypair, send } from "./common";
+import { LOCALNET_DIR, RPC_URL, VenueTrader, airdrop, clientFor, createRaise, launchRaise, loadOrCreateKeypair, send, venueCurveOf, venueFeeBps } from "./common";
 
 // ---------------------------------------------------------------- config
 
@@ -244,8 +250,11 @@ interface Stats {
 
 class Simulator {
   private readonly markets = new Map<string, MarketState>();
-  /** mint → symbol from the indexer (on-chain names live in token metadata); refreshed on misses. */
+  /** launch address → symbol from the indexer (Holdfast names live in token metadata); refreshed on misses. */
   private readonly symbols = new Map<string, string>();
+  /** launch address → the reserves a live launch trades against (its venue), as of the current step. */
+  private readonly curves = new Map<string, CurveState>();
+  private readonly venueTrader: VenueTrader;
   private symbolsAt = 0;
   private readonly stats: Stats = { buys: 0, sells: 0, whales: 0, deposits: 0, raises: 0, launches: 0, claims: 0, refunds: 0, failed: 0 };
   private nextRaiseAt = 0;
@@ -264,6 +273,7 @@ class Simulator {
     private readonly creators: Wallet[],
   ) {
     this.connection = client.connection;
+    this.venueTrader = new VenueTrader(client);
   }
 
   stop(): void {
@@ -318,9 +328,11 @@ class Simulator {
     const now = Math.floor(Date.now() / 1000);
     this.agentTradesNow = launches.reduce((n, l) => n + l.agentBuys + l.agentSells, 0);
     this.agentTradesAtStart ??= this.agentTradesNow;
-    if (launches.some((l) => !this.symbols.has(l.mint))) await this.refreshSymbols();
+    if (launches.some((l) => !this.symbols.has(l.address))) await this.refreshSymbols();
 
-    const live = launches.filter((l) => l.status === "live");
+    // Trades on PumpSwap (graduated pump launches) aren't simulated: the public does that on pump.fun.
+    const live = launches.filter((l) => l.status === "live" && !l.pump.graduated);
+    await this.refreshCurves(live);
     this.observe(live);
     const creatorKeys = new Set(this.creators.map((c) => c.kp.publicKey.toBase58()));
     const simRaises = launches.filter((l) => l.status === "raising" && creatorKeys.has(l.creator));
@@ -356,32 +368,54 @@ class Simulator {
     }
   }
 
+  /** Reads every live launch's venue reserves (one RPC round per pump launch) and prices pump launches from them. */
+  private async refreshCurves(live: LaunchJson[]): Promise<void> {
+    this.curves.clear();
+    await Promise.all(
+      live.map(async (l) => {
+        const curve = await venueCurveOf(this.connection, l);
+        if (!curve) return;
+        this.curves.set(l.address, curve);
+        if (l.venue === "pump") {
+          l.priceSol = spotPrice(curve);
+          l.marketCapSol = marketCapSol(curve);
+        }
+      }),
+    );
+    // A pump launch whose venue account can't be read is skipped this step.
+    for (let i = live.length - 1; i >= 0; i--) if (!this.curves.has(live[i]!.address)) live.splice(i, 1);
+  }
+
+  private curve(l: LaunchJson): CurveState {
+    return this.curves.get(l.address)!;
+  }
+
   private observe(live: LaunchJson[]): void {
     const seen = new Set<string>();
     for (const l of live) {
-      seen.add(l.mint);
-      let m = this.markets.get(l.mint);
+      seen.add(l.address);
+      let m = this.markets.get(l.address);
       if (!m) {
         // Fresh launches draw a crowd.
         const fresh = Date.now() / 1000 - l.launchedAt < 600;
         m = { mood: fresh ? 0.8 : gauss() * 0.3, hype: fresh ? 2 : gauss() * 0.5, prices: [] };
-        this.markets.set(l.mint, m);
+        this.markets.set(l.address, m);
       }
       m.mood += -0.08 * m.mood + 0.3 * gauss();
       m.hype += -0.04 * m.hype + 0.2 * gauss();
       if (m.prices.at(-1) !== l.priceSol) m.prices = [...m.prices.slice(-11), l.priceSol];
     }
-    for (const mint of this.markets.keys()) if (!seen.has(mint)) this.markets.delete(mint);
+    for (const address of this.markets.keys()) if (!seen.has(address)) this.markets.delete(address);
   }
 
   // ------------------------------------------------ trading
 
   private async trade(live: LaunchJson[], now: number): Promise<void> {
-    const weights = live.map((l) => Math.exp(this.markets.get(l.mint)!.hype));
+    const weights = live.map((l) => Math.exp(this.markets.get(l.address)!.hype));
     let r = Math.random() * weights.reduce((a, b) => a + b, 0);
     const l = live[Math.max(0, weights.findIndex((w) => (r -= w) <= 0))]!;
-    const market = this.markets.get(l.mint)!;
-    const holdings = await this.holdings(l.mint);
+    const market = this.markets.get(l.address)!;
+    const holdings = await this.holdings(l);
 
     if (Math.random() < WHALE_PROB) return this.whaleMove(l, holdings);
 
@@ -400,7 +434,7 @@ class Simulator {
     const held = holdings.get(trader.kp.publicKey.toBase58()) ?? 0n;
     const sol = logNormal(MEDIAN_TRADE_SOL, 0.85, 0.02, 3);
     if (Math.random() < pBuy || held === 0n) await this.buy(l, trader, sol, "");
-    else await this.sell(l, trader, tokensForSol(l, sol, held), "");
+    else await this.sell(l, trader, tokensForSol(this.curve(l), venueFeeBps(l), sol, held), "");
   }
 
   private async whaleMove(l: LaunchJson, holdings: Map<string, bigint>): Promise<void> {
@@ -422,20 +456,19 @@ class Simulator {
   private async buy(l: LaunchJson, who: Wallet, sol: number, tag: string): Promise<void> {
     const lamports = solToLamports(sol.toFixed(3));
     await this.ensureSol(who, lamports + 20_000_000n);
-    const mint = new PublicKey(l.mint);
-    const q = quoteBuy(curveOf(l), lamports, l.terms.tradeFeeBps);
-    const ix = await this.client.buyIx(who.kp.publicKey, mint, lamports, minOut(q.tokensOut, SLIPPAGE_BPS));
-    await send(this.client, who.kp, [ix]);
+    const q = quoteBuy(this.curve(l), lamports, venueFeeBps(l));
+    const ixs = await this.venueTrader.buyIxs(who.kp.publicKey, l, lamports, minOut(q.tokensOut, SLIPPAGE_BPS));
+    await send(this.client, who.kp, ixs);
     this.stats.buys++;
     log(`${tag}buy  ${this.sym(l)} ${who.label.padEnd(9)} ${solCol(lamports)} SOL → ${fmtPrice(q.priceAfter)} (${pct(q.priceAfter, q.priceBefore)})`);
   }
 
   private async sell(l: LaunchJson, who: Wallet, tokens: bigint, tag: string): Promise<void> {
     if (tokens <= 0n) return;
-    const q = quoteSell(curveOf(l), tokens, l.terms.tradeFeeBps);
-    const ix = await this.client.sellIx(who.kp.publicKey, new PublicKey(l.mint), tokens, minOut(q.solOut, SLIPPAGE_BPS));
+    const q = quoteSell(this.curve(l), tokens, venueFeeBps(l));
+    const ixs = await this.venueTrader.sellIxs(who.kp.publicKey, l, tokens, minOut(q.solOut, SLIPPAGE_BPS));
     await this.ensureSol(who, 10_000_000n);
-    await send(this.client, who.kp, [ix]);
+    await send(this.client, who.kp, ixs);
     this.stats.sells++;
     log(
       `${tag}sell ${this.sym(l)} ${who.label.padEnd(9)} ${solCol(q.solOut)} SOL → ${fmtPrice(q.priceAfter)} ` +
@@ -444,10 +477,10 @@ class Simulator {
   }
 
   /** Token balances by owner for one mint (single getProgramAccounts, like the indexer's holder list). */
-  private async holdings(mint: string): Promise<Map<string, bigint>> {
-    const accounts = await this.connection.getProgramAccounts(TOKEN_2022_PROGRAM_ID, {
+  private async holdings(l: LaunchJson): Promise<Map<string, bigint>> {
+    const accounts = await this.connection.getProgramAccounts(l.venue === "pump" ? TOKEN_PROGRAM_ID : TOKEN_2022_PROGRAM_ID, {
       commitment: "confirmed",
-      filters: [{ memcmp: { offset: 0, bytes: mint } }],
+      filters: [{ memcmp: { offset: 0, bytes: l.mint } }],
       dataSlice: { offset: 32, length: 40 },
     });
     const out = new Map<string, bigint>();
@@ -477,11 +510,8 @@ class Simulator {
     const p = this.platform.params;
     const minSol = Math.max(lamportsToSol(p.minRaiseLamports.toString()), round(rand(2, 7), 0.5));
     const maxSol = round(minSol * rand(1.5, 3), 0.5);
-    const mint = Keypair.generate();
-    const ix = await this.client.createLaunchIx({
-      creator: creator.kp.publicKey,
-      mint: mint.publicKey,
-      feeRecipient: this.platform.feeRecipient,
+    await this.ensureSol(creator, 200_000_000n);
+    const { address } = await createRaise(this.client, creator.kp, this.platform, {
       name: meta.name,
       symbol: meta.symbol,
       uri,
@@ -492,13 +522,10 @@ class Simulator {
       whitelistRoot: OPEN_WHITELIST_ROOT,
       bundleSupplyBps: Math.min(p.maxBundleSupplyBps, round(rand(1_000, 2_500), 250)),
       reserveBps: round(rand(2_500, 5_000), 500),
-      terms: p,
     });
-    await this.ensureSol(creator, 200_000_000n);
-    await send(this.client, creator.kp, [ix], [mint]);
-    this.symbols.set(mint.publicKey.toBase58(), meta.symbol);
+    this.symbols.set(address.toBase58(), meta.symbol);
     this.stats.raises++;
-    log(`✨ raise ${meta.symbol} "${meta.name}" by ${creator.label}: min ${minSol} / max ${maxSol} SOL, mint ${mint.publicKey.toBase58()}`);
+    log(`✨ raise ${meta.symbol} "${meta.name}" by ${creator.label}: min ${minSol} / max ${maxSol} SOL, launch ${address.toBase58()}`);
   }
 
   /** Pulls symbols from the indexer, at most every 10s (it serves them from token metadata). */
@@ -507,12 +534,12 @@ class Simulator {
     this.symbolsAt = Date.now();
     const res = await fetch(`${INDEXER_URL}/api/launches?status=all&limit=200`).catch(() => null);
     if (!res?.ok) return;
-    const body = (await res.json()) as { launches: { mint: string; symbol: string }[] };
-    for (const x of body.launches) if (x.symbol) this.symbols.set(x.mint, x.symbol.toUpperCase());
+    const body = (await res.json()) as { launches: { address: string; symbol: string }[] };
+    for (const x of body.launches) if (x.symbol) this.symbols.set(x.address, x.symbol.toUpperCase());
   }
 
   private sym(l: LaunchJson): string {
-    return (this.symbols.get(l.mint) ?? `${l.mint.slice(0, 5)}…`).padEnd(8);
+    return (this.symbols.get(l.address) ?? (l.venue === "pump" ? l.symbol.toUpperCase() : `${l.mint.slice(0, 5)}…`)).padEnd(8);
   }
 
   private async deposit(l: LaunchJson): Promise<void> {
@@ -523,7 +550,7 @@ class Simulator {
     const lamports = solToLamports(sol.toFixed(3));
     if (lamports <= 0n) return;
     await this.ensureSol(backer, lamports + 20_000_000n);
-    const ix = await this.client.depositIx(backer.kp.publicKey, new PublicKey(l.mint), lamports);
+    const ix = await this.client.depositIx(backer.kp.publicKey, seedKeyOf(l), lamports);
     await send(this.client, backer.kp, [ix]);
     this.stats.deposits++;
     const raised = lamportsToSol(BigInt(l.raised) + lamports);
@@ -532,16 +559,16 @@ class Simulator {
 
   private async launch(l: LaunchJson): Promise<void> {
     const creator = this.creators.find((c) => c.kp.publicKey.toBase58() === l.creator)!;
-    await send(this.client, creator.kp, [await this.client.launchIx(creator.kp.publicKey, new PublicKey(l.mint))]);
+    const mint = await launchRaise(this.client, creator.kp, l);
     this.stats.launches++;
-    log(`🚀 launch ${this.sym(l)} raised ${lamportsToSol(l.raised).toFixed(2)} SOL from ${l.backerCount} backers`);
+    log(`🚀 launch ${this.sym(l)} raised ${lamportsToSol(l.raised).toFixed(2)} SOL from ${l.backerCount} backers → mint ${mint.toBase58()}`);
   }
 
   private async refund(l: LaunchJson): Promise<void> {
-    const mint = new PublicKey(l.mint);
+    const seedKey = seedKeyOf(l);
     for (const b of this.backers) {
-      if (!(await this.client.fetchBacker(mint, b.kp.publicKey))) continue;
-      await send(this.client, b.kp, [await this.client.refundIx(b.kp.publicKey, mint)]);
+      if (!(await this.client.fetchBacker(seedKey, b.kp.publicKey))) continue;
+      await send(this.client, b.kp, [await this.client.refundIx(b.kp.publicKey, seedKey)]);
       this.stats.refunds++;
       log(`refund ${this.sym(l)} ${b.label} (raise expired below minimum)`);
       return;
@@ -563,7 +590,7 @@ class Simulator {
             BigInt(account.feesClaimed.toString()),
           );
           if (claimable < 1_000_000n) continue;
-          await send(this.client, backer.kp, [await this.client.claimBackerFeesIx(backer.kp.publicKey, new PublicKey(l.mint))]);
+          await send(this.client, backer.kp, [await this.client.claimBackerFeesIx(backer.kp.publicKey, seedKeyOf(l))]);
           this.stats.claims++;
           log(`💸 claim ${this.sym(l)} ${backer.label.padEnd(9)} ${solCol(claimable)} SOL backer fees`);
           return;
@@ -573,7 +600,7 @@ class Simulator {
     for (const creator of this.creators) {
       const l = live.find((x) => x.creator === creator.kp.publicKey.toBase58() && BigInt(x.creatorFeesUnclaimed) >= 2_000_000n);
       if (!l) continue;
-      await send(this.client, creator.kp, [await this.client.claimCreatorFeesIx(creator.kp.publicKey, new PublicKey(l.mint))]);
+      await send(this.client, creator.kp, [await this.client.claimCreatorFeesIx(creator.kp.publicKey, seedKeyOf(l))]);
       this.stats.claims++;
       log(`💸 claim ${this.sym(l)} ${creator.label.padEnd(9)} ${solCol(BigInt(l.creatorFeesUnclaimed))} SOL creator fees`);
       return;
@@ -583,16 +610,17 @@ class Simulator {
 
 // ---------------------------------------------------------------- helpers
 
-/** Post-bundle spot price: the bundle is the curve's first buy. */
+/** Post-bundle spot price: the bundle is the venue's first buy (fresh pump.fun curve or the launch's own). */
 function launchPrice(l: LaunchJson): number {
-  return spotPrice({ virtualSol: BigInt(l.virtualSol), realSol: BigInt(l.bundleSol), tokenReserve: TOTAL_SUPPLY - BigInt(l.bundleTokens) });
+  return l.venue === "pump"
+    ? spotPrice({ virtualSol: PUMP_INITIAL_VIRTUAL_SOL, realSol: BigInt(l.bundleSol), tokenReserve: PUMP_INITIAL_VIRTUAL_TOKENS - BigInt(l.bundleTokens) })
+    : spotPrice({ virtualSol: BigInt(l.virtualSol), realSol: BigInt(l.bundleSol), tokenReserve: TOTAL_SUPPLY - BigInt(l.bundleTokens) });
 }
 
 /** Tokens to sell for about `sol` net (curve inverse incl. fee); the whole bag when that is most of it. */
-function tokensForSol(l: LaunchJson, sol: number, held: bigint): bigint {
-  const c = curveOf(l);
+function tokensForSol(c: CurveState, feeBps: number, sol: number, held: bigint): bigint {
   const x = Number(c.virtualSol + c.realSol) / 1e9;
-  const gross = sol / (1 - l.terms.tradeFeeBps / 10_000);
+  const gross = sol / (1 - feeBps / 10_000);
   if (gross >= x * 0.9) return held;
   const want = BigInt(Math.floor((gross * Number(c.tokenReserve)) / (x - gross)));
   return want * 100n >= held * 85n ? held : want;

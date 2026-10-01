@@ -18,6 +18,7 @@ import {
 } from "react";
 import { api } from "@/lib/api";
 import { fmtSolValue } from "@/lib/format";
+import { launchHref } from "@/lib/launch";
 import { useDebounced } from "@/lib/hooks";
 import { searchQuery } from "@/lib/query-options";
 import type { SearchLaunch, SearchUser } from "@/lib/types";
@@ -60,11 +61,12 @@ function isAddress(s: string): boolean {
   }
 }
 
-/** A pasted address is a launch if the indexer knows it as a mint, otherwise a wallet. */
+/** A pasted address is a launch if the indexer knows it as a mint or launch address, otherwise a wallet. */
 async function addressRoute(address: string): Promise<string> {
   try {
     const r = await api.search(address);
-    return r.launches.some((l) => l.mint === address) ? `/launch/${address}` : `/u/${address}`;
+    const launch = r.launches.find((l) => l.mint === address || l.address === address);
+    return launch ? launchHref(launch) : `/u/${address}`;
   } catch {
     return `/u/${address}`;
   }
@@ -130,7 +132,7 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: b
       setJumping(false);
       router.push(href);
     } else {
-      router.push(item.kind === "launch" ? `/launch/${item.launch.mint}` : item.kind === "user" ? `/u/${item.user.wallet}` : item.href);
+      router.push(item.kind === "launch" ? launchHref(item.launch) : item.kind === "user" ? `/u/${item.user.wallet}` : item.href);
     }
     close();
   };

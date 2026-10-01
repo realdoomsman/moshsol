@@ -6,7 +6,7 @@ use crate::constants::*;
 use crate::errors::MoshError;
 use crate::events::Launched;
 use crate::math;
-use crate::state::{Launch, LaunchStatus};
+use crate::state::{Launch, LaunchStatus, Venue};
 
 #[derive(Accounts)]
 pub struct LaunchToken<'info> {
@@ -15,7 +15,8 @@ pub struct LaunchToken<'info> {
         mut,
         seeds = [LAUNCH_SEED, mint.key().as_ref()],
         bump = launch.bump,
-        has_one = mint
+        has_one = mint,
+        constraint = launch.venue == Venue::Holdfast @ MoshError::WrongVenue
     )]
     pub launch: Box<Account<'info, Launch>>,
     pub mint: Box<InterfaceAccount<'info, Mint>>,

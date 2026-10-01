@@ -3,6 +3,7 @@
 import { fmtPrice } from "@holdfast/sdk";
 import { useMemo } from "react";
 import { fmtLamports, fmtTokens } from "@/lib/format";
+import { launchId } from "@/lib/launch";
 import { tradeKey, useAgentStatus, useTradeFeed } from "@/lib/queries";
 import type { AgentDecision, LaunchSummary, TradeRow } from "@/lib/types";
 import { agentMarkers, decisionLabel, describeAgentTrade } from "../band/model";
@@ -23,7 +24,7 @@ const AGENT_FILTER = { agent: true } as const;
  */
 export function AgentTab({ launch: l, now }: { launch: LaunchSummary; now: number }) {
   const status = useAgentStatus();
-  const feed = useTradeFeed(l.mint, AGENT_FILTER);
+  const feed = useTradeFeed(launchId(l), AGENT_FILTER);
   const fresh = useFreshKeys(feed.headKeys);
   const cols = 6;
 
@@ -34,10 +35,10 @@ export function AgentTab({ launch: l, now }: { launch: LaunchSummary; now: numbe
       return { kind: "trade", at: t.timestamp, t, text: m ? describeAgentTrade(m, l.symbol) : "" };
     });
     const decisions: Row[] = (status.data?.decisions ?? [])
-      .filter((d) => d.mint === l.mint && !(d.signature && feed.rows.some((t) => t.signature === d.signature)))
+      .filter((d) => d.address === l.address && !(d.signature && feed.rows.some((t) => t.signature === d.signature)))
       .map((d) => ({ kind: "decision", at: d.at, d }));
     return [...decisions, ...trades].sort((a, b) => b.at - a.at);
-  }, [feed.rows, status.data, l.mint, l.symbol, l.virtualSol]);
+  }, [feed.rows, status.data, l.address, l.symbol, l.virtualSol]);
 
   return (
     <div>

@@ -4,6 +4,7 @@ import { fmtPrice, lamportsToSol, TOTAL_SUPPLY, timeAgo, tokensToUi, type AgentZ
 import type { ReactNode } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
+import { VENUE_LABEL, venueKindOf } from "@/lib/launch";
 import { useAgentStatus } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { decisionHeadline, fmtDeviation, windowBudgets } from "../band/model";
@@ -44,7 +45,8 @@ export function VaultCard({
 }) {
   const now = useNow();
   const status = useAgentStatus();
-  const decision = status.data?.decisions.find((d) => d.mint === l.mint);
+  const decision = status.data?.decisions.find((d) => d.address === l.address);
+  const profitPct = 100 - l.terms.burnShareBps / 100;
   const value = lamportsToSol(l.vaultSol) + tokensToUi(l.vaultTokens) * l.priceSol;
   const vsCost = zones.avgCost > 0 ? (l.priceSol / zones.avgCost - 1) * 100 : null;
   const rolled = now >= l.windowStart + l.terms.agentWindowSecs;
@@ -65,7 +67,7 @@ export function VaultCard({
           Vault
         </span>
       }
-      aside={<Chip tone="neutral">Agent-traded</Chip>}
+      aside={<Chip tone="neutral">{l.venue === "pump" ? `Agent-traded on ${VENUE_LABEL[venueKindOf(l)]}` : "Agent-traded"}</Chip>}
     >
       <div className="grid gap-4 px-4 pb-4">
         <div>
@@ -93,7 +95,13 @@ export function VaultCard({
           </Row>
           <Row
             label={
-              <RuleTooltip rule="When the vault agent sells above its average cost, 100% of the realized profit goes to the backers, pro rata. They claim it with their fee share.">
+              <RuleTooltip
+                rule={
+                  l.venue === "pump"
+                    ? `When the vault agent sells above its average cost, ${profitPct}% of the realized profit goes to the backers, pro rata, and ${100 - profitPct}% to the buyback-and-burn pool. Backers claim it with their earnings.`
+                    : "When the vault agent sells above its average cost, 100% of the realized profit goes to the backers, pro rata. They claim it with their fee share."
+                }
+              >
                 Profit to backers
               </RuleTooltip>
             }

@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useNow } from "@/lib/hooks";
+import { launchId } from "@/lib/launch";
 import { useCandles, useLaunches } from "@/lib/queries";
 import { trendingQuery } from "@/lib/users";
 import { BAND_MIN_POINTS, candlesSince, HERO_TF } from "./model";
@@ -18,13 +19,13 @@ export function useHeroPick() {
   const live = useLaunches({ status: "live", sort: "trending" });
   const { primary, fallback } = heroCandidates(trending.data, live.data?.launches);
 
-  const primaryCandles = useCandles(primary?.mint ?? "", HERO_TF, !!primary);
+  const primaryCandles = useCandles(primary ? launchId(primary) : "", HERO_TF, !!primary);
   const primaryPoints = candlesSince(primaryCandles.data?.candles, nowSec).length;
   const needFallback =
     !!fallback &&
-    fallback.mint !== primary?.mint &&
+    fallback.address !== primary?.address &&
     (!primary || (primaryCandles.isSuccess && primaryPoints < BAND_MIN_POINTS));
-  const fallbackCandles = useCandles(fallback?.mint ?? "", HERO_TF, needFallback);
+  const fallbackCandles = useCandles(fallback ? launchId(fallback) : "", HERO_TF, needFallback);
   const fallbackPoints = candlesSince(fallbackCandles.data?.candles, nowSec).length;
 
   const chartLaunch =

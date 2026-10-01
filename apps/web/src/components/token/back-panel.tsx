@@ -1,14 +1,14 @@
 "use client";
 
-import { buildWhitelist, previewBundle, solToLamports } from "@holdfast/sdk";
+import { buildWhitelist, previewBundle, previewPumpBundle, seedKeyOf, solToLamports } from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { PublicKey } from "@solana/web3.js";
+import { Keypair, PublicKey } from "@solana/web3.js";
 import { useMemo, useState, type ReactNode } from "react";
 import { useBackerAccount, useChainWhitelistRoot, useMoshClient, useSolBalance } from "@/lib/chain";
 import { fmtLamports, fmtTokens, pctOf } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
-import type { Phase } from "@/lib/launch";
+import { launchId, type Phase } from "@/lib/launch";
 import { usePlatform } from "@/lib/queries";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
@@ -36,30 +36,24 @@ function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
 }
 
 /**
- * "What you get" (§4.5): the deposit's share of the backer pool (fee share of every trade plus 100%
- * of the vault agent's realized profit and any wind-down payout), the vault slice it funds at
- * launch, and the refund guarantee — recomputed live from the typed amount.
+ * "What you get" (§4.5): the deposit's share of the backer pool (fee share of every trade plus the
+ * backers' share of the vault agent's realized profit and any wind-down payout), the vault slice it
+ * funds at launch, and the refund guarantee — recomputed live from the typed amount.
  */
 function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSummary; deposited: bigint; add: bigint | null; example: bigint }) {
   const extra = add ?? (deposited > 0n ? 0n : example);
   const mine = deposited + extra;
   const total = BigInt(l.raised) + extra;
-  const bundle = useMemo(
-    () =>
-      total > 0n
-        ? previewBundle({
-            raised: total,
-            virtualSol: BigInt(l.virtualSol),
-            launchFeeBps: l.terms.launchFeeBps,
-            reserveBps: l.reserveBps,
-            bundleSupplyBps: l.bundleSupplyBps,
-          })
-        : null,
-    [total, l.virtualSol, l.terms.launchFeeBps, l.reserveBps, l.bundleSupplyBps],
-  );
+  const pump = l.venue === "pump";
+  const bundle = useMemo(() => {
+    if (total <= 0n) return null;
+    const terms = { raised: total, launchFeeBps: l.terms.launchFeeBps, reserveBps: l.reserveBps, bundleSupplyBps: l.bundleSupplyBps };
+    return pump ? previewPumpBundle(terms) : previewBundle({ ...terms, virtualSol: BigInt(l.virtualSol) });
+  }, [total, pump, l.virtualSol, l.terms.launchFeeBps, l.reserveBps, l.bundleSupplyBps]);
   if (mine === 0n || total === 0n) return null;
   const share = pctOf(mine, total);
   const feePctOfTrade = ((l.terms.tradeFeeBps * l.terms.backerFeeShareBps) / 1_000_000) * (share / 100);
+  const profitPct = 100 - l.terms.burnShareBps / 100;
   const basis = add ? `for ${fmtLamports(mine)} SOL` : deposited > 0n ? "your deposit" : `e.g. ${fmtLamports(extra)} SOL`;
   return (
     <div className="grid gap-3 border-t border-line pt-4">
@@ -72,8 +66,10 @@ function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSumm
           <dt className="text-ink-2">Backer share</dt>
           <dd className="num text-right text-ink">{fmtPct(share)} of backer payouts</dd>
           <dd className="col-span-2 mt-0.5 text-ink-3">
-            ≈ {+feePctOfTrade.toPrecision(2)}% of every trade while it trades, plus your share of 100% of the vault agent&apos;s
-            profit and of any wind-down payout. One claim button. Shrinks as others back it.
+            {pump
+              ? `Trades happen on pump.fun; ${profitPct}% of the vault agent's realized profit goes to backers (the rest buys and burns the Holdfast token), plus your share of any wind-down payout.`
+              : `≈ ${+feePctOfTrade.toPrecision(2)}% of every trade while it trades, plus your share of 100% of the vault agent's profit and of any wind-down payout.`}{" "}
+            One claim button. Shrinks as others back it.
           </dd>
         </div>
         {bundle ? (
@@ -106,8 +102,8 @@ export function BackPanel({ launch: l, phase, bare, className }: { launch: Launc
   const client = useMoshClient();
   const platform = usePlatform();
   const sol = useSolBalance(publicKey);
-  const backer = useBackerAccount(l.mint, publicKey);
-  const chainRoot = useChainWhitelistRoot(l.mint, l.whitelisted);
+  const backer = useBackerAccount(l, publicKey);
+  const chainRoot = useChainWhitelistRoot(l, l.whitelisted);
   const tx = useTx();
   const [amount, setAmount] = useState("");
 
@@ -158,8 +154,8 @@ export function BackPanel({ launch: l, phase, bare, className }: { launch: Launc
     const sig = await tx.run({
       label: `Back $${l.symbol}`,
       successMessage: `Deposited ${fmtLamports(effective)} SOL into the $${l.symbol} raise`,
-      build: async (payer) => [await client.depositIx(payer, new PublicKey(l.mint), effective, proof ?? [])],
-      invalidate: [["backer", l.mint]],
+      build: async (payer) => [await client.depositIx(payer, seedKeyOf(l), effective, proof ?? [])],
+      invalidate: [["backer", launchId(l)]],
     });
     if (sig) setAmount("");
   };
@@ -241,6 +237,8 @@ export function BackPanel({ launch: l, phase, bare, className }: { launch: Launc
 /**
  * Launch controls (§4.5 min reached / launchable): "Launch now" for the creator once the minimum is
  * met, and for any wallet once the deadline passed or the raise is full; the creator can also cancel.
+ * Pump launches create their token on pump.fun in the same transaction, signed by a fresh mint
+ * keypair generated per click (pump.fun needs the mint to sign; it has no authority afterwards).
  */
 export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSummary; phase: Phase; className?: string }) {
   const { publicKey } = useWallet();
@@ -252,14 +250,16 @@ export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSum
   if (phase !== "raising" && phase !== "ready") return null;
   const canLaunch = minMet && (phase === "ready" || isCreator);
   if (!canLaunch && !isCreator) return null;
-  const mint = new PublicKey(l.mint);
+  const pump = l.venue === "pump";
   const launchLabel = `Launch $${l.symbol}`;
   const cancelLabel = `Cancel $${l.symbol} raise`;
 
   return (
     <Panel title={isCreator ? "Creator controls" : "Ready to launch"} className={className}>
       <div className="grid gap-3 px-4 pb-4">
-        <p className="small text-ink-2">Launching buys the bundle before anyone can trade. Any wallet can trigger it.</p>
+        <p className="small text-ink-2">
+          Launching {pump ? "creates the token on pump.fun and " : ""}buys the bundle before anyone can trade. Any wallet can trigger it.
+        </p>
         {canLaunch ? (
           <Button
             variant="accent"
@@ -267,13 +267,19 @@ export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSum
             className="w-full"
             busy={tx.pending === launchLabel}
             disabled={!!tx.pending && tx.pending !== launchLabel}
-            onClick={() =>
+            onClick={() => {
+              const mint = pump ? Keypair.generate() : null;
               void tx.run({
                 label: launchLabel,
                 successMessage: `$${l.symbol} is live. The bundle is in the vault.`,
-                build: async (payer) => [await client.launchIx(payer, mint)],
-              })
-            }
+                signers: mint ? [mint] : undefined,
+                build: async (payer) => [
+                  mint
+                    ? await client.launchPumpIx({ cranker: payer, launch: new PublicKey(l.address), mint: mint.publicKey })
+                    : await client.launchIx(payer, seedKeyOf(l)),
+                ],
+              });
+            }}
           >
             {tx.pending === launchLabel && tx.stage ? TX_STAGE_LABEL[tx.stage] : "Launch now"}
           </Button>
@@ -297,7 +303,7 @@ export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSum
                       .run({
                         label: cancelLabel,
                         successMessage: "Raise cancelled. Refunds are open.",
-                        build: async (payer) => [await client.cancelLaunchIx(payer, mint)],
+                        build: async (payer) => [await client.cancelLaunchIx(payer, seedKeyOf(l))],
                       })
                       .then(() => setConfirmCancel(false))
                   }
@@ -322,7 +328,7 @@ export function RefundPanel({ launch: l, phase, className }: { launch: LaunchSum
   const { publicKey } = useWallet();
   const { setVisible } = useWalletModal();
   const client = useMoshClient();
-  const backer = useBackerAccount(l.mint, publicKey);
+  const backer = useBackerAccount(l, publicKey);
   const tx = useTx();
   const deposited = backer.data?.deposited ?? 0n;
   const allRefunded = BigInt(l.raised) > 0n && BigInt(l.refunded) >= BigInt(l.raised);
@@ -349,8 +355,8 @@ export function RefundPanel({ launch: l, phase, className }: { launch: LaunchSum
               void tx.run({
                 label: `Refund $${l.symbol}`,
                 successMessage: `Refunded ${fmtLamports(deposited)} SOL`,
-                build: async (payer) => [await client.refundIx(payer, new PublicKey(l.mint))],
-                invalidate: [["backer", l.mint]],
+                build: async (payer) => [await client.refundIx(payer, seedKeyOf(l))],
+                invalidate: [["backer", launchId(l)]],
               })
             }
           >

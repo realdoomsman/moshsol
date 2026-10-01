@@ -1,13 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import type { LaunchVenue } from "@holdfast/sdk";
 import type { ActivityType } from "./types";
+
+/** `Pubkey::default()`: the mint of a pump launch before `launch_pump` created its token. */
+export const DEFAULT_PUBKEY = "11111111111111111111111111111111";
 
 export type MetaStatus = "pending" | "ok" | "error" | "none";
 
 export type LaunchDbRow = {
   address: string;
+  /** The token mint; `DEFAULT_PUBKEY` on a pump launch that hasn't launched yet. */
   mint: string;
+  venue: LaunchVenue;
   creator: string;
   idx: number;
   status: string;
@@ -43,6 +49,9 @@ export type LaunchDbRow = {
   comment_count: number;
 };
 
+/** A launch row whose account snapshot was fetched (what the list/search queries return). */
+export type SnapshotLaunchDbRow = LaunchDbRow & { snapshot: string };
+
 export type TradeDbRow = {
   signature: string;
   event_index: number;
@@ -77,6 +86,8 @@ export type EventDbRow = {
   is_buy: number | null;
   sol_amount: string | null;
   token_amount: string | null;
+  /** Secondary pubkey of the event: the PumpSwap pool (`graduated`), the token burned (`buyback_burned`). */
+  ref: string | null;
 };
 
 export type DepositDbRow = {
@@ -101,13 +112,16 @@ export type ActivityDbRow = {
   is_buy: number | null;
   sol_amount: string | null;
   token_amount: string | null;
+  ref: string | null;
+  launch: string;
+  venue: LaunchVenue;
   mint: string;
   name: string;
   symbol: string;
   image: string | null;
 };
 
-export type AgentTradeDbRow = TradeDbRow & { mint: string; symbol: string };
+export type AgentTradeDbRow = TradeDbRow & { mint: string; venue: LaunchVenue; symbol: string };
 
 export type TradeAggDbRow = {
   launch: string;
@@ -131,8 +145,23 @@ export type VaultEventAggDbRow = {
   wound_down_sig: string | null;
 };
 
+/** Per-launch pump.fun crank history from events (`collect_pump_fees`, `buyback_burn`, `graduate_pump`). */
+export type PumpEventAggDbRow = {
+  launch: string;
+  fee_collections: number;
+  buybacks: number;
+  last_collected_ts: number | null;
+  last_buyback_ts: number | null;
+  graduated_ts: number | null;
+  graduated_sig: string | null;
+  graduated_pool: string | null;
+};
+
 export type CommentDbRow = {
   id: number;
+  /** Launch address (comments are keyed by launch: pump launches have no mint while raising). */
+  launch: string;
+  /** Joined from the launch. */
   mint: string;
   wallet: string;
   body: string;
@@ -145,7 +174,7 @@ export type CommentDbRow = {
 };
 
 export type NewCommentRow = {
-  mint: string;
+  launch: string;
   wallet: string;
   body: string;
   reply_to: number | null;
@@ -194,6 +223,7 @@ export type CandlePointDbRow = { timestamp: number; price_sol: number; sol: numb
 export type NewLaunchRow = {
   address: string;
   mint: string;
+  venue: LaunchVenue;
   creator: string;
   idx: number;
   status: string;
@@ -202,6 +232,17 @@ export type NewLaunchRow = {
   symbol: string;
   uri: string;
   meta_status: MetaStatus;
+};
+
+/** A launch account snapshot to persist; `pumpMeta` carries the on-chain name/symbol/uri of pump launches. */
+export type SnapshotUpdate = {
+  address: string;
+  snapshot: string;
+  slot: number;
+  status: string;
+  mint: string;
+  venue: LaunchVenue;
+  pumpMeta: { name: string; symbol: string; uri: string } | null;
 };
 
 export interface MetaUpdate {
@@ -218,20 +259,10 @@ export interface MetaUpdate {
 
 export type TableCounts = Record<"txs" | "events" | "trades" | "deposits" | "launches", number>;
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS sync_state (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS txs (
-  signature TEXT PRIMARY KEY,
-  slot INTEGER NOT NULL,
-  failed INTEGER NOT NULL,
-  event_count INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS launches (
+const LAUNCHES_COLUMNS = `
   address TEXT PRIMARY KEY,
-  mint TEXT NOT NULL UNIQUE,
+  mint TEXT NOT NULL,
+  venue TEXT NOT NULL DEFAULT 'holdfast',
   creator TEXT NOT NULL,
   idx INTEGER NOT NULL,
   status TEXT NOT NULL,
@@ -256,9 +287,34 @@ CREATE TABLE IF NOT EXISTS launches (
   website TEXT,
   whitelist TEXT,
   holders INTEGER NOT NULL DEFAULT 0,
-  holders_at INTEGER NOT NULL DEFAULT 0
+  holders_at INTEGER NOT NULL DEFAULT 0,
+  top_holder_pct REAL`;
+
+const COMMENTS_COLUMNS = `
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  launch TEXT NOT NULL,
+  wallet TEXT NOT NULL,
+  body TEXT NOT NULL,
+  reply_to INTEGER,
+  created_at INTEGER NOT NULL,
+  signature TEXT NOT NULL,
+  message TEXT NOT NULL,
+  deleted_at INTEGER`;
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS sync_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS txs (
+  signature TEXT PRIMARY KEY,
+  slot INTEGER NOT NULL,
+  failed INTEGER NOT NULL,
+  event_count INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS launches (${LAUNCHES_COLUMNS});
 CREATE INDEX IF NOT EXISTS launches_creator ON launches(creator);
+CREATE UNIQUE INDEX IF NOT EXISTS launches_mint ON launches(mint) WHERE mint != '${DEFAULT_PUBKEY}';
 CREATE TABLE IF NOT EXISTS events (
   signature TEXT NOT NULL,
   event_index INTEGER NOT NULL,
@@ -271,6 +327,7 @@ CREATE TABLE IF NOT EXISTS events (
   is_buy INTEGER,
   sol_amount TEXT,
   token_amount TEXT,
+  ref TEXT,
   PRIMARY KEY (signature, event_index)
 );
 CREATE INDEX IF NOT EXISTS events_order ON events(slot);
@@ -315,18 +372,8 @@ CREATE INDEX IF NOT EXISTS trades_trader ON trades(trader, timestamp);
 CREATE INDEX IF NOT EXISTS events_actor ON events(actor, timestamp);
 CREATE INDEX IF NOT EXISTS events_launch ON events(launch);
 CREATE INDEX IF NOT EXISTS events_type ON events(type, launch);
-CREATE TABLE IF NOT EXISTS comments (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  mint TEXT NOT NULL,
-  wallet TEXT NOT NULL,
-  body TEXT NOT NULL,
-  reply_to INTEGER,
-  created_at INTEGER NOT NULL,
-  signature TEXT NOT NULL,
-  message TEXT NOT NULL,
-  deleted_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS comments_mint ON comments(mint, id);
+CREATE TABLE IF NOT EXISTS comments (${COMMENTS_COLUMNS});
+CREATE INDEX IF NOT EXISTS comments_launch ON comments(launch, id);
 CREATE INDEX IF NOT EXISTS comments_reply ON comments(reply_to);
 CREATE INDEX IF NOT EXISTS comments_wallet ON comments(wallet, created_at);
 CREATE TABLE IF NOT EXISTS signed_messages (
@@ -353,11 +400,39 @@ CREATE TABLE IF NOT EXISTS uploaded_images (
 );
 `;
 
-/** Columns added after the first deployment; applied with a guarded ALTER TABLE (existing rows keep their data). */
-const COLUMN_MIGRATIONS = [{ table: "launches", column: "top_holder_pct", type: "REAL" }] as const;
+/**
+ * Schema version (`PRAGMA user_version`). 0 = the first deployment (`launches.mint` UNIQUE, comments keyed by
+ * mint, no `events.ref`); 1 = pump launches (several raising launches share the default mint, so the mint
+ * index is partial, comments are keyed by launch address and launches carry a venue).
+ */
+const SCHEMA_VERSION = 1;
 
 /**
- * Wiped on a chain reset: everything keyed by chain state, including comments (their mints are gone).
+ * v0 → v1. SQLite can't drop an inline UNIQUE, so `launches` and `comments` are rebuilt (copy, drop,
+ * rename; `SCHEMA` then re-creates their indexes). Every v0 launch is on the Holdfast curve.
+ */
+function migrateToV1(db: DatabaseSync): void {
+  const columns = (table: string) => rows<{ name: string }>(db.prepare(`PRAGMA table_info(${table})`)).map((c) => c.name);
+  const launchCols = columns("launches");
+  const topHolder = launchCols.includes("top_holder_pct") ? "top_holder_pct" : "NULL";
+  const kept = launchCols.filter((c) => c !== "top_holder_pct").join(", ");
+  db.exec(`
+    CREATE TABLE launches_v1 (${LAUNCHES_COLUMNS});
+    INSERT INTO launches_v1 (${kept}, top_holder_pct, venue) SELECT ${kept}, ${topHolder}, 'holdfast' FROM launches;
+    DROP TABLE launches;
+    ALTER TABLE launches_v1 RENAME TO launches;
+    CREATE TABLE comments_v1 (${COMMENTS_COLUMNS});
+    INSERT INTO comments_v1 (id, launch, wallet, body, reply_to, created_at, signature, message, deleted_at)
+      SELECT c.id, l.address, c.wallet, c.body, c.reply_to, c.created_at, c.signature, c.message, c.deleted_at
+      FROM comments c JOIN launches l ON l.mint = c.mint;
+    DROP TABLE comments;
+    ALTER TABLE comments_v1 RENAME TO comments;
+  `);
+  if (!columns("events").includes("ref")) db.exec("ALTER TABLE events ADD COLUMN ref TEXT");
+}
+
+/**
+ * Wiped on a chain reset: everything keyed by chain state, including comments (their launches are gone).
  * `profiles` (wallet-keyed), `signed_messages` (replay guard, pruned by age) and the Arweave upload
  * ledger (`upload_spend`, `uploaded_images`) survive.
  */
@@ -367,11 +442,12 @@ const LAUNCH_NAME = "COALESCE(l.meta_name, l.onchain_name)";
 const LAUNCH_SYMBOL = "COALESCE(l.meta_symbol, l.onchain_symbol)";
 const LAUNCH_SELECT = `
   SELECT l.*, p.name AS creator_name,
-    (SELECT COUNT(*) FROM comments c WHERE c.mint = l.mint AND c.deleted_at IS NULL) AS comment_count
+    (SELECT COUNT(*) FROM comments c WHERE c.launch = l.address AND c.deleted_at IS NULL) AS comment_count
   FROM launches l LEFT JOIN profiles p ON p.wallet = l.creator`;
 const ACTIVITY_SELECT = `
   SELECT e.signature, e.event_index, e.timestamp, e.type, COALESCE(e.actor, l.creator) AS actor, e.is_agent, e.is_buy,
-    e.sol_amount, e.token_amount, l.mint AS mint, ${LAUNCH_NAME} AS name, ${LAUNCH_SYMBOL} AS symbol, l.image AS image
+    e.sol_amount, e.token_amount, e.ref, l.address AS launch, l.venue AS venue, l.mint AS mint,
+    ${LAUNCH_NAME} AS name, ${LAUNCH_SYMBOL} AS symbol, l.image AS image
   FROM events e JOIN launches l ON l.address = e.launch`;
 const TRADE_AGG = `
   SELECT launch,
@@ -393,6 +469,16 @@ const VAULT_EVENT_AGG = `
     MAX(CASE WHEN type = 'wound_down' THEN token_amount END) AS wound_down_tokens,
     MAX(CASE WHEN type = 'wound_down' THEN signature END) AS wound_down_sig
   FROM events WHERE type IN ('profit_shared', 'vault_withdrawn', 'wound_down')`;
+const PUMP_EVENT_AGG = `
+  SELECT launch,
+    COUNT(CASE WHEN type = 'creator_fees_collected' THEN 1 END) AS fee_collections,
+    COUNT(CASE WHEN type = 'buyback_burned' THEN 1 END) AS buybacks,
+    MAX(CASE WHEN type = 'creator_fees_collected' THEN timestamp END) AS last_collected_ts,
+    MAX(CASE WHEN type = 'buyback_burned' THEN timestamp END) AS last_buyback_ts,
+    MAX(CASE WHEN type = 'graduated' THEN timestamp END) AS graduated_ts,
+    MAX(CASE WHEN type = 'graduated' THEN signature END) AS graduated_sig,
+    MAX(CASE WHEN type = 'graduated' THEN ref END) AS graduated_pool
+  FROM events WHERE type IN ('creator_fees_collected', 'buyback_burned', 'graduated')`;
 const WALLET_TRADE_AGG = `
   COUNT(*) AS trades, COALESCE(SUM(t.is_buy), 0) AS buys,
   COALESCE(SUM(CASE WHEN t.is_buy = 1 THEN t.sol END), 0) AS buy_sol,
@@ -402,10 +488,10 @@ const WALLET_TRADE_AGG = `
     AS net_tokens,
   MIN(t.timestamp) AS first_ts, MAX(t.timestamp) AS last_ts`;
 const COMMENT_SELECT = `
-  SELECT c.id, c.mint, c.wallet, c.body, c.reply_to, c.created_at, c.deleted_at,
+  SELECT c.id, c.launch, l.mint AS mint, c.wallet, c.body, c.reply_to, c.created_at, c.deleted_at,
     (SELECT COUNT(*) FROM comments r WHERE r.reply_to = c.id AND r.deleted_at IS NULL) AS reply_count,
     p.name AS author_name, p.avatar AS author_avatar
-  FROM comments c LEFT JOIN profiles p ON p.wallet = c.wallet`;
+  FROM comments c JOIN launches l ON l.address = c.launch LEFT JOIN profiles p ON p.wallet = c.wallet`;
 
 const SQL = {
   getState: "SELECT value FROM sync_state WHERE key = ?",
@@ -416,18 +502,18 @@ const SQL = {
   txSlot: "SELECT slot FROM txs WHERE signature = ?",
   insertTx: "INSERT OR IGNORE INTO txs (signature, slot, failed, event_count) VALUES (?, ?, ?, ?)",
   upsertCreated: `
-    INSERT INTO launches (address, mint, creator, idx, status, created_at, onchain_name, onchain_symbol, uri, meta_status)
-    VALUES (:address, :mint, :creator, :idx, :status, :created_at, :name, :symbol, :uri, :meta_status)
+    INSERT INTO launches (address, mint, venue, creator, idx, status, created_at, onchain_name, onchain_symbol, uri, meta_status)
+    VALUES (:address, :mint, :venue, :creator, :idx, :status, :created_at, :name, :symbol, :uri, :meta_status)
     ON CONFLICT(address) DO UPDATE SET
       creator = excluded.creator, idx = excluded.idx, created_at = excluded.created_at,
       onchain_name = excluded.onchain_name, onchain_symbol = excluded.onchain_symbol, uri = excluded.uri`,
   insertLaunch: `
-    INSERT OR IGNORE INTO launches (address, mint, creator, idx, status, created_at, onchain_name, onchain_symbol, uri, meta_status)
-    VALUES (:address, :mint, :creator, :idx, :status, :created_at, :name, :symbol, :uri, :meta_status)`,
-  setLaunched: "UPDATE launches SET launch_price = ?, launch_ts = ?, bundle_sol = ? WHERE address = ?",
+    INSERT OR IGNORE INTO launches (address, mint, venue, creator, idx, status, created_at, onchain_name, onchain_symbol, uri, meta_status)
+    VALUES (:address, :mint, :venue, :creator, :idx, :status, :created_at, :name, :symbol, :uri, :meta_status)`,
+  setLaunched: "UPDATE launches SET mint = ?, launch_price = ?, launch_ts = ?, bundle_sol = ? WHERE address = ?",
   insertEvent: `
-    INSERT OR IGNORE INTO events (signature, event_index, slot, timestamp, type, launch, actor, is_agent, is_buy, sol_amount, token_amount)
-    VALUES (:signature, :event_index, :slot, :timestamp, :type, :launch, :actor, :is_agent, :is_buy, :sol_amount, :token_amount)`,
+    INSERT OR IGNORE INTO events (signature, event_index, slot, timestamp, type, launch, actor, is_agent, is_buy, sol_amount, token_amount, ref)
+    VALUES (:signature, :event_index, :slot, :timestamp, :type, :launch, :actor, :is_agent, :is_buy, :sol_amount, :token_amount, :ref)`,
   insertTrade: `
     INSERT OR IGNORE INTO trades (signature, event_index, slot, timestamp, launch, trader, is_buy, is_agent, sol_amount,
       token_amount, fee, price_sol, ema_sol, vault_sol, vault_tokens, real_sol, token_reserve, sol)
@@ -437,12 +523,16 @@ const SQL = {
     INSERT OR IGNORE INTO deposits (signature, event_index, slot, timestamp, launch, backer, amount, raised)
     VALUES (:signature, :event_index, :slot, :timestamp, :launch, :backer, :amount, :raised)`,
   launchByAddress: `${LAUNCH_SELECT} WHERE l.address = ?`,
-  launchByMint: `${LAUNCH_SELECT} WHERE l.mint = ?`,
+  launchById: `${LAUNCH_SELECT} WHERE l.address = :id OR (l.mint = :id AND l.mint != '${DEFAULT_PUBKEY}')
+    ORDER BY l.address = :id DESC LIMIT 1`,
   allLaunches: `${LAUNCH_SELECT} WHERE l.snapshot IS NOT NULL ORDER BY l.idx DESC`,
   launchTraders: "SELECT DISTINCT trader FROM trades WHERE launch = ? AND is_agent = 0",
   metaDue: `${LAUNCH_SELECT}
     WHERE l.meta_status = 'pending' OR (l.meta_status = 'error' AND l.meta_attempts < ? AND l.meta_next_at <= ?)`,
-  setSnapshot: "UPDATE launches SET snapshot = ?, snapshot_slot = ?, status = ? WHERE address = ?",
+  setSnapshot: `
+    UPDATE launches SET snapshot = :snapshot, snapshot_slot = :slot, status = :status, mint = :mint, venue = :venue,
+      onchain_name = COALESCE(:name, onchain_name), onchain_symbol = COALESCE(:symbol, onchain_symbol), uri = COALESCE(:uri, uri)
+    WHERE address = :address`,
   setSnapshotSlot: "UPDATE launches SET snapshot_slot = ? WHERE address = ?",
   setMeta: `
     UPDATE launches SET meta_status = :status, meta_name = :name, meta_symbol = :symbol, description = :description,
@@ -455,6 +545,8 @@ const SQL = {
   tradeAggOne: `${TRADE_AGG} WHERE launch = :launch`,
   vaultEventAggAll: `${VAULT_EVENT_AGG} GROUP BY launch`,
   vaultEventAggOne: `${VAULT_EVENT_AGG} AND launch = ? GROUP BY launch`,
+  pumpEventAggAll: `${PUMP_EVENT_AGG} GROUP BY launch`,
+  pumpEventAggOne: `${PUMP_EVENT_AGG} AND launch = ? GROUP BY launch`,
   priceAt: "SELECT price_sol FROM trades WHERE launch = ? AND timestamp <= ? ORDER BY slot DESC, rowid DESC LIMIT 1",
   firstPrice: "SELECT price_sol FROM trades WHERE launch = ? ORDER BY slot ASC, rowid ASC LIMIT 1",
   trades: `
@@ -466,7 +558,7 @@ const SQL = {
   candlePoints: "SELECT timestamp, price_sol, sol FROM trades WHERE launch = ? ORDER BY slot ASC, rowid ASC",
   deposits: "SELECT * FROM deposits WHERE launch = ? AND timestamp < ? ORDER BY slot DESC, rowid DESC LIMIT ?",
   agentTrades: `
-    SELECT t.*, l.mint AS mint, ${LAUNCH_SYMBOL} AS symbol
+    SELECT t.*, l.mint AS mint, l.venue AS venue, ${LAUNCH_SYMBOL} AS symbol
     FROM trades t JOIN launches l ON l.address = t.launch
     WHERE t.is_agent = 1 ORDER BY t.slot DESC, t.rowid DESC LIMIT ?`,
   volumeSince: "SELECT COALESCE(SUM(sol), 0) AS v FROM trades WHERE timestamp >= ?",
@@ -482,16 +574,16 @@ const SQL = {
 
   // ---------------- social ----------------
   insertComment: `
-    INSERT INTO comments (mint, wallet, body, reply_to, created_at, signature, message)
-    VALUES (:mint, :wallet, :body, :reply_to, :created_at, :signature, :message)`,
+    INSERT INTO comments (launch, wallet, body, reply_to, created_at, signature, message)
+    VALUES (:launch, :wallet, :body, :reply_to, :created_at, :signature, :message)`,
   commentById: `${COMMENT_SELECT} WHERE c.id = ?`,
   comments: `${COMMENT_SELECT}
-    WHERE c.mint = :mint AND c.deleted_at IS NULL AND c.id < :before AND (:reply_to IS NULL OR c.reply_to = :reply_to)
+    WHERE c.launch = :launch AND c.deleted_at IS NULL AND c.id < :before AND (:reply_to IS NULL OR c.reply_to = :reply_to)
     ORDER BY c.id DESC LIMIT :limit`,
-  commentTotal: "SELECT COUNT(*) AS n FROM comments WHERE mint = ? AND deleted_at IS NULL",
+  commentTotal: "SELECT COUNT(*) AS n FROM comments WHERE launch = ? AND deleted_at IS NULL",
   softDeleteComment: "UPDATE comments SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
   recentDuplicate:
-    "SELECT 1 AS one FROM comments WHERE wallet = ? AND mint = ? AND body = ? AND created_at >= ? AND deleted_at IS NULL LIMIT 1",
+    "SELECT 1 AS one FROM comments WHERE wallet = ? AND launch = ? AND body = ? AND created_at >= ? AND deleted_at IS NULL LIMIT 1",
   claimMessage: "INSERT OR IGNORE INTO signed_messages (hash, ts) VALUES (?, ?)",
   pruneMessages: "DELETE FROM signed_messages WHERE ts < ?",
   isBacker: "SELECT 1 AS one FROM deposits WHERE backer = ? AND launch = ? LIMIT 1",
@@ -554,12 +646,12 @@ const SQL = {
   searchLaunches: `${LAUNCH_SELECT}
     WHERE l.snapshot IS NOT NULL AND (
       lower(${LAUNCH_NAME}) LIKE :contains ESCAPE '\\' OR lower(${LAUNCH_SYMBOL}) LIKE :contains ESCAPE '\\'
-      OR substr(l.mint, 1, :raw_len) = :raw)
+      OR substr(l.mint, 1, :raw_len) = :raw OR substr(l.address, 1, :raw_len) = :raw)
     ORDER BY
       CASE
-        WHEN lower(${LAUNCH_SYMBOL}) = :q OR lower(${LAUNCH_NAME}) = :q OR l.mint = :raw THEN 0
+        WHEN lower(${LAUNCH_SYMBOL}) = :q OR lower(${LAUNCH_NAME}) = :q OR l.mint = :raw OR l.address = :raw THEN 0
         WHEN lower(${LAUNCH_SYMBOL}) LIKE :prefix ESCAPE '\\' OR lower(${LAUNCH_NAME}) LIKE :prefix ESCAPE '\\'
-          OR substr(l.mint, 1, :raw_len) = :raw THEN 1
+          OR substr(l.mint, 1, :raw_len) = :raw OR substr(l.address, 1, :raw_len) = :raw THEN 1
         ELSE 2
       END,
       l.idx DESC
@@ -595,14 +687,21 @@ export class Store {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     this.db = new DatabaseSync(file);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;");
-    this.db.exec(SCHEMA);
-    for (const m of COLUMN_MIGRATIONS) {
-      const cols = this.db.prepare(`PRAGMA table_info(${m.table})`).all() as { name: string }[];
-      if (!cols.some((c) => c.name === m.column)) this.db.exec(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.type}`);
-    }
+    this.migrate();
     const stmts: Partial<Record<keyof typeof SQL, StatementSync>> = {};
     for (const key of Object.keys(SQL) as (keyof typeof SQL)[]) stmts[key] = this.db.prepare(SQL[key]);
     this.stmts = stmts as Record<keyof typeof SQL, StatementSync>;
+  }
+
+  /** Brings an existing file to `SCHEMA_VERSION` (one transaction), then applies the idempotent `SCHEMA`. */
+  private migrate(): void {
+    const version = row<{ user_version: number }>(this.db.prepare("PRAGMA user_version"))?.user_version ?? 0;
+    const hasLaunches = row(this.db.prepare("SELECT 1 AS one FROM sqlite_master WHERE type = 'table' AND name = 'launches'"));
+    this.tx(() => {
+      if (version < 1 && hasLaunches) migrateToV1(this.db);
+      this.db.exec(SCHEMA);
+      this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    });
   }
 
   tx<T>(fn: () => T): T {
@@ -666,8 +765,9 @@ export class Store {
     this.stmts.upsertCreated.run(l);
   }
 
-  setLaunched(address: string, price: number, ts: number, bundleSol: number): void {
-    this.stmts.setLaunched.run(price, ts, bundleSol, address);
+  /** The `launched` event: the launch price and, for pump launches, the mint pump.fun just created. */
+  setLaunched(address: string, mint: string, price: number, ts: number, bundleSol: number): void {
+    this.stmts.setLaunched.run(mint, price, ts, bundleSol, address);
   }
 
   /** Returns true when the event row was new (idempotency on signature + event index). */
@@ -689,13 +789,14 @@ export class Store {
     return row<LaunchDbRow>(this.stmts.launchByAddress, [address]);
   }
 
-  launchByMint(mint: string): LaunchDbRow | undefined {
-    return row<LaunchDbRow>(this.stmts.launchByMint, [mint]);
+  /** Launch by address or by mint (the default mint of unlaunched pump launches never matches). */
+  launchById(idOrMint: string): LaunchDbRow | undefined {
+    return row<LaunchDbRow>(this.stmts.launchById, { id: idOrMint });
   }
 
   /** Launches with an on-chain snapshot, newest first. */
-  launches(): LaunchDbRow[] {
-    return rows<LaunchDbRow>(this.stmts.allLaunches);
+  launches(): SnapshotLaunchDbRow[] {
+    return rows<SnapshotLaunchDbRow>(this.stmts.allLaunches);
   }
 
   /** Every wallet that ever traded the launch on the curve (agents excluded). */
@@ -713,8 +814,19 @@ export class Store {
     this.stmts.insertLaunch.run(l);
   }
 
-  setSnapshot(address: string, snapshot: string, slot: number, status: string): void {
-    this.stmts.setSnapshot.run(snapshot, slot, status, address);
+  /** Stores a snapshot; also syncs mint/venue and, for pump launches, the on-chain name/symbol/uri it carries. */
+  setSnapshot(s: SnapshotUpdate): void {
+    this.stmts.setSnapshot.run({
+      address: s.address,
+      snapshot: s.snapshot,
+      slot: s.slot,
+      status: s.status,
+      mint: s.mint,
+      venue: s.venue,
+      name: s.pumpMeta?.name ?? null,
+      symbol: s.pumpMeta?.symbol ?? null,
+      uri: s.pumpMeta?.uri ?? null,
+    });
   }
 
   setSnapshotSlot(address: string, slot: number): void {
@@ -762,6 +874,14 @@ export class Store {
 
   vaultEventAggregates(): Map<string, VaultEventAggDbRow> {
     return new Map(rows<VaultEventAggDbRow>(this.stmts.vaultEventAggAll).map((r) => [r.launch, r]));
+  }
+
+  pumpEventAggregates(): Map<string, PumpEventAggDbRow> {
+    return new Map(rows<PumpEventAggDbRow>(this.stmts.pumpEventAggAll).map((r) => [r.launch, r]));
+  }
+
+  pumpEventAggregate(launch: string): PumpEventAggDbRow | undefined {
+    return row<PumpEventAggDbRow>(this.stmts.pumpEventAggOne, [launch]);
   }
 
   vaultEventAggregate(launch: string): VaultEventAggDbRow | undefined {
@@ -838,12 +958,12 @@ export class Store {
   }
 
   /** Visible comments of a launch, newest first; `replyTo` narrows to the replies of one comment. */
-  comments(mint: string, beforeId: number, limit: number, replyTo: number | null): CommentDbRow[] {
-    return rows<CommentDbRow>(this.stmts.comments, { mint, before: beforeId, limit, reply_to: replyTo });
+  comments(launch: string, beforeId: number, limit: number, replyTo: number | null): CommentDbRow[] {
+    return rows<CommentDbRow>(this.stmts.comments, { launch, before: beforeId, limit, reply_to: replyTo });
   }
 
-  commentTotal(mint: string): number {
-    return row<{ n: number }>(this.stmts.commentTotal, [mint])?.n ?? 0;
+  commentTotal(launch: string): number {
+    return row<{ n: number }>(this.stmts.commentTotal, [launch])?.n ?? 0;
   }
 
   /** Soft delete; false when the comment was already deleted (or never existed). */
@@ -851,8 +971,8 @@ export class Store {
     return this.stmts.softDeleteComment.run(nowSecs, id).changes > 0;
   }
 
-  hasRecentDuplicate(wallet: string, mint: string, body: string, sinceSecs: number): boolean {
-    return row(this.stmts.recentDuplicate, [wallet, mint, body, sinceSecs]) !== undefined;
+  hasRecentDuplicate(wallet: string, launch: string, body: string, sinceSecs: number): boolean {
+    return row(this.stmts.recentDuplicate, [wallet, launch, body, sinceSecs]) !== undefined;
   }
 
   isBacker(wallet: string, launch: string): boolean {
@@ -926,8 +1046,8 @@ export class Store {
     return rows(this.stmts.walletEventTotals, [wallet]);
   }
 
-  walletLaunches(wallet: string): LaunchDbRow[] {
-    return rows<LaunchDbRow>(this.stmts.walletLaunches, [wallet]);
+  walletLaunches(wallet: string): SnapshotLaunchDbRow[] {
+    return rows<SnapshotLaunchDbRow>(this.stmts.walletLaunches, [wallet]);
   }
 
   walletFirstSeen(wallet: string): number | null {
@@ -965,15 +1085,15 @@ export class Store {
     return rows(this.stmts.depositsByBacker);
   }
 
-  /** Launches by name/symbol substring or mint prefix (`mintPrefix` null skips the mint match). */
-  searchLaunches(text: string, mintPrefix: string | null, limit: number): LaunchDbRow[] {
+  /** Launches by name/symbol substring or mint/address prefix (`keyPrefix` null skips the key match). */
+  searchLaunches(text: string, keyPrefix: string | null, limit: number): SnapshotLaunchDbRow[] {
     const like = escapeLike(text);
-    return rows<LaunchDbRow>(this.stmts.searchLaunches, {
+    return rows<SnapshotLaunchDbRow>(this.stmts.searchLaunches, {
       q: text,
       contains: `%${like}%`,
       prefix: `${like}%`,
-      raw: mintPrefix,
-      raw_len: mintPrefix?.length ?? null,
+      raw: keyPrefix,
+      raw_len: keyPrefix?.length ?? null,
       limit,
     });
   }

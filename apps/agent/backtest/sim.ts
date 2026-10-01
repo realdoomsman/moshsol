@@ -1,7 +1,7 @@
 import { BPS, bpsCeil } from "@holdfast/sdk";
 import { FlowWindow, NEUTRAL_FLOW, type FlowFeatures } from "../src/flow";
 import { evaluate, project, type Plan, type Sizing, type StrategyParams } from "../src/strategy";
-import { agentBuy, agentSell, launch, publicBuy, publicSell, publicTokens, type Chain, type LaunchSetup, type ProgramError } from "./program";
+import { agentBuy, agentSell, launch, publicBuy, publicFeeBps, publicSell, publicTokens, type Chain, type LaunchSetup, type ProgramError } from "./program";
 import { evaluateV1 } from "./v1";
 
 /**
@@ -113,7 +113,7 @@ export class Market {
       this.publicFails++;
       return 0n;
     }
-    this.book(Number(gross - bpsCeil(gross, c.terms.tradeFeeBps)), Number(res.out));
+    this.book(Number(gross - bpsCeil(gross, publicFeeBps(c))), Number(res.out));
     this.lastGross = Number(gross);
     this.record(this.lastGross, 0);
     return res.out;
@@ -141,13 +141,16 @@ export class Market {
    * Two-sided volume the history had beyond what moving the price took: booked on the launch's
    * `volume_sol` / `trade_count` as one round trip (a buy and its sell at the same price, which leaves
    * reserves, EMA and the slot bookkeeping as they are), so the agent's flow window sees the candle's
-   * volume while the price path stays exactly the path.
+   * volume while the price path stays exactly the path. A pump launch never sees public volume (it
+   * trades on pump.fun), so only the recording gets it.
    */
   churn(lamports: number): void {
     if (lamports < 1) return;
     const l = Math.floor(lamports);
-    this.chain.volumeSol += BigInt(l);
-    this.chain.tradeCount += 2;
+    if (this.chain.venue === "holdfast") {
+      this.chain.volumeSol += BigInt(l);
+      this.chain.tradeCount += 2;
+    }
     this.record(0, l);
   }
 
@@ -161,7 +164,7 @@ export class Market {
     if (d > 1e-5) {
       // x·y is constant, spot = x/y, so x scales with √(spot ratio); gross covers the fee.
       const net = x * (Math.exp(d / 2) - 1);
-      const gross = Math.floor(net / (1 - Number(c.terms.tradeFeeBps) / Number(BPS)));
+      const gross = Math.floor(net / (1 - Number(publicFeeBps(c)) / Number(BPS)));
       if (gross >= 10_000) this.buy(BigInt(gross));
     } else if (d < -1e-5) {
       const tokens = Math.floor(y * (Math.exp(-d / 2) - 1));

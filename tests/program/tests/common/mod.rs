@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod pump;
+
 use anchor_lang::error::ERROR_CODE_OFFSET;
 use anchor_lang::{system_program, AccountDeserialize, AccountSerialize, InstructionData, ToAccountMetas};
 use anchor_spl::associated_token::spl_associated_token_account::instruction::create_associated_token_account_idempotent;
@@ -46,6 +48,9 @@ pub fn test_params() -> PlatformParams {
         agents_paused: false,
         max_raise_lamports: 0,
         max_wallet_deposit_lamports: 0,
+        holdfast_curve_enabled: true,
+        burn_share_bps: DEFAULT_BURN_SHARE_BPS,
+        buyback_mint: Pubkey::default(),
     }
 }
 
@@ -258,7 +263,7 @@ impl Env {
     }
 
     pub fn send(&mut self, ixs: &[Instruction], signers: &[&Keypair]) -> TxResult {
-        let mut all = vec![ComputeBudgetInstruction::set_compute_unit_limit(400_000)];
+        let mut all = vec![ComputeBudgetInstruction::set_compute_unit_limit(1_400_000)];
         all.extend_from_slice(ixs);
         let tx = Transaction::new_signed_with_payer(
             &all,
@@ -671,6 +676,7 @@ impl Env {
                 vault_tokens: vault_pda(&launch),
                 fee_recipient: *fee_recipient,
                 recipient_tokens: *recipient_tokens,
+                token_authority: launch,
                 token_program: TOKEN_2022_ID,
             }
             .to_account_metas(None),

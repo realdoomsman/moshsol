@@ -99,13 +99,14 @@ export const api = {
     if (p.q) qs.set("q", p.q);
     return request<{ launches: LaunchSummary[]; total: number }>(INDEXER_URL, `/api/launches?${qs}`);
   },
-  launch: (mint: string) => request<LaunchSummary>(INDEXER_URL, `/api/launches/${mint}`),
+  /** `id` here and on every `/api/launches/:id/…` route below: the launch address or its mint (`launchId`). */
+  launch: (id: string) => request<LaunchSummary>(INDEXER_URL, `/api/launches/${id}`),
   /**
    * Newest first; `before` = unix seconds (exclusive). Server-side filters: `agent` = vault agent
    * trades only, `side`, `minSol` (SOL, float) and `trader` (one wallet).
    */
   trades: (
-    mint: string,
+    id: string,
     p: { limit: number; before?: number; agent?: boolean; side?: "buy" | "sell"; minSol?: number; trader?: string },
   ) => {
     const qs = new URLSearchParams({ limit: String(p.limit) });
@@ -114,50 +115,50 @@ export const api = {
     if (p.side) qs.set("side", p.side);
     if (p.minSol !== undefined && p.minSol > 0) qs.set("minSol", String(p.minSol));
     if (p.trader) qs.set("trader", p.trader);
-    return request<{ trades: TradeRow[] }>(INDEXER_URL, `/api/launches/${mint}/trades?${qs}`);
+    return request<{ trades: TradeRow[] }>(INDEXER_URL, `/api/launches/${id}/trades?${qs}`);
   },
   /** Top non-agent traders of a launch by SOL volume in the window. */
-  traders: (mint: string, window: TraderWindow, limit = 50) =>
+  traders: (id: string, window: TraderWindow, limit = 50) =>
     request<{ window: TraderWindow; traders: TraderStat[] }>(
       INDEXER_URL,
-      `/api/launches/${mint}/traders?window=${window}&limit=${limit}`,
+      `/api/launches/${id}/traders?window=${window}&limit=${limit}`,
     ),
   /** Flat thread, newest first (replies included); `before` = comment id (exclusive). */
-  comments: (mint: string, p: { limit: number; before?: number; replyTo?: number }) => {
+  comments: (id: string, p: { limit: number; before?: number; replyTo?: number }) => {
     const qs = new URLSearchParams({ limit: String(p.limit) });
     if (p.before !== undefined) qs.set("before", String(p.before));
     if (p.replyTo !== undefined) qs.set("replyTo", String(p.replyTo));
-    return request<CommentsPage>(INDEXER_URL, `/api/launches/${mint}/comments?${qs}`);
+    return request<CommentsPage>(INDEXER_URL, `/api/launches/${id}/comments?${qs}`);
   },
   /** Signed comment (see `lib/signed.ts`): `message` must hash `body` exactly as sent. */
   postComment: (
-    mint: string,
+    id: string,
     p: { wallet: string; message: string; signature: string; body: string; replyTo?: number },
   ) =>
-    request<{ comment: Comment }>(INDEXER_URL, `/api/launches/${mint}/comments`, {
+    request<{ comment: Comment }>(INDEXER_URL, `/api/launches/${id}/comments`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(p),
     }),
-  candles: (mint: string, tf: Timeframe) =>
-    request<{ candles: Candle[] }>(INDEXER_URL, `/api/launches/${mint}/candles?tf=${tf}`),
-  backers: (mint: string) => request<{ backers: BackerRow[] }>(INDEXER_URL, `/api/launches/${mint}/backers`),
+  candles: (id: string, tf: Timeframe) =>
+    request<{ candles: Candle[] }>(INDEXER_URL, `/api/launches/${id}/candles?tf=${tf}`),
+  backers: (id: string) => request<{ backers: BackerRow[] }>(INDEXER_URL, `/api/launches/${id}/backers`),
   /** Newest first; `before` = unix seconds (exclusive). */
-  deposits: (mint: string, p: { limit: number; before?: number }) => {
+  deposits: (id: string, p: { limit: number; before?: number }) => {
     const qs = new URLSearchParams({ limit: String(p.limit) });
     if (p.before !== undefined) qs.set("before", String(p.before));
-    return request<{ deposits: DepositRow[] }>(INDEXER_URL, `/api/launches/${mint}/deposits?${qs}`);
+    return request<{ deposits: DepositRow[] }>(INDEXER_URL, `/api/launches/${id}/deposits?${qs}`);
   },
-  holders: (mint: string, limit: number) =>
-    request<{ holders: HolderRow[] }>(INDEXER_URL, `/api/launches/${mint}/holders?limit=${limit}`),
+  holders: (id: string, limit: number) =>
+    request<{ holders: HolderRow[] }>(INDEXER_URL, `/api/launches/${id}/holders?limit=${limit}`),
   portfolio: (wallet: string) => request<Portfolio>(INDEXER_URL, `/api/portfolio/${wallet}`),
   activity: (limit = 40) => request<{ events: ActivityEvent[] }>(INDEXER_URL, `/api/activity?limit=${limit}`),
   /** One launch's events, newest first; `type` narrows to one event type (e.g. admin `vault_withdrawn`). */
-  launchActivity: (mint: string, p: { type?: ActivityType; limit: number; before?: number }) => {
+  launchActivity: (id: string, p: { type?: ActivityType; limit: number; before?: number }) => {
     const qs = new URLSearchParams({ limit: String(p.limit) });
     if (p.type) qs.set("type", p.type);
     if (p.before !== undefined) qs.set("before", String(p.before));
-    return request<{ events: ActivityEvent[] }>(INDEXER_URL, `/api/launches/${mint}/activity?${qs}`);
+    return request<{ events: ActivityEvent[] }>(INDEXER_URL, `/api/launches/${id}/activity?${qs}`);
   },
   agents: () => request<AgentsOverview>(INDEXER_URL, "/api/agents"),
   agentStatus: () => request<AgentStatus>(AGENT_URL, "/status"),

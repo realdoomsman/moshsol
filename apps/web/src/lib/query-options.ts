@@ -18,27 +18,28 @@ export const launchesQuery = (p: { status: LaunchFilter; sort: LaunchSort; q?: s
     queryFn: () => api.launches({ ...p, limit: 200 }),
   });
 
-export const launchQuery = (mint: string) => queryOptions({ queryKey: ["launch", mint], queryFn: () => api.launch(mint) });
+/** `id` on every per-launch query below: `launchId(l)` (address on pump launches, mint on Holdfast launches); the API accepts either. */
+export const launchQuery = (id: string) => queryOptions({ queryKey: ["launch", id], queryFn: () => api.launch(id) });
 
-export const recentTradesQuery = (mint: string, limit: number) =>
-  queryOptions({ queryKey: ["trades", mint, "recent", limit], queryFn: () => api.trades(mint, { limit }) });
+export const recentTradesQuery = (id: string, limit: number) =>
+  queryOptions({ queryKey: ["trades", id, "recent", limit], queryFn: () => api.trades(id, { limit }) });
 
-export const candlesQuery = (mint: string, tf: Timeframe) =>
-  queryOptions({ queryKey: ["candles", mint, tf], queryFn: () => api.candles(mint, tf) });
+export const candlesQuery = (id: string, tf: Timeframe) =>
+  queryOptions({ queryKey: ["candles", id, tf], queryFn: () => api.candles(id, tf) });
 
-export const backersQuery = (mint: string) => queryOptions({ queryKey: ["backers", mint], queryFn: () => api.backers(mint) });
+export const backersQuery = (id: string) => queryOptions({ queryKey: ["backers", id], queryFn: () => api.backers(id) });
 
-export const holdersQuery = (mint: string, limit: number) =>
-  queryOptions({ queryKey: ["holders", mint, limit], queryFn: () => api.holders(mint, limit) });
+export const holdersQuery = (id: string, limit: number) =>
+  queryOptions({ queryKey: ["holders", id, limit], queryFn: () => api.holders(id, limit) });
 
-export const tradersQuery = (mint: string, window: TraderWindow) =>
-  queryOptions({ queryKey: ["traders", mint, window], queryFn: () => api.traders(mint, window) });
+export const tradersQuery = (id: string, window: TraderWindow) =>
+  queryOptions({ queryKey: ["traders", id, window], queryFn: () => api.traders(id, window) });
 
 export const COMMENTS_PAGE = 50;
 
-/** Newest page of a launch's thread; the `comment` websocket message patches it in place. */
-export const commentsQuery = (mint: string) =>
-  queryOptions({ queryKey: ["comments", mint, "head"], queryFn: () => api.comments(mint, { limit: COMMENTS_PAGE }) });
+/** Newest page of a launch's thread, keyed by the launch ADDRESS (what the `comment` websocket message carries). */
+export const commentsQuery = (address: string) =>
+  queryOptions({ queryKey: ["comments", address, "head"], queryFn: () => api.comments(address, { limit: COMMENTS_PAGE }) });
 
 export const portfolioQuery = (wallet: string) =>
   queryOptions({ queryKey: ["portfolio", wallet], queryFn: () => api.portfolio(wallet) });
@@ -46,10 +47,10 @@ export const portfolioQuery = (wallet: string) =>
 export const activityQuery = () => queryOptions({ queryKey: ["activity"], queryFn: () => api.activity(40) });
 
 /** Admin `admin_withdraw_vault` withdrawals of one launch, newest first. */
-export const vaultWithdrawalsQuery = (mint: string) =>
+export const vaultWithdrawalsQuery = (id: string) =>
   queryOptions({
-    queryKey: ["launch-activity", mint, "vault_withdrawn"],
-    queryFn: () => api.launchActivity(mint, { type: "vault_withdrawn", limit: 100 }),
+    queryKey: ["launch-activity", id, "vault_withdrawn"],
+    queryFn: () => api.launchActivity(id, { type: "vault_withdrawn", limit: 100 }),
   });
 
 export const agentsQuery = () => queryOptions({ queryKey: ["agents"], queryFn: api.agents });
@@ -84,15 +85,15 @@ export interface TradeFilter {
   traders?: readonly string[];
 }
 
-export const tradeFeed = (mint: string, f: TradeFilter = {}): Feed<TradeRow> => {
+export const tradeFeed = (id: string, f: TradeFilter = {}): Feed<TradeRow> => {
   const traders = f.traders ?? null;
   const base = { limit: FEED_PAGE, agent: f.agent, side: f.side, minSol: f.minSol };
   return {
-    queryKey: ["trades", mint, "feed", f.agent ? "agent" : "all", f.side ?? "any", f.minSol ?? 0, traders?.join(",") ?? "*"],
+    queryKey: ["trades", id, "feed", f.agent ? "agent" : "all", f.side ?? "any", f.minSol ?? 0, traders?.join(",") ?? "*"],
     fetchPage: async (before) => {
-      if (!traders) return (await api.trades(mint, { ...base, before })).trades;
+      if (!traders) return (await api.trades(id, { ...base, before })).trades;
       if (traders.length === 0) return [];
-      const pages = await Promise.all(traders.map(async (trader) => (await api.trades(mint, { ...base, before, trader })).trades));
+      const pages = await Promise.all(traders.map(async (trader) => (await api.trades(id, { ...base, before, trader })).trades));
       return pages
         .flat()
         .sort((a, b) => b.timestamp - a.timestamp || b.slot - a.slot)
@@ -101,9 +102,9 @@ export const tradeFeed = (mint: string, f: TradeFilter = {}): Feed<TradeRow> => 
   };
 };
 
-export const depositFeed = (mint: string): Feed<DepositRow> => ({
-  queryKey: ["deposits", mint],
-  fetchPage: async (before) => (await api.deposits(mint, { limit: FEED_PAGE, before })).deposits,
+export const depositFeed = (id: string): Feed<DepositRow> => ({
+  queryKey: ["deposits", id],
+  fetchPage: async (before) => (await api.deposits(id, { limit: FEED_PAGE, before })).deposits,
 });
 
 /** The live head page of a feed (older pages are local state, fetched on demand). */

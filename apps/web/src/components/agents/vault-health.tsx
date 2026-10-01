@@ -5,6 +5,7 @@ import { Search } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { fmtLamports, fmtTokens } from "@/lib/format";
+import { launchHref } from "@/lib/launch";
 import { BandMeter } from "../token/band-meter";
 import { StatusDot } from "../ui/chip";
 import { cn } from "../ui/cn";
@@ -107,7 +108,7 @@ export function VaultHealthList({ rows, now, loading }: { rows: VaultHealth[]; n
               {shown.map((h) => (
                 <li key={h.row.mint} className="grid gap-3 border-b border-line px-4 py-4 last:border-b-0">
                   <div className="flex items-start justify-between gap-3">
-                    <Link href={`/launch/${h.row.mint}`} className="flex min-w-0 items-center gap-3">
+                    <Link href={launchHref(h.row)} className="flex min-w-0 items-center gap-3">
                       <TokenAvatar src={h.row.image} symbol={h.row.symbol} mint={h.row.mint} size={36} />
                       <span className="min-w-0">
                         <span className="ui block truncate text-ink">{h.row.name}</span>
@@ -154,7 +155,7 @@ export function VaultHealthList({ rows, now, loading }: { rows: VaultHealth[]; n
                 {shown.map((h) => (
                   <TR key={h.row.mint}>
                     <TD>
-                      <Link href={`/launch/${h.row.mint}`} className="group flex items-center gap-3">
+                      <Link href={launchHref(h.row)} className="group flex items-center gap-3">
                         <TokenAvatar src={h.row.image} symbol={h.row.symbol} mint={h.row.mint} size={32} />
                         <span>
                           <span className="ui block text-ink group-hover:underline group-hover:decoration-ink-3/60 group-hover:underline-offset-2">

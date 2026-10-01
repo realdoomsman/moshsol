@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { SITE_URL } from "@/lib/env";
 import { fmtLamports } from "@/lib/format";
+import { launchHref } from "@/lib/launch";
 import { useMounted } from "@/lib/hooks";
 import { useLaunch } from "@/lib/queries";
 import { ClampLock } from "../brand/clamp-lock-animation";
@@ -22,16 +23,16 @@ const AFTER_CLAMP = "animate-pop-in [animation-delay:720ms] [animation-fill-mode
 /**
  * Success screen (§4.6): the clamp animation, "Your raise is open.", the share card (the launch's
  * OG image), Copy link, Share on X and View launch. Everything shown is read back from the
- * indexer for `mint`; `signature` is the create transaction.
+ * indexer for `id` (the launch address of a pump launch, the mint of a Holdfast launch); `signature` is the create transaction.
  */
-export function CreateSuccess({ mint, signature }: { mint: string; signature: string | null }) {
+export function CreateSuccess({ id, signature }: { id: string; signature: string | null }) {
   const mounted = useMounted();
   const { publicKey } = useWallet();
-  const launch = useLaunch(mint);
+  const launch = useLaunch(id);
   const [copied, setCopied] = useState(false);
   const [cardFailed, setCardFailed] = useState(false);
   const l = launch.data;
-  const url = `${SITE_URL}/launch/${mint}`;
+  const url = `${SITE_URL}${l ? launchHref(l) : `/launch/${id}`}`;
   const mine = mounted && !!l && publicKey?.toBase58() === l.creator;
   const tweet = !l
     ? ""
@@ -65,7 +66,7 @@ export function CreateSuccess({ mint, signature }: { mint: string; signature: st
   return (
     <div className="mx-auto grid w-full max-w-[640px] gap-8 pt-4 pb-8 md:pt-10">
       <header className="grid justify-items-center gap-4 text-center">
-        <ClampLock playKey={mint} size={64} className="text-ink" title="Bundle vault" />
+        <ClampLock playKey={id} size={64} className="text-ink" title="Bundle vault" />
         <div className={`grid gap-2 ${AFTER_CLAMP}`}>
           <h1 className="display-m text-ink">{headline}</h1>
           <p className="body text-ink-2">{subline}</p>
@@ -82,7 +83,7 @@ export function CreateSuccess({ mint, signature }: { mint: string; signature: st
         {l && !cardFailed ? (
           // The launch's own share card (its OG image), exactly what X and Telegram will show.
           <img
-            src={`/create/card/${mint}`}
+            src={`/create/card/${id}`}
             alt={`Share card for ${l.name} ($${l.symbol})`}
             width={1200}
             height={630}
@@ -111,7 +112,7 @@ export function CreateSuccess({ mint, signature }: { mint: string; signature: st
           >
             Share on X
           </ButtonAnchor>
-          <ButtonLink href={`/launch/${mint}`} variant="primary" arrow className="sm:ml-auto">
+          <ButtonLink href={l ? launchHref(l) : `/launch/${id}`} variant="primary" arrow className="sm:ml-auto">
             View launch
           </ButtonLink>
         </div>
@@ -141,9 +142,9 @@ export function CreateSuccess({ mint, signature }: { mint: string; signature: st
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
-                <dt className="text-ink-2">Mint</dt>
+                <dt className="text-ink-2">{l.venue === "pump" ? "Launch" : "Mint"}</dt>
                 <dd className="min-w-0">
-                  <Address address={l.mint} />
+                  <Address address={l.venue === "pump" ? l.address : l.mint} />
                 </dd>
               </div>
               {signature ? (

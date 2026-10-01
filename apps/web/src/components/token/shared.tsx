@@ -5,6 +5,7 @@ import { ArrowUpRight } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { explorerTx } from "@/lib/explorer";
 import { useMounted } from "@/lib/hooks";
+import { launchId } from "@/lib/launch";
 import { useBackers } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { cn } from "../ui/cn";
@@ -125,7 +126,7 @@ export interface LaunchRoles {
 
 /** Who is who on this launch (role chips on makers, holders and comment authors). */
 export function useLaunchRoles(l: LaunchSummary): LaunchRoles {
-  const backers = useBackers(l.mint);
+  const backers = useBackers(launchId(l));
   return useMemo(() => {
     const rows = backers.data?.backers ?? [];
     return {

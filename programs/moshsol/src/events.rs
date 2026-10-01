@@ -98,13 +98,15 @@ pub struct PlatformFeesSwept {
     pub timestamp: i64,
 }
 
-/// Realized profit of an agent sell (fill minus the average cost of the tokens sold), credited
-/// in full to backers through the fee accumulator.
+/// Realized profit of an agent sell (fill minus the average cost of the tokens sold). Holdfast
+/// launches credit it in full to backers; pump launches send `burn_share` of it to the
+/// buyback pool and the rest to backers.
 #[event]
 pub struct VaultProfitShared {
     pub launch: Pubkey,
     pub mint: Pubkey,
     pub amount: u64,
+    pub to_buyback_pool: u64,
     pub timestamp: i64,
 }
 
@@ -129,5 +131,43 @@ pub struct VaultWithdrawn {
     pub recipient: Pubkey,
     /// Token account (owned by `recipient`) that received the tokens.
     pub recipient_tokens: Pubkey,
+    pub timestamp: i64,
+}
+
+/// pump.fun / PumpSwap creator fees swept into the launch and split between the buyback pool
+/// and vault SOL (or backers once the launch is wound down).
+#[event]
+pub struct CreatorFeesCollected {
+    pub launch: Pubkey,
+    pub mint: Pubkey,
+    pub amount: u64,
+    pub to_buyback_pool: u64,
+    pub to_vault: u64,
+    pub to_backers: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct BuybackBurned {
+    pub launch: Pubkey,
+    pub buyback_mint: Pubkey,
+    pub sol: u64,
+    pub tokens: u64,
+    pub buyback_pool_sol: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct PumpGraduated {
+    pub launch: Pubkey,
+    pub mint: Pubkey,
+    pub pool: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct LaunchMigrated {
+    pub launch: Pubkey,
+    pub mint: Pubkey,
     pub timestamp: i64,
 }

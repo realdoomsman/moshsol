@@ -1,6 +1,6 @@
 "use client";
 
-import { LIMITS } from "@holdfast/sdk";
+import { LIMITS, PUMP_VENUE_FEE_BPS, pumpTermsOf } from "@holdfast/sdk";
 import type { PublicKey } from "@solana/web3.js";
 import { ChevronDown, Upload } from "lucide-react";
 import { useId, useRef, useState, type ReactNode } from "react";
@@ -432,8 +432,19 @@ export function StepVault({
             <strong className="num font-semibold">
               {range.atMin.marketCapAfter.toFixed(1)}–{range.atMax.marketCapAfter.toFixed(1)} SOL
             </strong>
-            . Backers earn <strong className="num font-semibold">{params.backerFeeShareBps / 100}%</strong> of every trade
-            fee and 100% of the vault agent&rsquo;s realized profit.
+            .{" "}
+            {params.holdfastCurveEnabled ? (
+              <>
+                Backers earn <strong className="num font-semibold">{params.backerFeeShareBps / 100}%</strong> of every trade fee and 100%
+                of the vault agent&rsquo;s realized profit.
+              </>
+            ) : (
+              <>
+                The token is created on pump.fun at launch; backers earn{" "}
+                <strong className="num font-semibold">{100 - params.burnShareBps / 100}%</strong> of the vault agent&rsquo;s realized
+                profit, the rest buys and burns the Holdfast token.
+              </>
+            )}
           </p>
           <div className="grid gap-3">
             <SupplyBar label={`At min · ${fmtLamports(range.lo)} SOL`} supplyPct={range.atMin.supplyPct} />
@@ -587,6 +598,8 @@ export function StepReview({
   const links = [draft.twitter, draft.telegram, draft.website].filter((l) => l.trim());
   const errorFields = Object.keys(v.errors) as DraftField[];
   const platformShare = params ? 10_000 - params.backerFeeShareBps - params.creatorFeeShareBps : null;
+  // What `create_launch_pump` freezes: no trade-fee split, creator share 0, the burn share.
+  const terms = params ? (params.holdfastCurveEnabled ? params : pumpTermsOf(params)) : null;
   const mins = (s: number) => (s % 3_600 === 0 ? `${s / 3_600} h` : s % 60 === 0 ? `${s / 60} min` : `${s} s`);
 
   return (
@@ -630,11 +643,26 @@ export function StepReview({
             <p className="small text-ink-2">These are copied into your launch and can never change.</p>
           </div>
           <dl className="small grid gap-2 rounded-md border border-line p-4">
-            <Row label="Trade fee">{params.tradeFeeBps / 100}% of every public trade</Row>
-            <Row label="Fee split">
-              {params.backerFeeShareBps / 100}% backers · {params.creatorFeeShareBps / 100}% you ·{" "}
-              {platformShare !== null ? platformShare / 100 : "—"}% platform
-            </Row>
+            {params.holdfastCurveEnabled ? (
+              <>
+                <Row label="Trade fee">{params.tradeFeeBps / 100}% of every public trade</Row>
+                <Row label="Fee split">
+                  {params.backerFeeShareBps / 100}% backers · {params.creatorFeeShareBps / 100}% you ·{" "}
+                  {platformShare !== null ? platformShare / 100 : "—"}% platform
+                </Row>
+              </>
+            ) : (
+              <>
+                <Row label="Venue">pump.fun token · trades happen on pump.fun ({PUMP_VENUE_FEE_BPS / 100}% venue fee), 0% trade fee on Holdfast</Row>
+                <Row label="pump.fun creator fees">
+                  {terms!.burnShareBps / 100}% buyback &amp; burn · {100 - terms!.burnShareBps / 100}% vault
+                </Row>
+                <Row label="Agent profit">
+                  {terms!.burnShareBps / 100}% buyback &amp; burn · {100 - terms!.burnShareBps / 100}% backers
+                </Row>
+                <Row label="Creator share">0% — you earn through the vault like every backer</Row>
+              </>
+            )}
             <Row label="Launch fee">{params.launchFeeBps / 100}% of the raise</Row>
             <Row label={<RuleTooltip rule="The EMA is the slow reference price the agent's band is measured from.">Agent band</RuleTooltip>}>
               buys ≥ {params.agentBandBps / 100}% under EMA · sells ≥ {params.agentBandBps / 100}% over

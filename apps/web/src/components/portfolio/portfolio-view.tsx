@@ -1,6 +1,6 @@
 "use client";
 
-import { lamportsToSol } from "@holdfast/sdk";
+import { lamportsToSol, seedKeyOf } from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey, type TransactionInstruction } from "@solana/web3.js";
@@ -9,6 +9,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useMoshClient, useSolBalance } from "@/lib/chain";
 import { fmtLamports, fmtSolValue } from "@/lib/format";
 import { useMounted, useNow } from "@/lib/hooks";
+import { launchId } from "@/lib/launch";
 import { usePortfolio } from "@/lib/queries";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import type { PortfolioBacked, PortfolioCreated } from "@/lib/types";
@@ -148,7 +149,7 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
   }, [data]);
   const refunded = (activity.data?.events ?? []).filter((e) => e.type === "refund");
 
-  const invalidate = (mint?: string) => [["backer", ...(mint ? [mint] : [])], ["portfolio", wallet], ["user", wallet]];
+  const invalidate = (id?: string) => [["backer", ...(id ? [id] : [])], ["portfolio", wallet], ["user", wallet]];
 
   const actions: PositionActions = {
     own,
@@ -158,30 +159,30 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
       void tx.run({
         label: claimBackerLabel(b.launch),
         successMessage: `Claimed ${fmtLamports(b.claimable)} SOL`,
-        build: async (payer) => [await client.claimBackerFeesIx(payer, new PublicKey(b.launch.mint))],
-        invalidate: invalidate(b.launch.mint),
+        build: async (payer) => [await client.claimBackerFeesIx(payer, seedKeyOf(b.launch))],
+        invalidate: invalidate(launchId(b.launch)),
       }),
     claimCreator: (c: PortfolioCreated) =>
       void tx.run({
         label: claimCreatorLabel(c.launch),
         successMessage: `Claimed ${fmtLamports(c.creatorFeesUnclaimed)} SOL`,
-        build: async (payer) => [await client.claimCreatorFeesIx(payer, new PublicKey(c.launch.mint))],
+        build: async (payer) => [await client.claimCreatorFeesIx(payer, seedKeyOf(c.launch))],
         invalidate: invalidate(),
       }),
     refund: (b: PortfolioBacked) =>
       void tx.run({
         label: refundLabel(b.launch),
         successMessage: `Refunded ${fmtLamports(b.deposited)} SOL`,
-        build: async (payer) => [await client.refundIx(payer, new PublicKey(b.launch.mint))],
-        invalidate: invalidate(b.launch.mint),
+        build: async (payer) => [await client.refundIx(payer, seedKeyOf(b.launch))],
+        invalidate: invalidate(launchId(b.launch)),
       }),
   };
 
   const claimAll = async () => {
     if (!split) return;
     const jobs: ((payer: PublicKey) => Promise<TransactionInstruction>)[] = [
-      ...split.claimableBacker.map((b) => (payer: PublicKey) => client.claimBackerFeesIx(payer, new PublicKey(b.launch.mint))),
-      ...split.claimableCreator.map((c) => (payer: PublicKey) => client.claimCreatorFeesIx(payer, new PublicKey(c.launch.mint))),
+      ...split.claimableBacker.map((b) => (payer: PublicKey) => client.claimBackerFeesIx(payer, seedKeyOf(b.launch))),
+      ...split.claimableCreator.map((c) => (payer: PublicKey) => client.claimCreatorFeesIx(payer, seedKeyOf(c.launch))),
     ];
     const batches = Math.ceil(jobs.length / CLAIMS_PER_TX);
     const total = split.totalClaimable;

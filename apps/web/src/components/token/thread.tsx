@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { MessageSquare } from "lucide-react";
 import { Fragment, useCallback, useId, useMemo, useState, type ReactNode } from "react";
 import { api, ApiError } from "@/lib/api";
+import { launchId } from "@/lib/launch";
 import { useFallbackInterval } from "@/lib/live";
 import { COMMENTS_PAGE, commentsQuery } from "@/lib/query-options";
 import { signedMessage } from "@/lib/signed";
@@ -60,19 +61,19 @@ function insertComment(old: CommentsPage | undefined, c: Comment): CommentsPage 
 }
 
 interface Older {
-  mint: string;
+  launch: string;
   comments: Comment[];
   exhausted: boolean;
 }
 
-/** The thread: live head page (patched by the websocket) plus older pages by comment-id cursor. */
-function useThread(mint: string) {
+/** The thread: live head page (patched by the websocket) plus older pages by comment-id cursor. `launch` is the launch ADDRESS (what threads are keyed by). */
+function useThread(launch: string) {
   const interval = useFallbackInterval(15_000);
-  const head = useQuery({ ...commentsQuery(mint), refetchInterval: interval });
-  const [older, setOlder] = useState<Older>({ mint, comments: [], exhausted: false });
+  const head = useQuery({ ...commentsQuery(launch), refetchInterval: interval });
+  const [older, setOlder] = useState<Older>({ launch, comments: [], exhausted: false });
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const mine = older.mint === mint ? older : { mint, comments: [] as Comment[], exhausted: false };
+  const mine = older.launch === launch ? older : { launch, comments: [] as Comment[], exhausted: false };
 
   const comments = useMemo(() => {
     const seen = new Set<number>();
@@ -93,17 +94,17 @@ function useThread(mint: string) {
     setLoadingMore(true);
     setLoadError(null);
     void api
-      .comments(mint, { limit: COMMENTS_PAGE, before: cursor })
+      .comments(launch, { limit: COMMENTS_PAGE, before: cursor })
       .then((page) =>
         setOlder((cur) => ({
-          mint,
-          comments: [...(cur.mint === mint ? cur.comments : []), ...page.comments],
+          launch,
+          comments: [...(cur.launch === launch ? cur.comments : []), ...page.comments],
           exhausted: page.nextBefore === null,
         })),
       )
       .catch((e: unknown) => setLoadError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoadingMore(false));
-  }, [cursor, loadingMore, mint]);
+  }, [cursor, loadingMore, launch]);
 
   return { head, comments, hasMore, loadMore, loadingMore, loadError };
 }
@@ -152,17 +153,17 @@ function Composer({
     setError(null);
     setState("signing");
     try {
-      const signed = await signedMessage("comment", l.mint, text, signMessage);
+      const signed = await signedMessage("comment", l.address, text, signMessage);
       setState("posting");
-      const { comment } = await api.postComment(l.mint, {
+      const { comment } = await api.postComment(l.address, {
         wallet: publicKey.toBase58(),
         ...signed,
         body: text,
         ...(replyTo !== undefined ? { replyTo } : {}),
       });
-      qc.setQueryData<CommentsPage>(["comments", l.mint, "head"], (old) => insertComment(old, comment));
-      if (replyTo !== undefined) void qc.invalidateQueries({ queryKey: ["comments", l.mint, "replies"] });
-      void qc.invalidateQueries({ queryKey: ["launch", l.mint], exact: true });
+      qc.setQueryData<CommentsPage>(["comments", l.address, "head"], (old) => insertComment(old, comment));
+      if (replyTo !== undefined) void qc.invalidateQueries({ queryKey: ["comments", l.address, "replies"] });
+      void qc.invalidateQueries({ queryKey: ["launch", launchId(l)], exact: true });
       setBody("");
       onPosted?.();
     } catch (e) {
@@ -268,15 +269,15 @@ function CommentItem({
 export function Thread({ launch: l, roles, now }: { launch: LaunchSummary; roles: LaunchRoles; now: number }) {
   const { publicKey } = useWallet();
   const { setVisible } = useWalletModal();
-  const t = useThread(l.mint);
+  const t = useThread(l.address);
   const [replying, setReplying] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
   const fresh = useFreshKeys(t.head.data?.comments.map((c) => String(c.id)));
 
   const expandedReplies = useQuery({
-    queryKey: ["comments", l.mint, "replies", "expanded", [...expanded].sort().join(",")],
+    queryKey: ["comments", l.address, "replies", "expanded", [...expanded].sort().join(",")],
     enabled: expanded.size > 0,
-    queryFn: async () => (await Promise.all([...expanded].map((id) => api.comments(l.mint, { limit: 200, replyTo: id })))).flatMap((p) => p.comments),
+    queryFn: async () => (await Promise.all([...expanded].map((id) => api.comments(l.address, { limit: 200, replyTo: id })))).flatMap((p) => p.comments),
   });
 
   const { roots, replies } = useMemo(() => {

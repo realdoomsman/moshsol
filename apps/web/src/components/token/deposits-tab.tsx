@@ -1,6 +1,7 @@
 "use client";
 
 import { fmtLamports } from "@/lib/format";
+import { launchId } from "@/lib/launch";
 import { useDepositFeed } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { RoleChip } from "../ui/chip";
@@ -12,7 +13,7 @@ import { LoadingRows } from "./trades-tab";
 
 /** Deposits into the raise, newest first, live (row wash on arrival) with infinite scroll. */
 export function DepositsTab({ launch: l, now }: { launch: LaunchSummary; now: number }) {
-  const feed = useDepositFeed(l.mint);
+  const feed = useDepositFeed(launchId(l));
   const fresh = useFreshKeys(feed.headKeys);
   const cols = 5;
   return (

@@ -29,6 +29,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Timeframe } from "@/lib/api";
 import { fmtSolValue } from "@/lib/format";
 import { useLocalStorage, useMounted, useNow } from "@/lib/hooks";
+import { launchId } from "@/lib/launch";
 import { useCandles, useTrades } from "@/lib/queries";
 import type { Candle, LaunchSummary } from "@/lib/types";
 import { AgentGlyph } from "../brand/glyphs";
@@ -373,11 +374,12 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
   const [unit, setUnit] = useLocalStorage<Unit>("holdfast:chart-unit", "price");
   const [typeChoice, setTypeChoice] = useLocalStorage<ChartType>("holdfast:chart-type", "auto");
   const [overlays, setOverlays] = useLocalStorage<Overlays>("holdfast:chart-overlays", { band: true, agent: true, cost: true });
-  const minute = useCandles(l.mint, 60);
+  const id = launchId(l);
+  const minute = useCandles(id, 60);
   const autoTf = useMemo(() => autoTimeframe(minute.data?.candles), [minute.data]);
   const tf = TIMEFRAMES.find((t) => t.value === tfChoice)?.tf ?? autoTf;
-  const candles = useCandles(l.mint, tf);
-  const trades = useTrades(l.mint, CHART_TRADES);
+  const candles = useCandles(id, tf);
+  const trades = useTrades(id, CHART_TRADES);
   const now = useNow(30_000);
   const mounted = useMounted();
   const panel = useRef<HTMLElement>(null);
@@ -599,7 +601,7 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
 
     const count = line ? series.line.length : series.candles.length;
     // Sparse views re-fit as points arrive; dense ones fit once so a user's zoom isn't reset.
-    const key = `${l.mint}:${tf}:${unit}:${type}:${count >= SPARSE_BARS ? "dense" : count}`;
+    const key = `${id}:${tf}:${unit}:${type}:${count >= SPARSE_BARS ? "dense" : count}`;
     if (fitted.current === key || count === 0) return;
     fitted.current = key;
     const fit = () => {
@@ -629,7 +631,7 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
     refit.current = count >= SPARSE_BARS ? null : fit;
     // Wait a frame so autoSize has measured the container before fitting.
     requestAnimationFrame(fit);
-  }, [series, tf, unit, type, l.mint, ready, overlays.band, overlays.agent, band]);
+  }, [series, tf, unit, type, id, ready, overlays.band, overlays.agent, band]);
 
   useEffect(() => {
     const el = host.current;

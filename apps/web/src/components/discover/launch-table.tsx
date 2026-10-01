@@ -8,13 +8,14 @@ import { Sparkline } from "@/components/ui/sparkline";
 import { Table, TD, TH, THead, TR } from "@/components/ui/table";
 import { TokenAvatar } from "@/components/ui/token-avatar";
 import { fmtSolValue } from "@/lib/format";
+import { launchHref, launchId } from "@/lib/launch";
 import type { LaunchSummary } from "@/lib/types";
 import { Change, useDaySpark } from "./launch-card";
 import type { Flash } from "./live";
 import { chipStatus, vaultOf, type Sort, type SortKey } from "./model";
 
 function Spark({ l, now }: { l: LaunchSummary; now: number }) {
-  const values = useDaySpark(l.mint, l.status === "live", now);
+  const values = useDaySpark(launchId(l), l.status === "live", now);
   return values ? <Sparkline values={values} className="h-6 w-20" /> : <Sparkline values={[]} />;
 }
 
@@ -70,13 +71,13 @@ export function LaunchTable({
             const live = l.status === "live";
             return (
               <TR
-                key={`${l.mint}:${flash?.n ?? 0}`}
+                key={`${launchId(l)}:${flash?.n ?? 0}`}
                 flash={flash?.dir}
-                onClick={() => router.push(`/launch/${l.mint}`)}
+                onClick={() => router.push(launchHref(l))}
               >
                 <TD className="text-ink-3">{i + 1}</TD>
                 <TD>
-                  <Link href={`/launch/${l.mint}`} className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+                  <Link href={launchHref(l)} className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
                     <TokenAvatar src={l.image} symbol={l.symbol} mint={l.mint} size={32} />
                     <span className="min-w-0">
                       <span className="block max-w-48 truncate text-ink">{l.name}</span>

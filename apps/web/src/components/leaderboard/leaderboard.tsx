@@ -18,6 +18,7 @@ import { cn } from "@/components/ui/cn";
 import { WalletLink } from "@/components/wallet-peek/wallet-peek";
 import { fmtSolColumn, fmtSolValue } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
+import { launchHref } from "@/lib/launch";
 import { useFallbackInterval } from "@/lib/live";
 import { useLaunches, usePlatform, useStats } from "@/lib/queries";
 import { clearsHeadline } from "@/lib/thresholds";
@@ -67,14 +68,14 @@ function walletCell(e: { wallet: string; name: string | null; avatar: string | n
   return <WalletLink wallet={e.wallet} name={e.name} avatar={e.avatar} size={24} />;
 }
 
-function launchesBoard(byMint: Map<string, LaunchSummary>): Board<LaunchEntry> {
+function launchesBoard(byAddress: Map<string, LaunchSummary>): Board<LaunchEntry> {
   return {
     empty: "No launch traded",
     columns: [
       {
         label: "Launch",
         cell: (e) => (
-          <Link href={`/launch/${e.mint}`} className="flex min-w-0 items-center gap-2.5 hover:text-ink">
+          <Link href={launchHref(e)} className="flex min-w-0 items-center gap-2.5 hover:text-ink">
             <TokenAvatar src={e.image} symbol={e.symbol} mint={e.mint} size={24} />
             <span className="max-w-44 truncate text-ink">{e.name}</span>
             <span className="text-ink-3">${e.symbol}</span>
@@ -88,7 +89,7 @@ function launchesBoard(byMint: Map<string, LaunchSummary>): Board<LaunchEntry> {
         label: "Backer fees paid",
         align: "right",
         cell: (e) => {
-          const l = byMint.get(e.mint);
+          const l = byAddress.get(e.address);
           return l ? sol(lamportsToSol(l.backerFeesAccrued)) : <span className="text-ink-3">—</span>;
         },
       },
@@ -96,7 +97,7 @@ function launchesBoard(byMint: Map<string, LaunchSummary>): Board<LaunchEntry> {
         label: "Vault value",
         align: "right",
         cell: (e) => {
-          const l = byMint.get(e.mint);
+          const l = byAddress.get(e.address);
           return l ? sol(vaultOf(l).valueSol) : <span className="text-ink-3">—</span>;
         },
       },
@@ -325,8 +326,8 @@ export function Leaderboard({ initialKind, initialWindow }: { initialKind: Leade
   } else if (kind === "traders") {
     table = <BoardTable board={tradersBoard(now)} entries={data?.entries as TraderEntry[] | undefined} {...common} />;
   } else {
-    const byMint = new Map((launches.data?.launches ?? []).map((l) => [l.mint, l]));
-    table = <BoardTable board={launchesBoard(byMint)} entries={data?.entries as LaunchEntry[] | undefined} {...common} />;
+    const byAddress = new Map((launches.data?.launches ?? []).map((l) => [l.address, l]));
+    table = <BoardTable board={launchesBoard(byAddress)} entries={data?.entries as LaunchEntry[] | undefined} {...common} />;
   }
 
   return (

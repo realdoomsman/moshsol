@@ -8,10 +8,13 @@
  *
  * Optional overrides: MIN_RAISE_SOL (default 1), CREATE_FEE_SOL (default 0.02), and the beta caps
  * MAX_RAISE_SOL (largest raise_max a new launch may set) and MAX_WALLET_SOL (most one wallet may
- * deposit into any raise); both default to 0 = no cap.
+ * deposit into any raise); both default to 0 = no cap. HOLDFAST_CURVE=0/1 decides whether
+ * `create_launch` (the in-program curve) stays open — off with PROFILE=production, where new
+ * launches are pump.fun tokens — and BUYBACK_MINT sets the token `buyback_burn` buys and burns
+ * (unset by default: push it with `--update` once the Holdfast token exists).
  * On non-local clusters the admin keypair must already be funded (no airdrops).
  */
-import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { Connection, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
 import { PROGRAM_ID, platformPda, type PlatformParams } from "@holdfast/sdk";
 import fs from "node:fs";
@@ -19,6 +22,7 @@ import path from "node:path";
 import { LOCALNET_DIR, RPC_URL, airdrop, clientFor, loadOrCreateKeypair, send } from "./common";
 
 const sol = (name: string, fallback: number) => new BN(Math.round(Number(process.env[name] ?? fallback) * LAMPORTS_PER_SOL));
+const PRODUCTION = process.env.PROFILE === "production";
 
 const LOCALNET_PARAMS: PlatformParams = {
   tradeFeeBps: 100,
@@ -35,12 +39,15 @@ const LOCALNET_PARAMS: PlatformParams = {
   agentBandBps: 200,
   // Short windows on localnet so agent behaviour is observable within minutes;
   // PROFILE=production uses hourly windows and a 30 minute EMA.
-  agentWindowSecs: process.env.PROFILE === "production" ? 3_600 : 600,
-  emaPeriodSecs: process.env.PROFILE === "production" ? 1_800 : 600,
+  agentWindowSecs: PRODUCTION ? 3_600 : 600,
+  emaPeriodSecs: PRODUCTION ? 1_800 : 600,
   paused: false,
   agentsPaused: false,
   maxRaiseLamports: sol("MAX_RAISE_SOL", 0),
   maxWalletDepositLamports: sol("MAX_WALLET_SOL", 0),
+  holdfastCurveEnabled: process.env.HOLDFAST_CURVE ? process.env.HOLDFAST_CURVE === "1" : !PRODUCTION,
+  burnShareBps: 2_500,
+  buybackMint: process.env.BUYBACK_MINT ? new PublicKey(process.env.BUYBACK_MINT) : PublicKey.default,
 };
 
 async function main() {
@@ -75,7 +82,9 @@ async function main() {
     const sig = await send(client, admin, [ix]);
     console.log(`platform initialized: ${sig}`);
   } else if (process.argv.includes("--update")) {
-    const sig = await send(client, admin, [await client.updatePlatformIx(admin.publicKey, LOCALNET_PARAMS)]);
+    // A set buyback mint survives a re-run that doesn't name one.
+    const params = { ...LOCALNET_PARAMS, buybackMint: process.env.BUYBACK_MINT ? LOCALNET_PARAMS.buybackMint : existing.params.buybackMint };
+    const sig = await send(client, admin, [await client.updatePlatformIx(admin.publicKey, params)]);
     console.log(`platform params updated: ${sig}`);
   } else {
     console.log("platform already initialized (pass --update to push params)");

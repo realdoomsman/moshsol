@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { bps } from "@holdfast/sdk";
 import { NEUTRAL_FLOW, type FlowFeatures } from "../src/flow";
 import { DEFAULT_PARAMS, PARAM_KEYS, PARAM_SPACE, evaluate, type Sizing, type StrategyParams } from "../src/strategy";
-import { PRODUCTION_TERMS, agentBuy, agentSell, launch, publicTokens, type Chain } from "./program";
+import { PRODUCTION_TERMS, PUMP_CURVE, PUMP_TERMS, agentBuy, agentSell, launch, publicTokens, type Chain, type SimTerms } from "./program";
 import { Market, T0, mulberry32, type Rng } from "./sim";
 
 function randomParams(r: Rng): StrategyParams {
@@ -36,22 +36,29 @@ function randomFlow(r: Rng): FlowFeatures {
   };
 }
 
-// Random walks through launch states. Public flow keeps pushing spot around the thresholds the
+// Random walks through launch histories. Public flow keeps pushing spot around the thresholds the
 // program checks (vault average cost, average agent sell price × (1 − band), the EMA band edges),
 // idle gaps move the EMA and roll windows, and the agent's own planned trades are applied so
 // buy-backs and cost-basis changes happen. At every step the plan, under random parameters and
 // sizing, must pass the program mirror on that exact state and clock, and every lamport the agent
-// sold for must be back in the vault or credited to backers as profit.
-test("policy never plans a trade the program rejects along launch histories", () => {
+// sold for must be back in the vault, credited to backers as profit or booked to the buyback pool.
+// Runs once per venue with the same policy: the pump mirror charges the venue's 1.25% on the agent's
+// own fills, which the planner's quotes must absorb.
+for (const terms of [PRODUCTION_TERMS, PUMP_TERMS]) {
+  test(`policy never plans a trade the program rejects along ${terms.venue} launch histories`, () => walks(terms));
+}
+
+function walks(terms: SimTerms): void {
   const r = mulberry32(20_260_930);
   let plans = 0;
   let buys = 0;
   let sells = 0;
   let profitShared = 0n;
+  let buybackPool = 0n;
   for (let walk = 0; walk < 80; walk++) {
     const chain = launch(
       {
-        terms: PRODUCTION_TERMS,
+        terms,
         virtualSol: 30_000_000_000n,
         raised: BigInt(Math.round((1 + r() * 60) * 1e9)),
         reserveBps: BigInt(Math.floor(r() * 8_000)),
@@ -91,33 +98,43 @@ test("policy never plans a trade the program rejects along launch histories", ()
         }
       }
       assert.equal(
-        chain.vaultSol + chain.agentSolSpent + chain.profitShared,
+        chain.vaultSol + chain.agentSolSpent + chain.profitShared + chain.buybackPoolSol,
         vaultSol0 + chain.agentSolReceived,
-        `walk ${walk} step ${step}: vault SOL + spent + profit shared ≠ start + received`,
+        `walk ${walk} step ${step}: vault SOL + spent + profit shared + buyback pool ≠ start + received`,
       );
     }
     profitShared += chain.profitShared;
+    buybackPool += chain.buybackPoolSol;
   }
-  // The walks must actually reach both sides, including buy-backs after sells and sells in profit.
-  assert.ok(plans > 2_000 && buys > 200 && sells > 200, `too few trades exercised: ${plans} plans, ${buys} buys, ${sells} sells`);
+  // The walks must actually reach both sides, including buy-backs after sells and sells in profit. The same
+  // walk plans about half as often on the pump venue: its 1.25% fee is a haircut on every quote the cost rules see.
+  const minPlans = terms.venue === "pump" ? 1_000 : 2_000;
+  assert.ok(plans > minPlans && buys > 200 && sells > 200, `too few trades exercised: ${plans} plans, ${buys} buys, ${sells} sells`);
   assert.ok(profitShared > 0n, "no agent sell realized a profit");
-});
+  if (terms.venue === "pump") assert.ok(buybackPool > 0n, "no realized profit reached the buyback pool");
+  else assert.equal(buybackPool, 0n, "a Holdfast launch has no buyback pool share");
+}
 
 /** Lamports for about `sol` SOL. */
 const lam = (sol: number) => BigInt(Math.floor(sol * 1e9));
 
 // Arbitrary (not necessarily reachable) states right at the program's thresholds: vault cost,
 // average agent sell price and EMA each within a few % of spot, windows part-used or expired,
-// empty vault sides, small curves where the impact limit and `realSol` bind.
-test("policy never plans a trade the program rejects on arbitrary states", () => {
+// empty vault sides, small curves where the impact limit and `realSol` bind. On the pump venue the
+// token reserve stays above the curve's virtual offset (what pump.fun can still sell).
+for (const terms of [PRODUCTION_TERMS, PUMP_TERMS]) {
+  test(`policy never plans a trade the program rejects on arbitrary ${terms.venue} states`, () => arbitraryStates(terms));
+}
+
+function arbitraryStates(t: SimTerms): void {
   const r = mulberry32(7_331);
-  const t = PRODUCTION_TERMS;
   const now = BigInt(T0 + 100_000);
+  const minReserve = t.venue === "pump" ? Number(PUMP_CURVE.virtualTokens - PUMP_CURVE.realTokens) / 1e6 + 2e7 : 3e8;
   let buys = 0;
   let sells = 0;
   for (let i = 0; i < 30_000; i++) {
     const realSol = lam(10 ** (r() * 2.7) - 1);
-    const tokenReserve = BigInt(Math.floor((3e8 + r() * 6.99e8) * 1e6));
+    const tokenReserve = BigInt(Math.floor((minReserve + r() * 6.99e8) * 1e6));
     const spot = Number(30_000_000_000n + realSol) / Number(tokenReserve);
     const vaultTokens = r() < 0.05 ? 0n : BigInt(Math.floor(r() * 3e14));
     const vaultSol = r() < 0.05 ? 0n : lam(r() * 60);
@@ -152,4 +169,4 @@ test("policy never plans a trade the program rejects on arbitrary states", () =>
     else sells++;
   }
   assert.ok(buys > 500 && sells > 500, `too few trades exercised: ${buys} buys, ${sells} sells`);
-});
+}
