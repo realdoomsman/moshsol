@@ -162,10 +162,9 @@ What Holdfast doesn't do:
 
 • hold a price
 • promise a payout: 5× liquid and a strong chart first
-• lock the vault: the admin, a 2-of-3 Squads multisig, can withdraw one. Every withdrawal is an on-chain event on the launch page
+• lock the vault: the admin (a 2-of-3 Squads multisig) can withdraw one; every withdrawal is an on-chain event on the launch page
 • have an audit yet
-• let AI trade: it narrates
-• burn yet: the Holdfast token isn't live, the 15% pool accrues
+• let AI trade; it narrates
 ```
 
 **Reply (one, no thread):**
@@ -203,3 +202,6 @@ Backers get paid: once a vault's liquid SOL is 5× what went in and the chart is
 
 No wallet? Sign in with Google; the key is exportable.
 ```
+
+## Posted 2026-10-01 (vault model)
+Pinned P1 `2105619625388187833` · P2 video `2105620480648413276` · P3 article `2105629518241177910` · P4 `2105620778591064136` (+reply) · P5 `2105621009281806640` · P6 `2105621977356747253` (+reply) · P7 `2105622987877790008` · P8 `2105623196368019515` (+reply) · P9 `2105624186429342121` · P10 `2105625093326209428` (+reply) · P11 `2105626081139073479` (+reply) · P12 `2105626314384527495`. The 7-post profit-share thread from 2026-09-30 was deleted (its text is in git history of this file).
