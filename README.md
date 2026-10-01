@@ -477,7 +477,7 @@ Google only redirects to registered URIs.
 
 1. https://console.cloud.google.com → create (or pick) a project, e.g. "Holdfast".
 2. **Google Auth Platform → Branding** (the OAuth consent screen): app name `Holdfast`, user support email, app
-   home page `https://web-mainnet-80e3.up.railway.app` (or the custom domain), developer contact email. If the
+   home page `https://holdfast.fun` (or the custom domain), developer contact email. If the
    page asks for authorized domains, add the site's domain.
 3. **Audience**: user type **External**. While "Testing", only the listed test users can sign in — press
    **Publish app** to open it to everyone (`openid`, `email` and `profile` are non-sensitive scopes, so no Google
@@ -486,7 +486,7 @@ Google only redirects to registered URIs.
 5. **Clients → Create client**: application type **Web application**, name e.g. `Holdfast web`. Authorized
    JavaScript origins: none needed (the code exchange runs on the server). **Authorized redirect URIs** (exact,
    no trailing slash):
-   - `https://web-mainnet-80e3.up.railway.app/api/auth/google/callback`
+   - `https://holdfast.fun/api/auth/google/callback`
    - `http://localhost:3000/api/auth/google/callback`
 
    (Add `https://<custom-domain>/api/auth/google/callback` if the site moves; `SITE_URL` and
@@ -687,9 +687,9 @@ Program id on every cluster: `EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ` (key
 
 | | |
 |---|---|
-| Site | https://web-mainnet-80e3.up.railway.app |
-| Indexer API | https://indexer-mainnet-bd1f.up.railway.app (`/api/health`; `/rpc` + `/rpc-ws` proxy the Helius RPC for browsers) |
-| Agent status | https://agent-mainnet.up.railway.app/status |
+| Site | https://holdfast.fun |
+| Indexer API | https://api.holdfast.fun (`/api/health`; `/rpc` + `/rpc-ws` proxy the Helius RPC for browsers) |
+| Agent status | https://agent.holdfast.fun/status |
 | Platform admin, fee recipient, upgrade authority | Squads vault `6vUgXnEMbho2pVTEnwwGRj9xjcnb2btKGoWGqoMuzBWF` of multisig `29dhkpFcpteUaEZkdooNCFdoGy8z4HBXPpjdAVG3bsT1` (https://app.squads.so/squads/29dhkpFcpteUaEZkdooNCFdoGy8z4HBXPpjdAVG3bsT1) |
 | Multisig members (2-of-3) | `44kYEq…sNVP`, `CZ9eBS…Kan7`, `7Ra5Dh…97Tb` = `.mainnet/member-{1,2,3}.json` — rotate them to separate hardware wallets in the Squads app |
 | Deployer (no remaining authority) | `EVN2gPRLh4Yymj7w6yh9u7yLf7CU8dBTfnTgBzNEYJ4G` (`.mainnet/admin.json`) |
@@ -769,7 +769,7 @@ failure, and watch paths so a push only rebuilds what it touched (`apps/<service
 |---|---|---|---|
 | `indexer` | `RPC_URL`, `WS_URL`, `PUBLIC_URL` (its own Railway domain), `PORT=8787`, `POLL_MS`, `FULL_REFRESH_MS`, `HOLDERS_TTL_MS`, `CHAIN_CHECK_MS`, `ADMIN_TOKEN` (secret, comment moderation), `TRUST_PROXY=uniquelocal,100.64.0.0/10` (Railway's edge; per-IP limits then key on the real client and ignore spoofed `X-Forwarded-For`). Mainnet adds `STORAGE=arweave`, `ARWEAVE_KEYPAIR_JSON` (secret), `ARWEAVE_DAILY_BUDGET_SOL=0.25`, `RPC_PROXY=1`, `RPC_PROXY_LIMIT_PER_MIN=600` | `/api/health` | Volume at `/data` (SQLite DB with comments/profiles, plus uploads when `STORAGE=local`). |
 | `agent` | `RPC_URL`, `AGENT_KEYPAIR_JSON` (secret), `PORT=8788`, `POLL_MS`; optionally `PRIORITY_MICROLAMPORTS` / `MAX_PRIORITY_MICROLAMPORTS` | `/status` | Keep ~0.1+ SOL on the agent key for fees (a trade costs ≈0.0000083 SOL at the priority floor, ≤0.00007 SOL at the cap); `/status` → `balanceSol` shows what is left. |
-| `accounts` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `WALLET_MASTER_KEY`, `SESSION_SECRET` (secrets), `SITE_URL` (the web's public origin, e.g. `https://web-mainnet-80e3.up.railway.app`), `PORT=8789`, `TRUST_PROXY=uniquelocal,100.64.0.0/10` | `/health` | No public domain: only the web reaches it, over the private network at `http://accounts.railway.internal:8789` (the Dockerfile binds `::`). Volume at `/data` (`DB_PATH=/data/accounts.db`) **with backups enabled** — the DB plus `WALLET_MASTER_KEY` are the only copy of every Google wallet (see [Accounts](#accounts-sign-in-with-google)). |
+| `accounts` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `WALLET_MASTER_KEY`, `SESSION_SECRET` (secrets), `SITE_URL` (the web's public origin, e.g. `https://holdfast.fun`), `PORT=8789`, `TRUST_PROXY=uniquelocal,100.64.0.0/10` | `/health` | No public domain: only the web reaches it, over the private network at `http://accounts.railway.internal:8789` (the Dockerfile binds `::`). Volume at `/data` (`DB_PATH=/data/accounts.db`) **with backups enabled** — the DB plus `WALLET_MASTER_KEY` are the only copy of every Google wallet (see [Accounts](#accounts-sign-in-with-google)). |
 | `web` | `NEXT_PUBLIC_CLUSTER` (`devnet` / `mainnet-beta`), `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_WS_URL` (mainnet: the indexer's `/rpc`, `/rpc-ws`), `NEXT_PUBLIC_INDEXER_URL`, `NEXT_PUBLIC_AGENT_URL`, `NEXT_PUBLIC_SITE_URL`, `PORT=3000`, `ACCOUNTS_URL=http://accounts.railway.internal:8789` (runtime) | `/` | Pages are server-rendered with live indexer data. `NEXT_PUBLIC_*` are baked in at build time — redeploy after changing them. |
 
 **Deploying:** push to `master` (mainnet environment; devnet follows the `devnet` branch until it is moved back, see above). Manual deploy of local changes: `railway up --service indexer|agent|accounts|web --environment <env> --ci`.

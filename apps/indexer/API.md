@@ -1,6 +1,6 @@
 # Holdfast indexer API
 
-Base URL: `NEXT_PUBLIC_INDEXER_URL` (mainnet: `https://indexer-mainnet-bd1f.up.railway.app`; devnet: `https://indexer-production-454b.up.railway.app`). Everything is JSON
+Base URL: `NEXT_PUBLIC_INDEXER_URL` (mainnet: `https://api.holdfast.fun`; devnet: `https://indexer-production-454b.up.railway.app`). Everything is JSON
 over HTTP plus one WebSocket (`/ws`). CORS is open (`*`; methods `GET POST PUT DELETE OPTIONS`).
 
 ## Conventions
