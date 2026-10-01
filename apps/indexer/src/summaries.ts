@@ -68,8 +68,14 @@ function toSummary(
     if (ref !== null && ref > 0) change24h = ((snap.priceSol - ref) / ref) * 100;
   }
   const volume24hSol = agg?.v24 ?? 0;
+  // The on-chain counters of a pump launch only see the vault agent's trades: add the indexed public ones.
+  const counters =
+    snap.venue === "pump" && agg && agg.pump_n > 0
+      ? { tradeCount: snap.tradeCount + agg.pump_n, volumeSol: (BigInt(snap.volumeSol) + BigInt(agg.pump_lamports)).toString() }
+      : {};
   return {
     ...snap,
+    ...counters,
     marketCapUsd: solUsd ? snap.marketCapSol * solUsd.usd : null,
     priceUsd: solUsd ? snap.priceSol * solUsd.usd : null,
     name: row.meta_name ?? row.onchain_name,

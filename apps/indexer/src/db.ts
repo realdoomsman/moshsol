@@ -52,6 +52,9 @@ export type LaunchDbRow = {
 /** A launch row whose account snapshot was fetched (what the list/search queries return). */
 export type SnapshotLaunchDbRow = LaunchDbRow & { snapshot: string };
 
+/** Where a trade row was decoded from: this program's `Trade` event, or the pump.fun / PumpSwap event of a public trade. */
+export type TradeSource = "holdfast" | "pump";
+
 export type TradeDbRow = {
   signature: string;
   event_index: number;
@@ -61,13 +64,15 @@ export type TradeDbRow = {
   trader: string;
   is_buy: number;
   is_agent: number;
+  source: TradeSource;
   sol_amount: string;
   token_amount: string;
   fee: string;
   price_sol: number;
-  ema_sol: number;
-  vault_sol: string;
-  vault_tokens: string;
+  /** The program's EMA sample, vault SOL and vault tokens after the trade; null on public pump trades (no program state moved). */
+  ema_sol: number | null;
+  vault_sol: string | null;
+  vault_tokens: string | null;
   real_sol: string;
   token_reserve: string;
   /** sol_amount in SOL, for aggregation. */
@@ -131,6 +136,9 @@ export type TradeAggDbRow = {
   buyers24: number;
   sellers24: number;
   last_ts: number | null;
+  /** Public pump.fun / PumpSwap trades indexed for the launch and their SOL in lamports (the on-chain counters only see agent trades). */
+  pump_n: number;
+  pump_lamports: number;
 };
 
 /** Per-launch vault payouts/withdrawals from events (lamports and base units as decimal strings). */
@@ -303,6 +311,28 @@ const COMMENTS_COLUMNS = `
   message TEXT NOT NULL,
   deleted_at INTEGER`;
 
+const TRADES_COLUMNS = `
+  signature TEXT NOT NULL,
+  event_index INTEGER NOT NULL,
+  slot INTEGER NOT NULL,
+  timestamp INTEGER NOT NULL,
+  launch TEXT NOT NULL,
+  trader TEXT NOT NULL,
+  is_buy INTEGER NOT NULL,
+  is_agent INTEGER NOT NULL,
+  source TEXT NOT NULL DEFAULT 'holdfast',
+  sol_amount TEXT NOT NULL,
+  token_amount TEXT NOT NULL,
+  fee TEXT NOT NULL,
+  price_sol REAL NOT NULL,
+  ema_sol REAL,
+  vault_sol TEXT,
+  vault_tokens TEXT,
+  real_sol TEXT NOT NULL,
+  token_reserve TEXT NOT NULL,
+  sol REAL NOT NULL,
+  PRIMARY KEY (signature, event_index)`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sync_state (
   key TEXT PRIMARY KEY,
@@ -333,27 +363,7 @@ CREATE TABLE IF NOT EXISTS events (
   PRIMARY KEY (signature, event_index)
 );
 CREATE INDEX IF NOT EXISTS events_order ON events(slot);
-CREATE TABLE IF NOT EXISTS trades (
-  signature TEXT NOT NULL,
-  event_index INTEGER NOT NULL,
-  slot INTEGER NOT NULL,
-  timestamp INTEGER NOT NULL,
-  launch TEXT NOT NULL,
-  trader TEXT NOT NULL,
-  is_buy INTEGER NOT NULL,
-  is_agent INTEGER NOT NULL,
-  sol_amount TEXT NOT NULL,
-  token_amount TEXT NOT NULL,
-  fee TEXT NOT NULL,
-  price_sol REAL NOT NULL,
-  ema_sol REAL NOT NULL,
-  vault_sol TEXT NOT NULL,
-  vault_tokens TEXT NOT NULL,
-  real_sol TEXT NOT NULL,
-  token_reserve TEXT NOT NULL,
-  sol REAL NOT NULL,
-  PRIMARY KEY (signature, event_index)
-);
+CREATE TABLE IF NOT EXISTS trades (${TRADES_COLUMNS});
 CREATE INDEX IF NOT EXISTS trades_launch ON trades(launch, slot);
 CREATE INDEX IF NOT EXISTS trades_time ON trades(timestamp);
 CREATE INDEX IF NOT EXISTS trades_agent ON trades(is_agent, slot);
@@ -405,9 +415,10 @@ CREATE TABLE IF NOT EXISTS uploaded_images (
 /**
  * Schema version (`PRAGMA user_version`). 0 = the first deployment (`launches.mint` UNIQUE, comments keyed by
  * mint, no `events.ref`); 1 = pump launches (several raising launches share the default mint, so the mint
- * index is partial, comments are keyed by launch address and launches carry a venue).
+ * index is partial, comments are keyed by launch address and launches carry a venue); 2 = public pump.fun trades
+ * (`trades.source`; the program-only columns `ema_sol`, `vault_sol`, `vault_tokens` are nullable).
  */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /**
  * v0 → v1. SQLite can't drop an inline UNIQUE, so `launches` and `comments` are rebuilt (copy, drop,
@@ -431,6 +442,19 @@ function migrateToV1(db: DatabaseSync): void {
     ALTER TABLE comments_v1 RENAME TO comments;
   `);
   if (!columns("events").includes("ref")) db.exec("ALTER TABLE events ADD COLUMN ref TEXT");
+}
+
+/** v1 → v2: `trades` is rebuilt (NOT NULL can't be dropped in place); every existing row came from the program. */
+function migrateToV2(db: DatabaseSync): void {
+  const kept =
+    "signature, event_index, slot, timestamp, launch, trader, is_buy, is_agent, sol_amount, token_amount, fee, price_sol, " +
+    "ema_sol, vault_sol, vault_tokens, real_sol, token_reserve, sol";
+  db.exec(`
+    CREATE TABLE trades_v2 (${TRADES_COLUMNS});
+    INSERT INTO trades_v2 (${kept}, source) SELECT ${kept}, 'holdfast' FROM trades;
+    DROP TABLE trades;
+    ALTER TABLE trades_v2 RENAME TO trades;
+  `);
 }
 
 /**
@@ -458,7 +482,9 @@ const TRADE_AGG = `
     COUNT(CASE WHEN timestamp >= :hour THEN 1 END) AS t1,
     COUNT(DISTINCT CASE WHEN timestamp >= :day AND is_agent = 0 AND is_buy = 1 THEN trader END) AS buyers24,
     COUNT(DISTINCT CASE WHEN timestamp >= :day AND is_agent = 0 AND is_buy = 0 THEN trader END) AS sellers24,
-    MAX(timestamp) AS last_ts
+    MAX(timestamp) AS last_ts,
+    COUNT(CASE WHEN source = 'pump' THEN 1 END) AS pump_n,
+    COALESCE(SUM(CASE WHEN source = 'pump' THEN CAST(sol_amount AS INTEGER) END), 0) AS pump_lamports
   FROM trades`;
 const VAULT_EVENT_AGG = `
   SELECT launch,
@@ -519,9 +545,9 @@ const SQL = {
     INSERT OR IGNORE INTO events (signature, event_index, slot, timestamp, type, launch, actor, is_agent, is_buy, sol_amount, token_amount, ref)
     VALUES (:signature, :event_index, :slot, :timestamp, :type, :launch, :actor, :is_agent, :is_buy, :sol_amount, :token_amount, :ref)`,
   insertTrade: `
-    INSERT OR IGNORE INTO trades (signature, event_index, slot, timestamp, launch, trader, is_buy, is_agent, sol_amount,
+    INSERT OR IGNORE INTO trades (signature, event_index, slot, timestamp, launch, trader, is_buy, is_agent, source, sol_amount,
       token_amount, fee, price_sol, ema_sol, vault_sol, vault_tokens, real_sol, token_reserve, sol)
-    VALUES (:signature, :event_index, :slot, :timestamp, :launch, :trader, :is_buy, :is_agent, :sol_amount,
+    VALUES (:signature, :event_index, :slot, :timestamp, :launch, :trader, :is_buy, :is_agent, :source, :sol_amount,
       :token_amount, :fee, :price_sol, :ema_sol, :vault_sol, :vault_tokens, :real_sol, :token_reserve, :sol)`,
   insertDeposit: `
     INSERT OR IGNORE INTO deposits (signature, event_index, slot, timestamp, launch, backer, amount, raised)
@@ -704,9 +730,11 @@ export class Store {
   /** Brings an existing file to `SCHEMA_VERSION` (one transaction), then applies the idempotent `SCHEMA`. */
   private migrate(): void {
     const version = row<{ user_version: number }>(this.db.prepare("PRAGMA user_version"))?.user_version ?? 0;
-    const hasLaunches = row(this.db.prepare("SELECT 1 AS one FROM sqlite_master WHERE type = 'table' AND name = 'launches'"));
+    const hasTable = (name: string) =>
+      row(this.db.prepare("SELECT 1 AS one FROM sqlite_master WHERE type = 'table' AND name = ?"), [name]) !== undefined;
     this.tx(() => {
-      if (version < 1 && hasLaunches) migrateToV1(this.db);
+      if (version < 1 && hasTable("launches")) migrateToV1(this.db);
+      if (version < 2 && hasTable("trades")) migrateToV2(this.db);
       this.db.exec(SCHEMA);
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });

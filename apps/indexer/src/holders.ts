@@ -72,6 +72,11 @@ export class Holders {
     this.cache.clear();
   }
 
+  /** Drops one mint's snapshot (a trade moved balances); the next read loads from chain. */
+  invalidate(mint: string): void {
+    this.cache.delete(mint);
+  }
+
   async get(target: HolderTarget): Promise<HolderSet> {
     const hit = this.cache.get(target.mint);
     if (hit && Date.now() - hit.at < this.ttlMs) return hit;
@@ -185,9 +190,9 @@ export class Holders {
     }
     if (this.gpaUnavailable) {
       // Exact balances for the venue, the vault and every wallet that ever traded this launch
-      // (their ATAs), fetched 100 at a time. Only wallets that received tokens by transfer without
-      // ever trading are missed — on pump launches, where public trades happen on pump.fun, that is
-      // everyone but the agent, so this fallback is only as good as the RPC's getProgramAccounts.
+      // (their ATAs; public pump.fun trades are in the ledger too), fetched 100 at a time. Only wallets
+      // that received tokens by transfer without ever trading are missed, and pump traders older than
+      // the venue's bounded backfill (`PUMP_BACKFILL`).
       const mintKey = new PublicKey(t.mint);
       const entries: { tokenAccount: PublicKey; owner: PublicKey }[] = [
         ...program,

@@ -72,13 +72,16 @@ export interface TradeRow {
   trader: string;
   isBuy: boolean;
   isAgent: boolean;
+  /** `holdfast`: the program's own Trade event (curve trades, the vault agent's pump trades); `pump`: a public pump.fun / PumpSwap trade. */
+  source: "holdfast" | "pump";
   solAmount: string;
   tokenAmount: string;
   fee: string;
   priceSol: number;
-  emaSol: number;
-  vaultSol: string;
-  vaultTokens: string;
+  /** Program state after the trade; null on `pump` rows (public trades don't move the launch's EMA or vault). */
+  emaSol: number | null;
+  vaultSol: string | null;
+  vaultTokens: string | null;
   realSol: string;
   tokenReserve: string;
 }

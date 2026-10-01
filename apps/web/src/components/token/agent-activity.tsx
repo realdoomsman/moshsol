@@ -253,7 +253,7 @@ export function AgentActivity({ launch: l, now }: { launch: LaunchSummary; now: 
                     </TD>
                     <TD className="max-w-[420px] truncate text-ink-2">{r.text}</TD>
                     <TD align="right" className="text-ink-2 max-md:hidden">
-                      {fmtPrice(r.t.priceSol)} / {fmtPrice(r.t.emaSol)}
+                      {fmtPrice(r.t.priceSol)} / {r.t.emaSol === null ? "—" : fmtPrice(r.t.emaSol)}
                     </TD>
                     <TD align="right">
                       {fmtLamports(r.t.solAmount)} SOL <span className="text-ink-3">· {fmtTokens(r.t.tokenAmount)}</span>

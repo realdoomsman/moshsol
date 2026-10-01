@@ -10,13 +10,14 @@ import {
 } from "@holdfast/sdk";
 import { PublicKey, type Connection } from "@solana/web3.js";
 import type { FastifyInstance } from "fastify";
+import { activityFromRow } from "./activity";
 import { TtlCache } from "./cache";
 import { DEFAULT_PUBKEY, type LaunchDbRow, type SnapshotLaunchDbRow, type Store, type TradeDbRow } from "./db";
 import type { SolPrice } from "./price";
 import { Limiter, sweepLimiters } from "./ratelimit";
 import { parsePubkey, ValidationError } from "./sanitize";
 import { allSummaries, summaryOf } from "./summaries";
-import { activityFromRow, holderTarget, type ChainSync, type SyncHealth } from "./sync";
+import { holderTarget, type ChainSync, type SyncHealth } from "./sync";
 import { ACTIVITY_TYPES, type Candle, type LaunchSummary, type TradeRow } from "./types";
 
 export class NotFoundError extends Error {}
@@ -71,6 +72,7 @@ function tradeRow(t: TradeDbRow): TradeRow {
     trader: t.trader,
     isBuy: t.is_buy === 1,
     isAgent: t.is_agent === 1,
+    source: t.source,
     solAmount: t.sol_amount,
     tokenAmount: t.token_amount,
     fee: t.fee,

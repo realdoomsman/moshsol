@@ -37,6 +37,7 @@ const sync = new ChainSync(store, client, hub, holders, price, app.log.child({ m
   chainCheckMs: config.chainCheckMs,
   holdersTtlMs: config.holdersTtlMs,
   wsUrl: config.wsUrl,
+  pumpBackfill: config.pumpBackfill,
   ...files,
 });
 const arweave = config.arweave ? new ArweaveStore(config.arweave, store, app.log.child({ module: "arweave" })) : null;

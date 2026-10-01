@@ -767,8 +767,9 @@ Indexer (`apps/indexer`):
 | `RPC_PROXY` | off | `1`: `POST /rpc` (JSON-RPC, single + batch ≤20, 64 KB body, 15 s upstream timeout) → `RPC_URL` and `GET /rpc-ws` (PubSub) → `WS_URL`, so a keyed RPC never reaches browsers. Only the methods the web app uses are forwarded (account/balance reads, blockhash, send/simulate, signature status, `account`/`signature`/`slot` subscriptions); anything else (e.g. `getProgramAccounts`) gets JSON-RPC `-32601`. `/rpc-ws`: ≤10 connections per IP, ≤32 subscriptions per connection |
 | `RPC_PROXY_LIMIT_PER_MIN` | `600` | Per-IP JSON-RPC calls per minute through the proxy (each batch entry and WS request counts; `0` = off). The proxy is exempt from `RATE_LIMIT_PER_MIN` |
 | `LOG_LEVEL` | `info` | `debug` adds poller catch-ups and websocket retry attempts |
-| `POLL_MS`, `FULL_REFRESH_MS` | `4000`, `15000` | Signature poller cadence; full `getProgramAccounts` refresh (launch snapshots, platform, metadata retries, holder counts) |
+| `POLL_MS`, `FULL_REFRESH_MS` | `4000`, `15000` | Signature poller cadence (the program, plus the venue account of every live pump launch for public pump.fun / PumpSwap trades); full `getProgramAccounts` refresh (launch snapshots, platform, metadata retries, holder counts) |
 | `CHAIN_CHECK_MS`, `HOLDERS_TTL_MS` | `30000`, `30000` | Genesis/cursor verification cadence (also after every RPC outage); holder snapshot cache per launch |
+| `PUMP_BACKFILL` | `200` | Newest venue-account signatures indexed when a live pump launch is first watched (public pump.fun trades older than that are not backfilled); live trades arrive over the logs websocket, the poller fills gaps |
 | `PRICE_REFRESH_MS` | `60000` | SOL/USD refresh (Jupiter `lite-api.jup.ag/price/v3`, CoinGecko fallback; no API key). Served as `solUsd` on `/api/stats` and as the `…Usd` fields of launch summaries; the last good price is kept in memory and SQLite through a feed outage or restart |
 
 Every endpoint, the signed-message scheme for comments/profiles, rate limits and WebSocket messages are documented in

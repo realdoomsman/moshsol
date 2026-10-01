@@ -16,14 +16,15 @@ import {
 } from "@holdfast/sdk";
 import { PublicKey, type ConfirmedSignatureInfo, type Connection } from "@solana/web3.js";
 import type { FastifyBaseLogger } from "fastify";
-import { DEFAULT_PUBKEY, type ActivityDbRow, type EventDbRow, type LaunchDbRow, type MetaUpdate, type Store } from "./db";
+import { activityFromRow } from "./activity";
+import { DEFAULT_PUBKEY, type EventDbRow, type LaunchDbRow, type MetaUpdate, type Store } from "./db";
 import type { HolderSet, HolderTarget, Holders } from "./holders";
 import type { Hub } from "./hub";
 import { LogsStream } from "./logs-stream";
 import { UnfetchableUriError, loadMetadata } from "./metadata";
 import type { SolPrice } from "./price";
+import { MAX_TX_VERSION, PumpSync } from "./pump-sync";
 import { summaryOf } from "./summaries";
-import type { ActivityEvent } from "./types";
 import { loadVenueStates, type VenueTarget } from "./venue";
 
 export interface SyncOptions {
@@ -34,6 +35,8 @@ export interface SyncOptions {
   publicUrl: string;
   filesDir: string;
   wsUrl: string;
+  /** Newest venue signatures indexed when a live pump launch is first watched for public trades. */
+  pumpBackfill: number;
 }
 
 export interface SyncHealth {
@@ -70,28 +73,6 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function activityFromRow(r: ActivityDbRow): ActivityEvent {
-  const ev: ActivityEvent = {
-    id: `${r.signature}:${r.event_index}`,
-    type: r.type,
-    signature: r.signature,
-    timestamp: r.timestamp,
-    launch: r.launch,
-    venue: r.venue,
-    mint: r.mint,
-    symbol: r.symbol,
-    name: r.name,
-    image: r.image,
-    actor: r.actor,
-  };
-  if (r.is_agent !== null) ev.isAgent = r.is_agent === 1;
-  if (r.is_buy !== null) ev.isBuy = r.is_buy === 1;
-  if (r.sol_amount !== null) ev.solAmount = r.sol_amount;
-  if (r.token_amount !== null) ev.tokenAmount = r.token_amount;
-  if (r.ref !== null) ev.ref = r.ref;
-  return ev;
-}
-
 /**
  * What the holder loader needs to know about a launch: pump launches hold SPL Token accounts and their
  * venue's own account is the bonding curve's ATA (the pool's base account once graduated).
@@ -124,7 +105,8 @@ export class ChainSync {
   private queue: Promise<void> = Promise.resolve();
   private pollQueued = false;
   private timers: NodeJS.Timeout[] = [];
-  private stream: LogsStream | null = null;
+  private readonly stream: LogsStream;
+  private readonly pump: PumpSync;
   private stopped = false;
   /** Chain identity confirmed since the last RPC failure / websocket reconnect; live logs wait for it. */
   private verified = false;
@@ -154,6 +136,39 @@ export class ChainSync {
     this.connection = client.connection;
     this.launchDisc = client.program.coder.accounts.memcmp("launch") as { offset: number; bytes: string };
     this.genesisHash = store.getState("genesis");
+    const programId = client.programId.toBase58();
+    this.stream = new LogsStream(
+      opts.wsUrl,
+      {
+        onLogs: (address, n) => {
+          void this.enqueue(async () => {
+            // Unverified: the DB may still belong to a previous chain; the pollers pick these up after the check.
+            if (!this.verified || this.store.hasTx(n.signature)) return;
+            if (address !== programId) {
+              if (!n.err) await this.pump.onLogs(n.signature, n.slot, n.logs);
+              return;
+            }
+            if (n.err) {
+              this.store.markTx(n.signature, n.slot, true, 0);
+              return;
+            }
+            await this.processTx(n.signature, n.slot, n.logs);
+          });
+        },
+        onSubscribed: (address) => {
+          // A program (re)subscription usually follows a validator restart: re-verify the chain and fill the gap now.
+          if (address !== programId) return;
+          this.verified = false;
+          this.poll();
+        },
+      },
+      log,
+    );
+    this.stream.watch(programId);
+    this.pump = new PumpSync(store, this.connection, hub, holders, this.stream, programId, log, {
+      backfill: opts.pumpBackfill,
+      onTrade: (address) => void this.refreshLaunch(address),
+    });
   }
 
   /** Highest slot through which every program transaction is indexed. */
@@ -167,29 +182,6 @@ export class ChainSync {
       { ...this.store.counts(), cursor: this.store.getState("cursor"), lastIndexedSlot: this.lastIndexedSlot },
       "resuming sync",
     );
-    this.stream = new LogsStream(
-      this.opts.wsUrl,
-      this.client.programId.toBase58(),
-      {
-        onLogs: (n) => {
-          void this.enqueue(async () => {
-            // Unverified: the DB may still belong to a previous chain; the poller picks these up after the check.
-            if (!this.verified || this.store.hasTx(n.signature)) return;
-            if (n.err) {
-              this.store.markTx(n.signature, n.slot, true, 0);
-              return;
-            }
-            await this.processTx(n.signature, n.slot, n.logs);
-          });
-        },
-        onSubscribed: () => {
-          // A (re)subscription usually follows a validator restart: re-verify the chain and fill the gap now.
-          this.verified = false;
-          this.poll();
-        },
-      },
-      this.log,
-    );
     this.stream.start();
     this.poll();
     this.timers.push(
@@ -202,14 +194,13 @@ export class ChainSync {
     this.stopped = true;
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
-    this.stream?.close();
-    this.stream = null;
+    this.stream.close();
     await this.queue;
   }
 
   async health(): Promise<SyncHealth> {
     const lastIndexedSlot = this.lastIndexedSlot;
-    const base = { lastIndexedSlot, wsConnected: this.stream?.subscribed ?? false, genesisHash: this.genesisHash };
+    const base = { lastIndexedSlot, wsConnected: this.stream.isSubscribed(this.client.programId.toBase58()), genesisHash: this.genesisHash };
     const { promise: timeout, reject } = Promise.withResolvers<never>();
     const timer = setTimeout(() => reject(new Error(`no answer within ${HEALTH_RPC_TIMEOUT_MS}ms`)), HEALTH_RPC_TIMEOUT_MS);
     try {
@@ -258,6 +249,11 @@ export class ChainSync {
             this.announceReset = false;
             this.hub.broadcast({ type: "reset", genesisHash: this.genesisHash ?? "" });
           }
+        }
+        if (!this.stopped) {
+          // Public pump.fun trades: the launch set may have changed (launched, graduated, wound down) since the last tick.
+          this.pump.syncTargets();
+          await this.pump.poll();
         }
         this.recovered();
       } catch (err) {
@@ -386,7 +382,7 @@ export class ChainSync {
         } else {
           const tx = await this.connection.getTransaction(info.signature, {
             commitment: "confirmed",
-            maxSupportedTransactionVersion: 0,
+            maxSupportedTransactionVersion: MAX_TX_VERSION,
           });
           // Not visible yet: keep the cursor here and retry on the next poll.
           if (!tx) return false;
@@ -523,6 +519,7 @@ export class ChainSync {
           trader: e.trader.toBase58(),
           is_buy: e.isBuy ? 1 : 0,
           is_agent: e.isAgent ? 1 : 0,
+          source: "holdfast",
           sol_amount: e.solAmount.toString(),
           token_amount: e.tokenAmount.toString(),
           fee: e.fee.toString(),

@@ -154,8 +154,8 @@ ${row("One key may trade, crank <b>payout_backers</b> and <b>buyback_burn</b>, n
     "What Holdfast doesn't do",
     `<div class="rows" style="top:292px">
 ${row("<b>Hold a price.</b> Anyone else can sell at any time. The vault agent buys only under the EMA band, at or below its cost or under its average sell, inside an hourly budget", "")}
-${row("<b>Promise a payout.</b> Backers are paid only once the vault's liquid SOL is 5× what went in and the chart is strong. Most tokens never get there", "")}
-${row("<b>Lock the vault.</b> The admin, a 2-of-3 Squads multisig, can withdraw a vault. It did once, on $HFPUMP: 0.351 SOL + 21.95M tokens, listed on the launch page", "")}
+${row("<b>Promise a payout.</b> Backers are paid only once the vault's liquid SOL is 5× what went in and the chart is strong. Many tokens never get there", "")}
+${row("<b>Lock the vault.</b> The admin, a 2-of-3 Squads multisig, can withdraw a vault. Every withdrawal is an on-chain event, listed on the launch page", "")}
 ${row("<b>Have an external audit.</b> The program is unaudited, and upgradeable by the same multisig", "")}
 ${row("<b>Let AI trade.</b> The AI only narrates decisions and re-tunes knobs inside bounds the program caps", "")}
 ${row("<b>Burn yet.</b> The 15% buyback pool accrues until the Holdfast token mint is set", "")}

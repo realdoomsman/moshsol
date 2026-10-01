@@ -162,10 +162,10 @@ What Holdfast doesn't do:
 
 • hold a price
 • promise a payout: 5× liquid and a strong chart first
-• lock the vault: the admin, a 2-of-3 Squads multisig, can withdraw one. It did once, on $HFPUMP; the event is on its page
+• lock the vault: the admin, a 2-of-3 Squads multisig, can withdraw one. Every withdrawal is an on-chain event on the launch page
 • have an audit yet
 • let AI trade: it narrates
-• burn yet
+• burn yet: the Holdfast token isn't live, the 15% pool accrues
 ```
 
 **Reply (one, no thread):**

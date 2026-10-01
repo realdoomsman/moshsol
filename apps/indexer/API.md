@@ -147,6 +147,15 @@ graduation, PumpSwap pool `quote / base` balances after — re-read on every ful
 touching event, so `change24h`, sorting and stats work the same on both venues; `emaSol` stays the account's own sample.
 Between the curve completing and `graduate_pump` recording the pool there is nothing to quote and the last price is kept.
 
+**Public pump.fun trades.** A pump launch's public buys and sells happen on pump.fun (PumpSwap once graduated) and never
+touch this program. The indexer books them too: every live pump launch's venue account (bonding curve, or the pool once
+`pump.graduated`) is watched on the logs websocket and polled every `POLL_MS` alongside the program, and the venue's own
+`TradeEvent` / `BuyEvent` / `SellEvent` is decoded into the same trades, activity, candles, volume and holder data
+(`TradeRow.source = "pump"`, `isAgent: false`). The vault agent's pump trades still come from the program's `Trade` event
+(`source: "holdfast"`, `isAgent: true`), never twice. A venue first watched is backfilled from its newest `PUMP_BACKFILL`
+(default 200) signatures only, so `tradeCount` / `volumeSol` of a pump launch are the on-chain agent counters plus the
+public trades indexed since.
+
 ```json
 {
   "address": "62dtus18U6vSSDB6srjyU5peibfYMQKTHDcATx6Rn3Wg",
@@ -210,8 +219,8 @@ Between the curve completing and `graduate_pump` recording the pool there is not
 |---|---|
 | `name`, `symbol`, `image`, `description`, `twitter`, `telegram`, `website`, `whitelist` | From the metadata JSON at `uri` (on-chain name/symbol until it loads; pump launches carry name/symbol/uri on the launch account, Holdfast launches on the mint) |
 | `marketCapUsd`, `priceUsd`, `volume24hUsd` | `marketCapSol` / `priceSol` / `volume24hSol` × `solUsd` from `GET /api/stats`; `null` until the indexer has a SOL price. Sort and compare on the SOL figures |
-| `change24h` | % price change vs the last trade ≥24 h ago (vs the launch price for younger launches); `null` unless live. On pump launches only agent trades are indexed, so the reference is usually the launch price |
-| `volume24hSol`, `volume1hSol` | SOL traded in the window through this program (agent trades included; public pump.fun trades are not indexed) |
+| `change24h` | % price change vs the last trade ≥24 h ago (vs the launch price for younger launches); `null` unless live |
+| `volume24hSol`, `volume1hSol` | SOL traded in the window (agent trades and, on pump launches, the public pump.fun trades included) |
 | `trades1h` | Trades in the last hour (agent trades included) |
 | `buyers24h`, `sellers24h` | Distinct non-agent wallets that bought / sold in the last 24 h |
 | `lastTradeAt` | Last indexed trade (`null` if none) |
@@ -242,13 +251,19 @@ all of them; `claim_backer_fees` pays them in one claim.
 
 ```json
 { "signature": "5x…", "slot": 504700000, "timestamp": 1790425767,
-  "trader": "Ckbc9MpvAjeuPLgtcKpNCEdAKEoDqDahyhNa3L254iq", "isBuy": false, "isAgent": false,
+  "trader": "Ckbc9MpvAjeuPLgtcKpNCEdAKEoDqDahyhNa3L254iq", "isBuy": false, "isAgent": false, "source": "holdfast",
   "solAmount": "14708593", "tokenAmount": "493371309053", "fee": "147085",
   "priceSol": 3.0099e-8, "emaSol": 3.0069e-8, "vaultSol": "14850000", "vaultTokens": "1153667514021",
   "realSol": "49492682", "tokenReserve": "998352961176926" }
 ```
 
-`priceSol`/`emaSol` and the reserve fields are the state right after the trade.
+`priceSol`/`emaSol` and the reserve fields are the state right after the trade. `source` says which event the row was
+decoded from: `holdfast` (this program's `Trade` event — Holdfast curve trades and the vault agent's pump trades) or
+`pump` (a public pump.fun bonding-curve or PumpSwap trade). On `pump` rows `emaSol`, `vaultSol` and `vaultTokens` are
+`null` (public trades don't move the launch's EMA or vault), `solAmount` is the SOL the venue's reserves exchanged
+(fees aside), `fee` is every fee the venue took (pump.fun protocol + creator fees, plus the LP fee on PumpSwap) and
+`realSol` / `tokenReserve` are the venue's reserves after the trade (`realSolReserves` / `virtualTokenReserves` of the
+curve; the pool's WSOL / token balances).
 
 ### ActivityEvent
 
@@ -393,7 +408,7 @@ The launch's indexed events, newest first. `type` narrows to one `ActivityEvent`
 
 ### `GET /api/launches/:id/trades`
 
-Newest first.
+Newest first; on pump launches public pump.fun trades (`source: "pump"`) and the vault agent's (`source: "holdfast"`) interleave.
 
 | Query | Default | |
 |---|---|---|
@@ -581,7 +596,7 @@ Profile + stats, all from indexed data (no RPC call). Works for any valid wallet
 | `depositedSol` / `refundedSol` | Gross deposits into raises / refunds received |
 | `backerFeesEarnedSol` | Claimed + claimable backer earnings: fee share, vault profit share and wind-down payouts (= `deposited × accFeePerShare`, exactly as the program computes) |
 | `creatorFeesEarnedSol` | Claimed + unclaimed creator fees of the wallet's launches |
-| `trades`, `volumeSol`, … | Curve trades by the wallet (agent trades excluded) |
+| `trades`, `volumeSol`, … | Trades by the wallet on the Holdfast curves and, on pump launches, on pump.fun (agent trades excluded) |
 | `firstSeen` | Earliest indexed event, comment or launch of the wallet (`null` if never seen) |
 
 `launches` is newest first; `backed` sorted by fees earned.
@@ -647,7 +662,7 @@ positive ranking metric are listed. `metric` names the field entries are ranked 
 |---|---|---|
 | `backers` | `feesEarnedSol` | Backer fees earned. `all`: everything ever accrued to their deposits (claimed + claimable). `24h`/`7d`: their pro-rata share of the backer fees paid by trades inside the window |
 | `creators` | `score` | `score = volumeSol + raisedSol`: SOL traded on their launches in the window + raises filled (launched) in the window |
-| `traders` | `volumeSol` | SOL traded on the curve in the window (agent excluded) |
+| `traders` | `volumeSol` | SOL traded in the window on the Holdfast curves and on pump.fun (agent excluded) |
 | `launches` | `volumeSol` | SOL traded in the window (live launches); `mcapChangePct` = price growth since the window start (last trade before it, else the launch price; `all` = since launch) |
 
 ```json

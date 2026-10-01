@@ -59,7 +59,7 @@ export function agentMarkers(trades: TradeRow[], virtualSol: string | bigint): A
         side: t.isBuy ? "buy" : "sell",
         sol: lamportsToSol(t.solAmount),
         tokens: tokensToUi(t.tokenAmount),
-        deviation: t.emaSol > 0 ? before / t.emaSol - 1 : null,
+        deviation: t.emaSol !== null && t.emaSol > 0 ? before / t.emaSol - 1 : null,
       };
     });
 }

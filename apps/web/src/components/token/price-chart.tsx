@@ -529,7 +529,7 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
     for (const t of asc) {
       const bar = bars.get(Math.floor(t.timestamp / tf) * tf);
       if (!bar) continue;
-      if (t.emaSol > 0) bar.ema = t.emaSol;
+      if (t.emaSol !== null && t.emaSol > 0) bar.ema = t.emaSol;
       if (t.isAgent && t.isBuy) bar.agentBuys += 1;
       else if (t.isAgent) bar.agentSells += 1;
     }

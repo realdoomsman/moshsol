@@ -122,8 +122,8 @@ export function useWindDownBlocker(l: Pick<LaunchJson, "address" | "mint" | "ven
 /**
  * The reserves the launch trades against, as a `CurveState` for the SDK quotes: the Holdfast curve
  * straight from the snapshot, or (pump launches) the bonding curve / PumpSwap pool read from chain
- * and polled, since public trades there never reach the indexer. `undefined` while that read is in
- * flight, `null` when the venue account doesn't exist (yet).
+ * and polled, so quotes track the venue between the public trades the indexer books. `undefined`
+ * while that read is in flight, `null` when the venue account doesn't exist (yet).
  */
 export function useVenueCurve(
   l: Pick<LaunchJson, "address" | "mint" | "venue" | "pump" | "virtualSol" | "realSol" | "tokenReserve">,

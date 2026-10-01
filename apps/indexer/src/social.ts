@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { backerClaimable, lamportsToSol, type LaunchJson } from "@holdfast/sdk";
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { activityFromRow } from "./activity";
 import { SIGNATURE_MAX_SKEW_SECS, safeEqual, sha256Hex, verifySignedMessage } from "./auth";
 import type { CommentDbRow, LaunchDbRow, Store } from "./db";
 import type { Holders } from "./holders";
@@ -11,7 +12,6 @@ import { Limiter } from "./ratelimit";
 import { NotFoundError, intQuery, pubkeyParam, requireLaunch, type Query } from "./routes";
 import { HttpError, ValidationError, cleanText, isRecord } from "./sanitize";
 import { summariesOf } from "./summaries";
-import { activityFromRow } from "./sync";
 import type { CommentRow } from "./types";
 
 export interface SocialDeps {
