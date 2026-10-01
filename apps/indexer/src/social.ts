@@ -307,8 +307,8 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
       const snap = JSON.parse(row.snapshot) as LaunchJson;
       const dep = BigInt(d.amount);
       const claimed = claimedByLaunch.get(d.launch) ?? 0n;
-      // Refunded deposits (failed/cancelled raise) never earned fees and have nothing to claim.
-      const claimable = snap.status === "live" ? backerClaimable(dep, BigInt(snap.accFeePerShare), claimed) : 0n;
+      // Refunded deposits (failed/cancelled raise) never earned anything; launched ones (live or wound down) keep claiming.
+      const claimable = snap.status === "refunding" ? 0n : backerClaimable(dep, BigInt(snap.accFeePerShare), claimed);
       deposited += dep;
       backerClaimed += claimed;
       backerClaimableTotal += claimable;
@@ -340,6 +340,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
           raising: created.filter((l) => l.status === "raising").length,
           live: created.filter((l) => l.status === "live").length,
           refunding: created.filter((l) => l.status === "refunding").length,
+          woundDown: created.filter((l) => l.status === "woundDown").length,
         },
         raisedSol: lamportsToSol(raised),
         backedLaunches: backed.length,

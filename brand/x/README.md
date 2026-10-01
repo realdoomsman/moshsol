@@ -16,7 +16,7 @@ The price line in the banner and card is real data: the price, EMA band and vaul
 - **Name:** `Holdfast`
 - **Handle ideas:** `@holdfast`, `@holdfastfun`, `@holdfast_sol`, `@holdfastlaunch` (check which is free)
 - **Bio (160 max):**
-  `Launches that can't be dumped. Backers fund the first buy — it's locked in a vault forever, and they earn 50% of every trading fee. Live on Solana devnet.`
+  `Backers buy first and share the profit: 100% of the vault agent's realized profit and 50% of every trading fee. Live on Solana devnet.`
 - **Location:** `Solana`
 - **Website:** `https://holdfast.up.railway.app`
 - **Pinned post:** Post 1 below with `announce.png`.
@@ -24,26 +24,28 @@ The price line in the banner and card is real data: the price, EMA band and vaul
 Voice rules (from the brand brief): numbers over adjectives; never promise price ("floor", "guaranteed", "can't go down", "100x" are banned); say "vault agent", not "AI" or "bot"; sentence case; dry wit only in replies, never about money.
 
 ## Launch thread (post 1 is the pin)
-1. Launches that can't be dumped.
-   Backers fund the first buy. At launch it's locked in an on-chain vault forever — there is no withdraw instruction. Backers earn 50% of every trading fee.
+1. Backers buy first and share the profit.
+   Backers fund the first buy. It sits in an on-chain vault, traded only by a rate-limited agent. Backers get 100% of its realized profit and 50% of every trading fee.
    Live on Solana devnet → holdfast.up.railway.app
    [image: announce.png]
 2. How a launch works, in four beats:
    01 Back the raise — miss the minimum and everyone is refunded in full.
-   02 The bundle locks — the pool buys first, before any public trade exists.
+   02 The bundle buys first — before any public trade exists.
    03 The vault agent defends — buys dips, sells rallies, inside limits the program enforces.
-   04 Backers earn — half of every 1% trading fee, forever.
+   04 Backers earn — half of every 1% trading fee and all of the agent's realized profit.
 3. The vault agent can't go rogue. Every trade must pass on-chain checks:
    • price ≥ 2% under/over the EMA
    • buys at or below the vault's average cost
    • sells above cost — the vault never realizes a loss
    • per-window budgets and a 3% max price impact
    The agent key can move value only between the launch's own curve and vault.
-4. Rules you can check, not promises. Mint authority revoked. Fixed 1B supply. Fees frozen per launch at creation. 0 withdraw instructions. Every guarantee on the site links to the account that proves it → holdfast.up.railway.app/docs/verify
-5. Drag the price on the landing page and watch what the program would let the vault agent do. It's the real arithmetic, seeded with a live launch.
+4. Rules you can check, not promises. Mint authority revoked. Fixed 1B supply. Fees frozen per launch at creation. Only the platform admin (a Squads multisig on mainnet) can withdraw a vault, and every withdrawal shows on the launch page → holdfast.up.railway.app/docs/verify
+5. When a launch goes quiet — 3+ days old, no trade for 24h, nobody outside the curve and vault holding — anyone can wind it down. The vault's tokens go back to the curve and the curve's and vault's SOL goes to backers.
+6. Drag the price on the landing page and watch what the program would let the vault agent do. It's the real arithmetic, seeded with a live launch.
 
 ## Standalone posts
-- "The first buy on Holdfast is locked forever. Not vested. Not time-locked. There is no instruction that can move it out."
+- "On Holdfast, when the vault agent sells above its average cost, 100% of the profit goes to the backers who funded the first buy."
+- "The platform admin can withdraw a vault with admin_withdraw_vault. Every withdrawal is an on-chain event, shown on the launch page."
 - "Every Holdfast launch freezes its fee split at creation. Backers get 50% of fees. The admin can't change that later."
 - "The vault agent's latest call, live: holdfast.up.railway.app/agents"
-- "Back a raise with a few devnet SOL, watch the bundle lock, claim your fee share. Nothing to lose but test SOL."
+- "Back a raise with a few devnet SOL, watch the bundle buy first, claim your fee and profit share. Nothing to lose but test SOL."

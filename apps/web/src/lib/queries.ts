@@ -24,6 +24,7 @@ import {
   tradeFeed,
   type TradeFilter,
   tradersQuery,
+  vaultWithdrawalsQuery,
 } from "./query-options";
 import type { DepositRow, TradeRow, TraderWindow } from "./types";
 
@@ -222,6 +223,11 @@ export function usePortfolio(wallet: string | null) {
 export function useActivity() {
   const interval = useFallbackInterval(5_000);
   return useQuery({ ...activityQuery(), refetchInterval: interval });
+}
+
+export function useVaultWithdrawals(mint: string) {
+  const interval = useFallbackInterval(15_000);
+  return useQuery({ ...vaultWithdrawalsQuery(mint), refetchInterval: interval });
 }
 
 export function useAgents() {

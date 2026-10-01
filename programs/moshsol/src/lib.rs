@@ -101,4 +101,14 @@ pub mod moshsol {
     pub fn sweep_platform_fees(ctx: Context<SweepPlatformFees>) -> Result<()> {
         fees::sweep_platform_fees(ctx)
     }
+
+    // ---------------- vault ----------------
+
+    pub fn wind_down(ctx: Context<WindDown>) -> Result<()> {
+        vault::wind_down(ctx)
+    }
+
+    pub fn admin_withdraw_vault(ctx: Context<AdminWithdrawVault>, sol: u64, tokens: u64) -> Result<()> {
+        vault::admin_withdraw_vault(ctx, sol, tokens)
+    }
 }

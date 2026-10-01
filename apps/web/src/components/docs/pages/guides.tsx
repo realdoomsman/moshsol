@@ -3,6 +3,7 @@ import { pctFromBps } from "../../band/model";
 import { HowStepsStacked } from "../../landing/how-steps";
 import { DEMO, EmaTerm, launchSteps } from "../../landing/launch-steps";
 import { SplitBar } from "../../landing/fee-split";
+import { WIND_DOWN_RULE } from "../../landing/instructions";
 import { A, B, C, Callout, Figure, Ol, P, Table, Ul } from "../prose";
 import type { DocPage } from "../types";
 
@@ -13,7 +14,7 @@ export const howItWorks: DocPage = {
   group: "Start",
   nav: "How a launch works",
   title: "How a launch works",
-  description: "Four beats — raise, lock, defend, earn — each enforced by an instruction of the Holdfast program.",
+  description: "Four beats — raise, buy first, defend, earn — each enforced by an instruction of the Holdfast program.",
   sections: ({ p }) => [
     {
       id: "the-four-beats",
@@ -26,16 +27,21 @@ export const howItWorks: DocPage = {
       body: (
         <>
           <P>
-            A launch account moves through three on-chain states: <C>Raising</C>, <C>Live</C> and <C>Refunding</C>. The UI adds
-            &ldquo;ready to launch&rdquo; (minimum met, not launched yet) and &ldquo;raise failed&rdquo; (deadline passed below the
-            minimum) from the clock.
+            A launch account moves through four on-chain states: <C>Raising</C>, <C>Live</C>, <C>Refunding</C> and{" "}
+            <C>WoundDown</C>. The UI adds &ldquo;ready to launch&rdquo; (minimum met, not launched yet) and &ldquo;raise failed&rdquo;
+            (deadline passed below the minimum) from the clock.
           </P>
           <Table
             head={["State", "Entered by", "What can happen"]}
             rows={[
               ["Raising", <C key="c">create_launch</C>, "Deposits until the deadline or the max raise; the creator may cancel."],
-              ["Live", <C key="l">launch</C>, "Public buys and sells, vault-agent trades, fee claims."],
+              ["Live", <C key="l">launch</C>, "Public buys and sells, vault-agent trades, fee and profit claims."],
               ["Refunding", <><C>cancel_launch</C>, or <C>refund</C> after a missed minimum</>, "Every backer takes back 100% of their deposit."],
+              [
+                "Wound down",
+                <C key="w">wind_down</C>,
+                "No more trading. The curve's and vault's SOL was credited to backers; all fee claims keep working.",
+              ],
             ]}
           />
         </>
@@ -99,8 +105,9 @@ export const forBackers: DocPage = {
             ) : (
               "Every public trade pays a fee; the backers' share accrues pro-rata to their deposit."
             )}{" "}
-            The program tracks it with a fee-per-share accumulator, so your claimable amount is exact at any moment and never
-            expires. Vault-agent trades pay no fee.
+            So does <B>100% of the vault agent&rsquo;s realized profit</B>: when it sells above the vault&rsquo;s average cost, the
+            difference goes to backers, not the vault. The program tracks both with a fee-per-share accumulator, so your claimable
+            amount is exact at any moment and never expires. Vault-agent trades pay no fee.
           </P>
           {p ? (
             <Figure caption="From /api/platform — each launch freezes these at creation.">
@@ -116,9 +123,31 @@ export const forBackers: DocPage = {
       title: "Claiming",
       body: (
         <P>
-          <C>claim_backer_fees</C> pays everything accrued to your deposit so far. Claim per launch from the token page, or all at once
-          from <A href="/portfolio">Portfolio</A>. Zero volume pays zero — earnings come only from real trades.
+          <C>claim_backer_fees</C> pays everything accrued to your deposit so far: fee share, profit share and, if the launch wound
+          down, your share of its SOL. Claim per launch from the token page, or all at once from <A href="/portfolio">Portfolio</A>.
+          Zero volume pays zero — earnings come only from real trades and wind-down.
         </P>
+      ),
+    },
+    {
+      id: "wind-down",
+      title: "When a launch winds down",
+      body: (
+        <P>
+          Once a launch is {WIND_DOWN_RULE}, anyone can call <C>wind_down</C>. The vault&rsquo;s tokens go back to the curve and the
+          curve&rsquo;s and vault&rsquo;s SOL is credited to backers pro-rata; trading ends. See <A href="/docs/the-vault">The vault</A>.
+        </P>
+      ),
+    },
+    {
+      id: "admin-withdraw",
+      title: "What the admin can do",
+      body: (
+        <Callout tone="warn" title="The vault can be withdrawn">
+          The platform admin can withdraw vault SOL and tokens with <C>admin_withdraw_vault</C>. Your accrued earnings and the
+          curve&rsquo;s liquidity are out of its reach, and every withdrawal is shown on the launch page. See{" "}
+          <A href="/docs/risks">Risks</A>.
+        </Callout>
       ),
     },
   ],
@@ -129,7 +158,7 @@ export const forCreators: DocPage = {
   group: "Guides",
   nav: "For creators",
   title: "For creators",
-  description: "Launch in one transaction with a fixed supply, a bundle your backers can't dump, and a share of every trade.",
+  description: "Launch in one transaction with a fixed supply, a bundle only the vault agent trades, and a share of every trade.",
   sections: ({ p }) => [
     {
       id: "create",
@@ -187,7 +216,8 @@ export const forCreators: DocPage = {
           {p
             ? `${pctFromBps(p.creatorFeeShareBps)} of every trade fee — ${pctFromBps((p.tradeFeeBps * p.creatorFeeShareBps) / 10_000)} of volume — accrues to the creator wallet.`
             : "A fixed share of every trade fee accrues to the creator wallet."}{" "}
-          Claim it any time with <C>claim_creator_fees</C>. You can&rsquo;t touch the vault, and neither can anyone else.
+          Claim it any time with <C>claim_creator_fees</C>, even after a wind-down. You can&rsquo;t touch the vault; only the vault
+          agent trades it, and only the platform admin can withdraw it.
         </P>
       ),
     },
@@ -209,8 +239,8 @@ export const forTraders: DocPage = {
           <P>
             Each launch trades on its own constant-product curve: <C>x · y = k</C>, where <C>x</C> is{" "}
             {p ? `${lamportsToSol(p.virtualSolReserves)} SOL of virtual reserves` : "virtual SOL reserves"} plus the real SOL in the
-            curve and <C>y</C> the tokens left in it. Spot price is <C>x / y</C>. Liquidity never migrates to a DEX and can&rsquo;t be
-            withdrawn, so the curve is always there to sell into.
+            curve and <C>y</C> the tokens left in it. Spot price is <C>x / y</C>. Liquidity never migrates to a DEX and no instruction
+            takes it out while anyone outside the curve and vault holds the token, so the curve is always there to sell into.
           </P>
           <P>
             Sells can only pay out real SOL in the curve, so the curve stops quoting at the price where its real SOL reaches zero:
@@ -246,8 +276,8 @@ export const forTraders: DocPage = {
       title: "What this doesn't protect",
       body: (
         <Callout tone="warn" title="Other holders can still sell">
-          &ldquo;Can&rsquo;t be dumped&rdquo; means the bundle is locked forever. Any other holder can sell at any time and price can
-          fall like any token. See <A href="/docs/risks">Risks</A>.
+          The bundle is held in the vault and traded only by the rate-limited agent, but any other holder can sell at any time, the
+          platform admin can withdraw a vault, and price can fall like any token. See <A href="/docs/risks">Risks</A>.
         </Callout>
       ),
     },

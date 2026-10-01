@@ -23,6 +23,8 @@ export interface Chain extends MarketState {
   tradeCount: number;
   /** All trade fees charged so far (backers + creator + platform). */
   feesSol: bigint;
+  /** Realized agent-sell profit credited to backers so far (`VaultProfitShared` amounts). */
+  profitShared: bigint;
   lastPublicTradeSlot: number;
   lastAgentTradeSlot: number;
 }
@@ -139,6 +141,7 @@ export function launch(s: LaunchSetup, now: bigint): Chain {
     volumeSol: spent,
     tradeCount: 1,
     feesSol: 0n,
+    profitShared: 0n,
     // The simulated slot clock starts at 0; -1 = no trade yet (the program starts at 0 on a chain far past slot 0).
     lastPublicTradeSlot: -1,
     lastAgentTradeSlot: -1,
@@ -237,7 +240,11 @@ export function agentBuy(chain: Chain, solIn: bigint, minTokensOut: bigint, now:
   });
 }
 
-/** agent.rs `agent_sell`: returns lamports received into the vault. */
+/**
+ * agent.rs `agent_sell`: returns the fill in lamports. The sold tokens' average cost (removed from
+ * the basis rounded down, charged against the fill rounded up) returns to the vault and the
+ * buy-back budget; the realized profit above it is credited to backers.
+ */
 export function agentSell(chain: Chain, tokensIn: bigint, minSolOut: bigint, now: bigint, slot: number): TxResult {
   return transact(chain, (l) => {
     agentPrelude(l, now, slot);
@@ -252,18 +259,22 @@ export function agentSell(chain: Chain, tokensIn: bigint, minSolOut: bigint, now
     require(sol <= l.realSol, "InsufficientLiquidity");
     require(sol >= minSolOut, "Slippage");
     require(sol * l.vaultTokens * BPS >= tokensIn * l.vaultCostSol * (BPS + t.bandBps), "AgentBelowCostBasis");
-    // Average-cost method: remove the sold tokens' share of the basis.
-    l.vaultCostSol -= (l.vaultCostSol * tokensIn) / l.vaultTokens;
+    // state.rs `vault_cost_of`: the sold tokens' share of the basis, rounded up.
+    const cost = (l.vaultCostSol * tokensIn + l.vaultTokens - 1n) / l.vaultTokens;
+    const profit = sol > cost ? sol - cost : 0n;
+    const kept = sol - profit;
+    l.vaultCostSol -= cost;
     l.realSol -= sol;
     l.tokenReserve += tokensIn;
     l.vaultTokens -= tokensIn;
-    l.vaultSol += sol;
+    l.vaultSol += kept;
+    l.profitShared += profit;
     require(moveBps(before, spot(l)) <= t.maxImpactBps, "AgentPriceImpact");
     l.windowTokensSold += tokensIn;
     l.agentSells += 1;
     l.agentSolReceived += sol;
     l.agentTokensSold += tokensIn;
-    l.buybackSol += sol;
+    l.buybackSol += kept;
     l.volumeSol += sol;
     l.tradeCount += 1;
     return sol;

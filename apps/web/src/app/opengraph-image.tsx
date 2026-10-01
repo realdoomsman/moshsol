@@ -2,7 +2,7 @@ import { ImageResponse } from "next/og";
 import { OG, OgLockup } from "@/lib/og-brand";
 import { ogFonts } from "@/lib/og-fonts";
 
-export const alt = "Holdfast — launches that can't be dumped";
+export const alt = "Holdfast — backers buy first and share the profit";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -72,8 +72,8 @@ export default async function Image() {
             color: OG.ink,
           }}
         >
-          <div style={{ display: "flex" }}>Launches that</div>
-          <div style={{ display: "flex" }}>can&rsquo;t be dumped.</div>
+          <div style={{ display: "flex" }}>Backers buy first</div>
+          <div style={{ display: "flex" }}>and share the profit.</div>
         </div>
         <svg width={W} height={H} viewBox={`-8 -8 ${W + 16} ${H + 16}`} style={{ marginTop: "auto" }}>
           <line x1={0} x2={W} y1={H * 0.25} y2={H * 0.25} stroke={OG.line} strokeWidth={1} />

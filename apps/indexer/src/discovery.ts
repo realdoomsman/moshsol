@@ -49,7 +49,8 @@ function backersBoard(store: Store, window: Window, since: number): Entry[] {
     const dep = BigInt(d.amount);
     const raised = BigInt(l.snap.raised);
     let earned = 0n;
-    if (l.snap.status === "live" && raised > 0n) {
+    // Launched (live or wound down): the accumulator holds fee share, vault profit share and any wind-down payout.
+    if (l.snap.status !== "raising" && raised > 0n) {
       earned =
         windowAgg === null
           ? // Everything the deposit was ever entitled to (claimed + claimable), exactly as the program computes it.
@@ -84,8 +85,8 @@ function creatorsBoard(store: Store, window: Window, since: number): Entry[] {
   for (const { row, snap } of launchInfos(store).values()) {
     const acc = by.get(row.creator) ?? { volume: 0, raised: 0n, fees: 0n, launches: 0, live: 0 };
     acc.launches += 1;
-    if (snap.status === "live") {
-      acc.live += 1;
+    if (snap.status === "live") acc.live += 1;
+    if (snap.status === "live" || snap.status === "woundDown") {
       // A filled raise counts in the window its launch happened in.
       if (window === "all" || snap.launchedAt >= since) acc.raised += BigInt(snap.raised);
     }

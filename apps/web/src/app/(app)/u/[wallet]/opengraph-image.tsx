@@ -104,7 +104,7 @@ export default async function Image({ params }: { params: Promise<{ wallet: stri
             <Stat label="Volume" value={`${fmtSolValue(s.volumeSol)} SOL`} />
           </>
         ) : (
-          <div style={{ display: "flex", fontSize: 30, color: C.ink2 }}>Launches that can&apos;t be dumped.</div>
+          <div style={{ display: "flex", fontSize: 30, color: C.ink2 }}>Backers buy first and share the profit.</div>
         )}
       </div>
     </div>,

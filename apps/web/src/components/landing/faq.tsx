@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import type { PlatformInfo } from "@/lib/types";
 import { pctFromBps } from "../band/model";
+import { WIND_DOWN_RULE } from "./instructions";
 
 interface Qa {
   q: string;
@@ -11,12 +12,12 @@ interface Qa {
   more: string;
 }
 
-/** The eight questions of §4.2 §10 — shared with the docs FAQ. Numbers render from platform params. */
+/** The landing questions of §4.2 §10 — shared with the docs FAQ. Numbers render from platform params. */
 export function faqItems(p: PlatformInfo["params"] | null): Qa[] {
   return [
     {
       q: "Can the creator dump the bundle?",
-      a: "No. The bundle is bought by the launch instruction and locked in the vault, and the program has no instruction that takes it out — not for the creator, the admin or the agent. Only the vault agent trades it, on the launch's own curve, within its rules.",
+      a: "No. The bundle is bought by the launch instruction and held in the vault, and the creator has no instruction that touches it. Only the vault agent trades it, on the launch's own curve, within its rules. The platform admin can withdraw vault SOL and tokens with admin_withdraw_vault; every withdrawal is on-chain and shown on the launch page.",
       href: "/docs/the-vault",
       more: "The vault",
     },
@@ -34,7 +35,7 @@ export function faqItems(p: PlatformInfo["params"] | null): Qa[] {
     },
     {
       q: "What if the agent goes offline?",
-      a: "The vault stops trading until it's back; nothing can leave it either way. Public trading on the curve carries on, and the agent's heartbeat is public.",
+      a: "The vault stops trading until it's back. Public trading on the curve carries on, and the agent's heartbeat is public.",
       href: "/agents",
       more: "Agent status",
     },
@@ -48,13 +49,19 @@ export function faqItems(p: PlatformInfo["params"] | null): Qa[] {
     },
     {
       q: "Does the token migrate to a DEX?",
-      a: "No. Liquidity lives on the Holdfast curve permanently, so there is no pool for anyone to pull.",
+      a: "No. Liquidity lives on the Holdfast curve, and no instruction takes it out while anyone else holds the token: the admin's vault withdrawal can't touch it, and wind_down only pays it to backers once nobody outside the curve and vault holds any.",
       href: "/docs/for-traders",
       more: "For traders",
     },
     {
-      q: "What does “can't be dumped” not protect against?",
-      a: "Other holders can still sell. The bundle can't. Price can fall on public selling like any token — Holdfast removes the first-buyer dump, not market risk.",
+      q: "What happens when a launch goes quiet?",
+      a: `Once a launch is ${WIND_DOWN_RULE}, anyone can call wind_down: the vault's tokens go back to the curve, the curve's and vault's SOL is credited to backers pro-rata, and trading ends.`,
+      href: "/docs/the-vault",
+      more: "The vault",
+    },
+    {
+      q: "What doesn't Holdfast protect against?",
+      a: "Other holders can still sell, and the platform admin can withdraw a vault (every withdrawal is public). Price can fall like any token — Holdfast makes the backers' bundle the first buy, not a price floor.",
       href: "/docs/risks",
       more: "Risks",
     },

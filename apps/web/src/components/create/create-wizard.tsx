@@ -354,7 +354,7 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
       <header className="grid gap-1">
         <h1 className="display-m text-ink">Create a launch</h1>
         <p className="body text-ink-2">
-          Open a raise. When it closes, the pooled SOL buys the first slice of supply and locks it in the vault forever.{" "}
+          Open a raise. When it closes, the pooled SOL buys the first slice of supply and holds it in the launch&rsquo;s vault.{" "}
           <Link href="/docs/how-it-works" className="whitespace-nowrap text-ink underline decoration-ink-3/60 underline-offset-2 hover:decoration-ink">
             How it works ›
           </Link>

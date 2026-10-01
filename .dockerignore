@@ -11,6 +11,7 @@ programs
 .mainnet-beta
 test-ledger
 apps/indexer/data
+apps/accounts/data
 **/*.log
 **/.env
 **/.env.*

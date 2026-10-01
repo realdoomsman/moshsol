@@ -120,7 +120,7 @@ Connect to `ws(s)://<indexer>/ws`. The server only pushes (client messages are i
 { "type": "comment", "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1",
   "comment": { "id": 15, "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1",
     "wallet": "FwYLuQQev8VnGnXySMd7NSJvSYwqhe3tgcdyWzEVpnAs", "name": "holdfast_dev", "avatar": null,
-    "body": "creator here — vault is locked forever", "replyTo": null, "replyCount": 0, "createdAt": 1790498155,
+    "body": "creator here — backers get the vault's profit", "replyTo": null, "replyCount": 0, "createdAt": 1790498155,
     "isCreator": true, "isBacker": true, "holdsTokens": false } }
 ```
 
@@ -172,7 +172,11 @@ Returned by the launch list/detail endpoints, `/api/trending` and the `launch` W
   "holders": 1,
   "topHolderPct": 0.0493,
   "comments": 0,
-  "creatorName": null
+  "creatorName": null,
+  "profitSharedSol": 0,
+  "vaultWithdrawnSol": 0,
+  "vaultWithdrawnTokens": "0",
+  "woundDown": null
 }
 ```
 
@@ -188,8 +192,16 @@ Returned by the launch list/detail endpoints, `/api/trending` and the `launch` W
 | `topHolderPct` | Largest holder's % of total supply, curve and vault excluded; `null` until holders were first loaded |
 | `comments` | Visible comments |
 | `creatorName` | The creator's profile name, `null` if unset |
+| `profitSharedSol` | SOL credited to backers from the vault agent's realized profit (sum of `VaultProfitShared` events) |
+| `vaultWithdrawnSol`, `vaultWithdrawnTokens` | Vault SOL / tokens (base units) the platform admin withdrew with `admin_withdraw_vault` (sum of `VaultWithdrawn`); each withdrawal is listed by `GET /api/launches/:mint/activity?type=vault_withdrawn` |
+| `woundDown` | `{ timestamp, solToBackers, tokensReturned, signature }` from the `WoundDown` event (`solToBackers` in SOL, `tokensReturned` base units); `null` if not wound down (or the event predates the indexed history) |
 
-`status` is `raising` (raise open or awaiting launch), `live` (trading), or `refunding` (cancelled/failed raise).
+`status` is `raising` (raise open or awaiting launch), `live` (trading), `refunding` (cancelled/failed raise) or
+`woundDown` (permissionless `wind_down` ran: trading stopped for good, curve + vault SOL were credited to backers).
+
+`backerFeesAccrued` and `accFeePerShare` include every backer credit: the backer fee share, 100% of the vault agent's
+realized profit and the wind-down payout. A backer's claimable amount (`/backers`, `/portfolio`, `/users`) is
+`deposited × accFeePerShare − feesClaimed`, so it covers all three; `claim_backer_fees` pays them in one claim.
 
 ### TradeRow
 
@@ -212,9 +224,13 @@ Returned by the launch list/detail endpoints, `/api/trending` and the `launch` W
   "solAmount": "30000000" }
 ```
 
-`type`: `trade`, `deposit`, `launch_created`, `launched`, `refund`, `cancelled`, `backer_claim`, `creator_claim`.
-`actor` is the trader/backer/creator (the launch creator for `launched`/`cancelled`). Optional: `isAgent`, `isBuy`
-(trades), `solAmount` (lamports), `tokenAmount` (trades, `launched`).
+`type`: `trade`, `deposit`, `launch_created`, `launched`, `refund`, `cancelled`, `backer_claim`, `creator_claim`,
+`profit_shared`, `wound_down`, `vault_withdrawn`.
+`actor` is the trader/backer/creator (the launch creator for the launch-level `launched`/`cancelled`/`profit_shared`/
+`wound_down`; the platform fee recipient for `vault_withdrawn`). Optional: `isAgent`, `isBuy` (trades), `solAmount`
+(lamports: trade/deposit/claim amounts, the profit credited for `profit_shared`, curve + vault SOL credited to backers
+for `wound_down`, vault SOL withdrawn for `vault_withdrawn`), `tokenAmount` (trades, `launched`; tokens returned to the
+curve for `wound_down`; vault tokens withdrawn for `vault_withdrawn`).
 
 ### Comment
 
@@ -266,10 +282,14 @@ Global platform account (`404` if not initialized). Use a launch's `terms`, not 
 ### `GET /api/stats`
 
 ```json
-{ "totalLaunches": 4, "liveLaunches": 2, "raisingLaunches": 1, "totalRaisedSol": 1.08, "totalVolumeSol": 0.817,
-  "volume24hSol": 0.089, "backerFeesAccruedSol": 0.000449, "agentTrades": 0, "lockedVaultSol": 0.312,
-  "lockedVaultTokensValueSol": 0.744 }
+{ "totalLaunches": 4, "liveLaunches": 2, "raisingLaunches": 1, "woundDownLaunches": 0, "totalRaisedSol": 1.08,
+  "totalVolumeSol": 0.817, "volume24hSol": 0.089, "backerFeesAccruedSol": 0.000449, "profitSharedSol": 0,
+  "agentTrades": 0, "vaultSol": 0.312, "vaultTokensValueSol": 0.744, "vaultWithdrawnSol": 0 }
 ```
+
+`backerFeesAccruedSol` is everything credited to backers (fee share + vault profit share + wind-down payouts);
+`profitSharedSol` is the vault-profit part. `vaultSol` / `vaultTokensValueSol` are what the vaults hold now (tokens at
+spot price); `vaultWithdrawnSol` is the SOL the platform admin has withdrawn from vaults with `admin_withdraw_vault`.
 
 ---
 
@@ -279,7 +299,7 @@ Global platform account (`404` if not initialized). Use a launch's `terms`, not 
 
 | Query | Default | |
 |---|---|---|
-| `status` | `all` | `raising` \| `live` \| `refunding` \| `all` |
+| `status` | `all` | `raising` \| `live` \| `refunding` \| `woundDown` \| `all` |
 | `sort` | `new` | `new` \| `trending` (`volume1hSol + 0.25 × volume24hSol`) \| `volume` (24 h) \| `mcap` \| `raised` |
 | `q` | — | Case-insensitive substring of name, symbol or mint |
 | `limit` / `offset` | `50` / `0` | `limit` ≤ 200 |
@@ -289,6 +309,13 @@ Global platform account (`404` if not initialized). Use a launch's `terms`, not 
 ### `GET /api/launches/:mint`
 
 → `LaunchSummary`. `404` unknown mint.
+
+### `GET /api/launches/:mint/activity?type=&before=&limit=`
+
+The launch's indexed events, newest first. `type` narrows to one `ActivityEvent` type (`400` if unknown), e.g.
+`type=vault_withdrawn` lists every admin vault withdrawal (`actor` = recipient, `solAmount` lamports,
+`tokenAmount` base units, `signature` = the transaction). `limit` default 50, ≤ 500; `before` unix seconds.
+→ `{ "events": ActivityEvent[] }`
 
 ### `GET /api/launches/:mint/trades`
 
@@ -439,7 +466,7 @@ Profile + stats, all from indexed data (no RPC call). Works for any valid wallet
   "wallet": "FwYLuQQev8VnGnXySMd7NSJvSYwqhe3tgcdyWzEVpnAs",
   "name": "holdfast_dev", "bio": "creator of MOSH", "avatar": null, "profileUpdatedAt": 1790498155,
   "stats": {
-    "launchesCreated": 2, "launchesByStatus": { "raising": 1, "live": 1, "refunding": 0 },
+    "launchesCreated": 2, "launchesByStatus": { "raising": 1, "live": 1, "refunding": 0, "woundDown": 0 },
     "raisedSol": 1.03,
     "backedLaunches": 2, "depositedSol": 1.03, "refundedSol": 0,
     "backerFeesEarnedSol": 0.000224285, "backerFeesClaimedSol": 0, "backerFeesClaimableSol": 0.000224285,
@@ -474,7 +501,7 @@ Profile + stats, all from indexed data (no RPC call). Works for any valid wallet
 |---|---|
 | `raisedSol` | SOL raised by the wallet's launches that aren't refunding (includes raises still open) |
 | `depositedSol` / `refundedSol` | Gross deposits into raises / refunds received |
-| `backerFeesEarnedSol` | Claimed + claimable backer fees (= `deposited × accFeePerShare`, exactly as the program computes) |
+| `backerFeesEarnedSol` | Claimed + claimable backer earnings: fee share, vault profit share and wind-down payouts (= `deposited × accFeePerShare`, exactly as the program computes) |
 | `creatorFeesEarnedSol` | Claimed + unclaimed creator fees of the wallet's launches |
 | `trades`, `volumeSol`, … | Curve trades by the wallet (agent trades excluded) |
 | `firstSeen` | Earliest indexed event, comment or launch of the wallet (`null` if never seen) |
@@ -483,8 +510,9 @@ Profile + stats, all from indexed data (no RPC call). Works for any valid wallet
 
 ### `GET /api/users/:wallet/activity?before=&limit=`
 
-Everything the wallet did (trades, deposits, refunds, claims, launches created) plus the `launched`/`cancelled`
-events of its launches, newest first. `limit` default 50, ≤ 200; `before` unix seconds.
+Everything the wallet did (trades, deposits, refunds, claims, launches created) plus the launch-level `launched`/
+`cancelled`/`profit_shared`/`wound_down` events of its launches, newest first. `limit` default 50, ≤ 200; `before`
+unix seconds.
 
 ```json
 { "events": [ ActivityEvent, … ], "nextBefore": 1790425817 }

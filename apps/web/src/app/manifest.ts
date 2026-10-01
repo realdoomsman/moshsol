@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Holdfast",
     short_name: "Holdfast",
-    description: "The Solana launchpad where the first buy can never be dumped.",
+    description: "The Solana launchpad where backers buy first and share the profit.",
     start_url: "/app",
     display: "standalone",
     background_color: THEME_COLOR,

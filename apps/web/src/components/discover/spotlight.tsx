@@ -85,7 +85,7 @@ function TrendingPanel({ launch: l, kingSince, now }: { launch: LaunchSummary; k
       <div className={cn(FOOTER, "small text-ink-2")}>
         <ClampGlyph className="shrink-0 text-accent-ink" />
         <span className="num min-w-0 truncate">
-          {fmtSolValue(vault.sol)} SOL + {vault.supplyPct.toFixed(2)}% supply locked
+          {fmtSolValue(vault.sol)} SOL + {vault.supplyPct.toFixed(2)}% supply in the vault
         </span>
         {l.volume1hSol > 0 ? (
           <span className="num ml-auto shrink-0 text-ink-3">{fmtSolValue(l.volume1hSol)} SOL traded 1h</span>

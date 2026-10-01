@@ -55,6 +55,121 @@ export type Moshsol = {
       "args": []
     },
     {
+      "name": "adminWithdrawVault",
+      "discriminator": [
+        104,
+        13,
+        82,
+        172,
+        52,
+        229,
+        136,
+        35
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "platform"
+          ]
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "vaultTokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feeRecipient",
+          "writable": true
+        },
+        {
+          "name": "recipientTokens",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": [
+        {
+          "name": "sol",
+          "type": "u64"
+        },
+        {
+          "name": "tokens",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "agentBuy",
       "discriminator": [
         26,
@@ -1551,6 +1666,103 @@ export type Moshsol = {
           }
         }
       ]
+    },
+    {
+      "name": "windDown",
+      "discriminator": [
+        108,
+        63,
+        202,
+        124,
+        241,
+        98,
+        53,
+        50
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "signer": true
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "curveTokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  117,
+                  114,
+                  118,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vaultTokens",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -1710,6 +1922,45 @@ export type Moshsol = {
         43,
         18,
         81
+      ]
+    },
+    {
+      "name": "vaultProfitShared",
+      "discriminator": [
+        130,
+        191,
+        242,
+        75,
+        131,
+        4,
+        212,
+        176
+      ]
+    },
+    {
+      "name": "vaultWithdrawn",
+      "discriminator": [
+        238,
+        9,
+        219,
+        172,
+        188,
+        77,
+        72,
+        104
+      ]
+    },
+    {
+      "name": "woundDown",
+      "discriminator": [
+        142,
+        12,
+        111,
+        236,
+        170,
+        205,
+        60,
+        118
       ]
     }
   ],
@@ -1873,6 +2124,21 @@ export type Moshsol = {
       "code": 6031,
       "name": "termsChanged",
       "msg": "Platform terms changed since this launch was prepared; review them and retry"
+    },
+    {
+      "code": 6032,
+      "name": "launchTooYoung",
+      "msg": "Launch must be live for 3 days before it can wind down"
+    },
+    {
+      "code": 6033,
+      "name": "recentTrade",
+      "msg": "Launch traded in the last 24 hours; it can't wind down yet"
+    },
+    {
+      "code": 6034,
+      "name": "outsideHolders",
+      "msg": "Tokens are held outside the curve and vault; the launch can't wind down"
     }
   ],
   "types": [
@@ -2414,6 +2680,9 @@ export type Moshsol = {
           },
           {
             "name": "refunding"
+          },
+          {
+            "name": "woundDown"
           }
         ]
       }
@@ -2678,7 +2947,7 @@ export type Moshsol = {
           {
             "name": "agentsPaused",
             "docs": [
-              "Blocks agent trades (circuit breaker). Vault funds stay locked either way."
+              "Blocks agent trades (circuit breaker)."
             ],
             "type": "bool"
           },
@@ -2786,6 +3055,110 @@ export type Moshsol = {
           },
           {
             "name": "vaultTokens",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "vaultProfitShared",
+      "docs": [
+        "Realized profit of an agent sell (fill minus the average cost of the tokens sold), credited",
+        "in full to backers through the fee accumulator."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "vaultWithdrawn",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "sol",
+            "type": "u64"
+          },
+          {
+            "name": "tokens",
+            "type": "u64"
+          },
+          {
+            "name": "recipient",
+            "docs": [
+              "The platform fee recipient that received the SOL and owns the token account."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "recipientTokens",
+            "docs": [
+              "Token account (owned by `recipient`) that received the tokens."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "woundDown",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "solToBackers",
+            "docs": [
+              "Curve SOL + vault SOL credited to backers through the fee accumulator."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "tokensReturned",
+            "docs": [
+              "Vault tokens moved back to the curve account."
+            ],
             "type": "u64"
           },
           {

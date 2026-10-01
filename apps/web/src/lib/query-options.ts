@@ -45,6 +45,13 @@ export const portfolioQuery = (wallet: string) =>
 
 export const activityQuery = () => queryOptions({ queryKey: ["activity"], queryFn: () => api.activity(40) });
 
+/** Admin `admin_withdraw_vault` withdrawals of one launch, newest first. */
+export const vaultWithdrawalsQuery = (mint: string) =>
+  queryOptions({
+    queryKey: ["launch-activity", mint, "vault_withdrawn"],
+    queryFn: () => api.launchActivity(mint, { type: "vault_withdrawn", limit: 100 }),
+  });
+
 export const agentsQuery = () => queryOptions({ queryKey: ["agents"], queryFn: api.agents });
 
 export const agentStatusQuery = () => queryOptions({ queryKey: ["agent-status"], queryFn: api.agentStatus });

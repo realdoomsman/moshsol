@@ -10,11 +10,17 @@ import {
   type Provider,
   type Wallet,
 } from "@coral-xyz/anchor";
-import { getTokenMetadata } from "@solana/spl-token";
+import { getTokenMetadata, unpackAccount, unpackMint } from "@solana/spl-token";
 import { Connection, PublicKey, SystemProgram, type TransactionInstruction } from "@solana/web3.js";
 import idlJson from "./idl/moshsol.json";
 import type { Moshsol } from "./idl/moshsol";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, BPF_LOADER_UPGRADEABLE_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "./constants";
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  BPF_LOADER_UPGRADEABLE_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+  WIND_DOWN_IDLE_SECS,
+  WIND_DOWN_MIN_AGE_SECS,
+} from "./constants";
 import { backerPda, curvePda, launchPda, platformPda, tokenAta, vaultPda } from "./pda";
 import { marketCapSol, q64ToSolPerToken, spotPrice } from "./math";
 
@@ -30,12 +36,32 @@ export type MoshEvents = IdlEvents<Moshsol>;
 export type MoshEventName = keyof MoshEvents;
 export type MoshEvent = { [K in MoshEventName]: { name: K; data: MoshEvents[K] } }[MoshEventName];
 
-export type LaunchStatus = "raising" | "live" | "refunding";
+export type LaunchStatus = "raising" | "live" | "refunding" | "woundDown";
 
 export function statusOf(l: { status: LaunchAccount["status"] }): LaunchStatus {
   if ("live" in l.status) return "live";
   if ("refunding" in l.status) return "refunding";
+  if ("woundDown" in l.status) return "woundDown";
   return "raising";
+}
+
+/** Why `wind_down` would fail right now; null = it would succeed. */
+export type WindDownBlocker = "notLive" | "tooYoung" | "recentTrade" | "outsideHolders";
+
+/** Unix time from which the program's age and idle rules allow `wind_down`. */
+export function windDownOpensAt(l: Pick<LaunchJson, "launchedAt" | "lastTradeTs">): number {
+  return Math.max(l.launchedAt + WIND_DOWN_MIN_AGE_SECS, l.lastTradeTs + WIND_DOWN_IDLE_SECS);
+}
+
+/** The status, age and idle rules of `wind_down` (the holder rule needs balances: `MoshClient.windDownBlocker`). */
+export function windDownTimingBlocker(
+  l: Pick<LaunchJson, "status" | "launchedAt" | "lastTradeTs">,
+  nowSec: number,
+): WindDownBlocker | null {
+  if (l.status !== "live") return "notLive";
+  if (nowSec < l.launchedAt + WIND_DOWN_MIN_AGE_SECS) return "tooYoung";
+  if (nowSec < l.lastTradeTs + WIND_DOWN_IDLE_SECS) return "recentTrade";
+  return null;
 }
 
 const big = (v: BN | number | bigint): bigint => BigInt(v.toString());
@@ -256,6 +282,28 @@ export class MoshClient {
   async fetchTokenMeta(mint: PublicKey): Promise<TokenMeta | null> {
     const m = await getTokenMetadata(this.connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID);
     return m ? { name: m.name, symbol: m.symbol, uri: m.uri } : null;
+  }
+
+  /**
+   * Whether `wind_down` would pass right now, from one consistent snapshot of the launch, its mint
+   * supply and the curve/vault token balances (the program's outside-holder rule:
+   * `supply == curve + vault`). null = eligible.
+   */
+  async windDownBlocker(mint: PublicKey, nowSec = Math.floor(Date.now() / 1000)): Promise<WindDownBlocker | null> {
+    const launch = launchPda(mint, this.programId);
+    const [launchInfo, mintInfo, curveInfo, vaultInfo] = await this.connection.getMultipleAccountsInfo(
+      [launch, mint, curvePda(launch, this.programId), vaultPda(launch, this.programId)],
+      "confirmed",
+    );
+    if (!launchInfo || !mintInfo || !curveInfo || !vaultInfo) return "notLive";
+    const l = launchToJson(launch, this.program.coder.accounts.decode<LaunchAccount>("launch", launchInfo.data));
+    const timing = windDownTimingBlocker(l, nowSec);
+    if (timing) return timing;
+    const supply = unpackMint(mint, mintInfo, TOKEN_2022_PROGRAM_ID).supply;
+    const held =
+      unpackAccount(curvePda(launch, this.programId), curveInfo, TOKEN_2022_PROGRAM_ID).amount +
+      unpackAccount(vaultPda(launch, this.programId), vaultInfo, TOKEN_2022_PROGRAM_ID).amount;
+    return supply === held ? null : "outsideHolders";
   }
 
   parseEvents(logs: string[]): MoshEvent[] {
@@ -507,6 +555,46 @@ export class MoshClient {
         platform: platformPda(this.programId),
         launch: launchPda(mint, this.programId),
         feeRecipient,
+      })
+      .instruction();
+  }
+
+  /** Permissionless: ends a dead launch (see `windDownBlocker` for the rules). */
+  async windDownIx(cranker: PublicKey, mint: PublicKey) {
+    const launch = launchPda(mint, this.programId);
+    return this.program.methods
+      .windDown()
+      .accountsStrict({
+        cranker,
+        launch,
+        mint,
+        curveTokens: curvePda(launch, this.programId),
+        vaultTokens: vaultPda(launch, this.programId),
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+      })
+      .instruction();
+  }
+
+  /**
+   * Platform admin only: sends `sol` lamports of vault SOL to the platform fee recipient and `tokens`
+   * base units of vault tokens to `recipientTokens`, a Token-2022 account of `mint` owned by the fee
+   * recipient (e.g. `tokenAta(feeRecipient, mint)`, which must exist).
+   */
+  async adminWithdrawVaultIx(admin: PublicKey, mint: PublicKey, sol: bigint, tokens: bigint, recipientTokens: PublicKey) {
+    const platform = await this.fetchPlatform();
+    if (!platform) throw new Error("Platform is not initialized");
+    const launch = launchPda(mint, this.programId);
+    return this.program.methods
+      .adminWithdrawVault(bn(sol), bn(tokens))
+      .accountsStrict({
+        admin,
+        platform: platformPda(this.programId),
+        launch,
+        mint,
+        vaultTokens: vaultPda(launch, this.programId),
+        feeRecipient: platform.feeRecipient,
+        recipientTokens,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
       })
       .instruction();
   }

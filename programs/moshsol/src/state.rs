@@ -45,7 +45,7 @@ pub struct PlatformParams {
     pub ema_period_secs: u32,
     /// Blocks new launches and deposits. Never blocks refunds, trading or claims.
     pub paused: bool,
-    /// Blocks agent trades (circuit breaker). Vault funds stay locked either way.
+    /// Blocks agent trades (circuit breaker).
     pub agents_paused: bool,
     /// Beta cap on a new launch's `raise_max`; 0 = only the hard `MAX_RAISE_LAMPORTS` limit.
     pub max_raise_lamports: u64,
@@ -113,6 +113,10 @@ pub enum LaunchStatus {
     Raising,
     Live,
     Refunding,
+    /// Live launch that nobody outside the curve and vault held any more: vault tokens went back
+    /// to the curve, curve + vault SOL went to backers, trading is over. Appended last so
+    /// existing accounts keep decoding.
+    WoundDown,
 }
 
 /// Economic terms copied from the platform at `create_launch`. They can never change for the
@@ -175,12 +179,13 @@ pub struct Launch {
     pub bundle_supply_bps: u16,
     pub reserve_bps: u16,
 
-    // ---- curve (constant product with virtual SOL; liquidity can never be removed) ----
+    // ---- curve (constant product with virtual SOL; SOL leaves only through sells, or to
+    //      backers via `wind_down` once nobody outside the curve and vault holds tokens) ----
     pub virtual_sol: u64,
     pub real_sol: u64,
     pub token_reserve: u64,
 
-    // ---- locked vault ----
+    // ---- vault (traded by the agent; the platform admin can withdraw it) ----
     pub vault_sol: u64,
     pub vault_tokens: u64,
     pub bundle_sol: u64,
@@ -243,11 +248,14 @@ impl Launch {
         match self.status {
             LaunchStatus::Raising => self.raised,
             LaunchStatus::Refunding => self.raised - self.refunded,
-            LaunchStatus::Live => self.real_sol
-                + self.vault_sol
-                + (self.backer_fees_accrued - self.backer_fees_claimed)
-                + self.creator_fees_unclaimed
-                + self.platform_fees_unclaimed,
+            // wind_down zeroes real_sol and vault_sol after crediting them to backers.
+            LaunchStatus::Live | LaunchStatus::WoundDown => {
+                self.real_sol
+                    + self.vault_sol
+                    + (self.backer_fees_accrued - self.backer_fees_claimed)
+                    + self.creator_fees_unclaimed
+                    + self.platform_fees_unclaimed
+            }
         }
     }
 
@@ -278,21 +286,7 @@ impl Launch {
         let backer = math::bps(fee, self.terms.backer_fee_share_bps)?;
         let creator = math::bps(fee, self.terms.creator_fee_share_bps)?;
         let platform = fee - backer - creator;
-        if backer > 0 {
-            // raised > 0 is guaranteed for live launches (launch requires raise_min > 0)
-            let inc = (backer as u128)
-                .checked_mul(ACC_PRECISION)
-                .ok_or(MoshError::MathOverflow)?
-                / self.raised as u128;
-            self.acc_fee_per_share = self
-                .acc_fee_per_share
-                .checked_add(inc)
-                .ok_or(MoshError::MathOverflow)?;
-            self.backer_fees_accrued = self
-                .backer_fees_accrued
-                .checked_add(backer)
-                .ok_or(MoshError::MathOverflow)?;
-        }
+        self.credit_backers(backer)?;
         self.creator_fees_unclaimed = self
             .creator_fees_unclaimed
             .checked_add(creator)
@@ -302,6 +296,37 @@ impl Launch {
             .checked_add(platform)
             .ok_or(MoshError::MathOverflow)?;
         Ok((backer, creator, platform))
+    }
+
+    /// Adds `amount` lamports to what backers can claim, pro-rata to their deposits. The
+    /// per-share increment rounds down, so claims never exceed `backer_fees_accrued`; the
+    /// rounding dust stays in the launch account.
+    pub fn credit_backers(&mut self, amount: u64) -> Result<()> {
+        if amount == 0 {
+            return Ok(());
+        }
+        // raised > 0 is guaranteed once live (launch requires raise_min > 0)
+        let inc = (amount as u128)
+            .checked_mul(ACC_PRECISION)
+            .ok_or(MoshError::MathOverflow)?
+            / self.raised as u128;
+        self.acc_fee_per_share = self
+            .acc_fee_per_share
+            .checked_add(inc)
+            .ok_or(MoshError::MathOverflow)?;
+        self.backer_fees_accrued = self
+            .backer_fees_accrued
+            .checked_add(amount)
+            .ok_or(MoshError::MathOverflow)?;
+        Ok(())
+    }
+
+    /// Average-cost basis of `tokens` of the vault's current holdings, rounded up so the basis
+    /// left behind (rounded down) never overstates the average cost of what remains. Requires
+    /// 0 < tokens <= vault_tokens, so the result is <= vault_cost_sol.
+    pub fn vault_cost_of(&self, tokens: u64) -> u64 {
+        let num = (self.vault_cost_sol as u128) * (tokens as u128);
+        num.div_ceil(self.vault_tokens as u128) as u64
     }
 
     /// Folds the price that prevailed since the last trade into the EMA with weight

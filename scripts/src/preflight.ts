@@ -1,10 +1,10 @@
 /**
  * Checks the dev stack before `pnpm dev` / `pnpm start` launch the services, and fails fast (exit 1)
  * with the command that fixes it: validator unreachable, program missing, platform not initialized,
- * agent key missing, or a service port (indexer, agent status, web 3000) already taken.
+ * agent key missing, or a service port (indexer, agent status, accounts, web 3000) already taken.
  *
  * Env: RPC_URL (default http://127.0.0.1:8899), AGENT_KEYPAIR (default .localnet/agent.json),
- *      PORT (indexer, 8787), STATUS_PORT (agent, 8788).
+ *      PORT (indexer, 8787), STATUS_PORT (agent, 8788), ACCOUNTS_PORT (accounts, 8789).
  */
 import fs from "node:fs";
 import net from "node:net";
@@ -68,6 +68,7 @@ async function main(): Promise<void> {
   const ports: [string, number][] = [
     ["indexer (PORT)", Number(process.env.PORT || 8787)],
     ["agent status (STATUS_PORT)", Number(process.env.STATUS_PORT || 8788)],
+    ["accounts (ACCOUNTS_PORT)", Number(process.env.ACCOUNTS_PORT || 8789)],
     ["web", 3000],
   ];
   for (const [what, port] of ports) {

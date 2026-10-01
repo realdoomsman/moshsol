@@ -109,7 +109,9 @@ export function HoldersTab({
             <LoadingRows cols={cols} />
           ) : rows.length === 0 ? (
             <TableMessage colSpan={cols}>
-              <EmptyState>No holders yet. Buy on the curve to be the first.</EmptyState>
+              <EmptyState>
+                {l.status === "woundDown" ? "No holders. This launch wound down; trading has ended." : "No holders yet. Buy on the curve to be the first."}
+              </EmptyState>
             </TableMessage>
           ) : (
             rows.map((h, i) => {
@@ -124,7 +126,7 @@ export function HoldersTab({
                       ) : (
                         <WalletLink wallet={h.owner} onFilter={() => onFilterMaker(h.owner)} />
                       )}
-                      {h.label === "vault" ? <Chip tone="accent">Vault · locked forever</Chip> : null}
+                      {h.label === "vault" ? <Chip tone="accent">Vault</Chip> : null}
                       {h.label === "curve" ? <Chip tone="muted">Curve</Chip> : null}
                       {h.owner === roles.creator ? <RoleChip role="creator" /> : null}
                       {share !== undefined ? <RoleChip role="backer" detail={shareDetail(share)} /> : null}

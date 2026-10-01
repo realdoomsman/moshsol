@@ -539,6 +539,32 @@ export class ChainSync {
       case "platformFeesSwept":
         // Not part of the public activity feed; the launch snapshot refresh reflects it.
         return { launch, inserted: false };
+      case "vaultProfitShared":
+        // Emitted right after the agent sell's `trade` event: the realized profit credited to backers.
+        return {
+          launch,
+          inserted: activity({ type: "profit_shared", actor: null, sol_amount: ev.data.amount.toString() }),
+        };
+      case "woundDown":
+        return {
+          launch,
+          inserted: activity({
+            type: "wound_down",
+            actor: null,
+            sol_amount: ev.data.solToBackers.toString(),
+            token_amount: ev.data.tokensReturned.toString(),
+          }),
+        };
+      case "vaultWithdrawn":
+        return {
+          launch,
+          inserted: activity({
+            type: "vault_withdrawn",
+            actor: ev.data.recipient.toBase58(),
+            sol_amount: ev.data.sol.toString(),
+            token_amount: ev.data.tokens.toString(),
+          }),
+        };
     }
   }
 
@@ -606,7 +632,7 @@ export class ChainSync {
     if (slot < row.snapshot_slot) return;
 
     const json = launchToJson(key, account);
-    if (json.status === "live" && row.launch_price === null) {
+    if ((json.status === "live" || json.status === "woundDown") && row.launch_price === null) {
       // Missed the `launched` event: the bundle is the curve's first buy, so its post-trade price is exact.
       const price = spotPrice({
         virtualSol: BigInt(json.virtualSol),

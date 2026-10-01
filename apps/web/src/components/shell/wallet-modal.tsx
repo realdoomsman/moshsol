@@ -5,9 +5,11 @@ import { useWallet, type Wallet } from "@solana/wallet-adapter-react";
 import { WalletModalContext } from "@solana/wallet-adapter-react-ui";
 import { ArrowUpRight, ChevronRight, KeyRound } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import { BURNER_WALLET_NAME } from "@/lib/burner";
 import { CLUSTER_LABEL, CLUSTER, IS_TEST_CLUSTER } from "@/lib/env";
+import { EXPORT_AFTER_REAUTH_KEY, GOOGLE_WALLET_NAME } from "@/lib/google-wallet";
 import { Chip } from "../ui/chip";
 import { cn } from "../ui/cn";
 import { Dialog } from "../ui/dialog";
@@ -67,23 +69,33 @@ function Row({
   );
 }
 
+/** `?auth_error=` codes the accounts service redirects back with after a failed Google round trip. */
+const AUTH_ERRORS: Record<string, string> = {
+  cancelled: "Google sign-in was cancelled.",
+  expired: "Google sign-in expired. Try again.",
+  failed: "Google sign-in failed. Try again.",
+};
+
 /**
- * "Connect a wallet" (§4.3), replacing wallet-adapter-react-ui's modal: detected wallets first
- * (Wallet Standard auto-detects Phantom, Solflare, Backpack…), then install links for the ones
- * missing, then — on devnet/localnet only — the in-browser test wallet. Bottom sheet on mobile.
+ * "Connect a wallet" (§4.3), replacing wallet-adapter-react-ui's modal: "Continue with Google"
+ * (custodial wallet, no extension) first, then detected wallets (Wallet Standard auto-detects
+ * Phantom, Solflare, Backpack…), then install links for the ones missing, then — on devnet/localnet
+ * only — the in-browser test wallet. Bottom sheet on mobile.
  */
 function WalletModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { wallets, wallet, select, connect, connecting } = useWallet();
   const [picked, setPicked] = useState<WalletName | null>(null);
 
-  const { detected, burner, missing } = useMemo(() => {
+  const { google, detected, burner, missing } = useMemo(() => {
     const ready = (w: Wallet) =>
       w.readyState === WalletReadyState.Installed || w.readyState === WalletReadyState.Loadable;
+    const ours = (w: Wallet) => w.adapter.name === BURNER_WALLET_NAME || w.adapter.name === GOOGLE_WALLET_NAME;
+    const google = wallets.find((w) => w.adapter.name === GOOGLE_WALLET_NAME) ?? null;
     const burner = wallets.find((w) => w.adapter.name === BURNER_WALLET_NAME) ?? null;
-    const detected = wallets.filter((w) => w.adapter.name !== BURNER_WALLET_NAME && ready(w));
+    const detected = wallets.filter((w) => !ours(w) && ready(w));
     const names = new Set(detected.map((w) => w.adapter.name.toLowerCase()));
     const missing = INSTALLABLE.filter((i) => !names.has(i.name.toLowerCase()));
-    return { detected, burner, missing };
+    return { google, detected, burner, missing };
   }, [wallets]);
 
   const choose = (name: WalletName) => {
@@ -125,8 +137,24 @@ function WalletModal({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
       }
     >
       <div className="grid gap-4 px-2 pt-4 pb-3">
+        {google ? (
+          <section aria-label="Sign in with Google" className="grid gap-2">
+            <Row
+              icon={<WalletIcon src={google.adapter.icon} name="Google" />}
+              name="Continue with Google"
+              right={<Chip tone="muted">No extension</Chip>}
+              busy={connecting && picked === GOOGLE_WALLET_NAME}
+              onClick={() => choose(GOOGLE_WALLET_NAME)}
+            />
+            <p className="small mx-3 text-ink-2">
+              Holdfast creates a wallet for your Google account and keeps its key for you (custodial). You can withdraw or
+              export the key any time from the wallet menu.
+            </p>
+          </section>
+        ) : null}
+
         {detected.length ? (
-          <section aria-label="Detected wallets" className="grid">
+          <section aria-label="Detected wallets" className={cn("grid", google && "border-t border-line pt-3")}>
             {detected.map((w) => (
               <Row
                 key={w.adapter.name}
@@ -139,7 +167,7 @@ function WalletModal({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
             ))}
           </section>
         ) : (
-          <p className="small px-3 text-ink-2">No wallet extension found in this browser.</p>
+          <p className={cn("small px-3 text-ink-2", google && "border-t border-line pt-3")}>No wallet extension found in this browser.</p>
         )}
 
         {missing.length ? (
@@ -191,6 +219,16 @@ function WalletModal({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
 export function WalletModalProvider({ children }: { children: ReactNode }) {
   const [visible, setVisible] = useState(false);
   const value = useMemo(() => ({ visible, setVisible }), [visible]);
+  // A failed Google round trip lands back here with `?auth_error=`: say so once and tidy the URL.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get("auth_error");
+    if (code === null) return;
+    url.searchParams.delete("auth_error");
+    window.history.replaceState(window.history.state, "", url);
+    window.sessionStorage.removeItem(EXPORT_AFTER_REAUTH_KEY);
+    toast.error(Object.hasOwn(AUTH_ERRORS, code) ? AUTH_ERRORS[code] : AUTH_ERRORS.failed);
+  }, []);
   return (
     <WalletModalContext.Provider value={value}>
       {children}

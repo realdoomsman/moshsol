@@ -66,4 +66,10 @@ pub enum MoshError {
     SameSlotTrade,
     #[msg("Platform terms changed since this launch was prepared; review them and retry")]
     TermsChanged,
+    #[msg("Launch must be live for 3 days before it can wind down")]
+    LaunchTooYoung,
+    #[msg("Launch traded in the last 24 hours; it can't wind down yet")]
+    RecentTrade,
+    #[msg("Tokens are held outside the curve and vault; the launch can't wind down")]
+    OutsideHolders,
 }

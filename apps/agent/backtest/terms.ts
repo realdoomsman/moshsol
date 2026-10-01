@@ -1,6 +1,6 @@
 import { DEFAULT_PARAMS } from "../src/strategy";
 import type { Evaluator } from "./evaluate";
-import { OBJECTIVE, mean, median, modelScores, runObjective, value } from "./metrics";
+import { OBJECTIVE, endSol, mean, median, modelScores, runObjective, value } from "./metrics";
 import { SearchSpace, cmaes, randomSearch, type Bounds } from "./optimize";
 import { PRODUCTION_TERMS, type SimTerms } from "./program";
 import type { ScenarioSpec } from "./scenarios";
@@ -110,7 +110,7 @@ export interface ModelStats {
   volRatio: number;
   inBand: number;
   inBandGain: number;
-  /** `rug` pools: vault SOL lost (spent minus received) as % of the starting vault SOL, mean and mean of the worst 10%; NaN without rug runs. */
+  /** `rug` pools: vault SOL lost (spent minus what came back to the vault or was paid to backers as profit) as % of the starting vault SOL, mean and mean of the worst 10%; NaN without rug runs. */
   rugLoss: number;
   rugTail: number;
   /** Per-model objective S_m (metrics.ts `modelScores`). */
@@ -144,7 +144,7 @@ export async function measure(ev: Evaluator, specs: ScenarioSpec[], terms: Terms
   for (const model of Object.keys(s)) {
     const rs = rows.filter(({ r }) => r.model === model);
     const dv = rs.map(({ c }) => c.dvVwap);
-    const rugLoss = rs.filter(({ r }) => r.tag === "rug").map(({ r }) => (r.sol0 > 0 ? (Math.max(0, r.sol0 - r.sol1) / r.sol0) * 100 : 0));
+    const rugLoss = rs.filter(({ r }) => r.tag === "rug").map(({ r }) => (r.sol0 > 0 ? (Math.max(0, r.sol0 - endSol(r)) / r.sol0) * 100 : 0));
     byModel[model] = {
       n: rs.length,
       dvMedian: median(dv),
@@ -305,7 +305,7 @@ export function vsReserve(runs: RunResult[], ref: RunResult[]): Record<string, n
   const byModel: Record<string, number[]> = {};
   runs.forEach((r, i) => {
     const q = ref[i]!;
-    (byModel[r.model] ??= []).push((value(r.sol1, r.tokens1, r.vwap24) / value(q.sol1, q.tokens1, q.vwap24) - 1) * 100);
+    (byModel[r.model] ??= []).push((value(endSol(r), r.tokens1, r.vwap24) / value(endSol(q), q.tokens1, q.vwap24) - 1) * 100);
   });
   return Object.fromEntries(Object.entries(byModel).map(([m, xs]) => [m, median(xs)]));
 }

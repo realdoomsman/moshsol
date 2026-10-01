@@ -2,16 +2,20 @@ import { LAMPORTS_PER_SOL, SYSVAR_CLOCK_PUBKEY, type Keypair, type PublicKey } f
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   SAME_SLOT_TRADE_MESSAGE,
+  WIND_DOWN_IDLE_SECS,
   describeError,
   launchPda,
   prepareTx,
   sendAndConfirm,
+  statusOf,
+  windDownTimingBlocker,
   type LaunchAccount,
   type MoshClient,
+  type MoshEvent,
 } from "@holdfast/sdk";
 import type { AgentConfig } from "./config";
 import { log } from "./log";
-import type { Decision, StatusSnapshot } from "./status";
+import type { Decision, StatusSnapshot, WindDown } from "./status";
 import {
   displayPrices,
   evaluate,
@@ -29,6 +33,14 @@ const LIVE_STATUS_BS58 = "2";
 const MAX_TICK_BACKOFF_MS = 60_000;
 /** Below this the agent cannot keep paying transaction fees for long. */
 const LOW_BALANCE_LAMPORTS = 0.01 * LAMPORTS_PER_SOL;
+/**
+ * Wait before re-reading balances of a launch that passes the wind-down timing rules but still has outside
+ * holders (only a burn or a transfer back to the curve/vault can clear that without a trade), and the first
+ * back-off step after a failed `wind_down` send; failures double it up to WIND_DOWN_IDLE_SECS.
+ */
+const WIND_DOWN_RECHECK_MS = 10 * 60_000;
+/** Wind-down attempts kept for `GET /status`, newest first. */
+const MAX_WIND_DOWNS = 50;
 
 interface LaunchRuntime {
   symbol?: string;
@@ -40,6 +52,10 @@ interface LaunchRuntime {
   lastError?: string;
   /** Kind of the last logged decision; repeated holds/skips of the same kind are not re-logged. */
   loggedKind?: string;
+  /** Wall-clock ms before which the wind-down crank neither re-reads balances nor re-sends. */
+  windDownAt: number;
+  /** Consecutive failed `wind_down` sends (sizes their back-off). */
+  windDownFailures: number;
 }
 
 function clockUnixTs(data: Buffer): bigint {
@@ -52,6 +68,8 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 export class Agent {
   private readonly runtime = new Map<string, LaunchRuntime>();
   private readonly decisions = new Map<string, Decision>();
+  /** Wind-down crank attempts, newest first, at most MAX_WIND_DOWNS. */
+  private readonly windDowns: WindDown[] = [];
   private readonly startedAt = nowSec();
   private readonly sizing: Sizing;
   private lastTickAt: number | null = null;
@@ -79,6 +97,7 @@ export class Agent {
       tick: this.tickCount,
       balanceSol: this.balanceLamports === null ? null : this.balanceLamports / LAMPORTS_PER_SOL,
       decisions: [...this.decisions.values()],
+      windDowns: [...this.windDowns],
     };
   }
 
@@ -131,9 +150,12 @@ export class Agent {
     const live = new Set<string>();
     for (const { account } of launches) {
       if (signal.aborted) break;
-      const mint = account.mint.toBase58();
-      live.add(mint);
-      await this.handle(account, now, skipReason);
+      const key = account.mint.toBase58();
+      const rt = await this.runtimeOf(account.mint, key);
+      // Wound down = no longer Live: its decision and runtime are dropped below.
+      if (await this.windDown(rt, key, account, now)) continue;
+      live.add(key);
+      await this.handle(rt, key, account, now, skipReason);
     }
     if (!signal.aborted) {
       for (const mint of [...this.decisions.keys()]) if (!live.has(mint)) this.decisions.delete(mint);
@@ -143,12 +165,10 @@ export class Agent {
     this.tickCount += 1;
   }
 
-  private async handle(account: LaunchAccount, now: bigint, skipReason?: string): Promise<void> {
-    const mint = account.mint;
-    const key = mint.toBase58();
+  private async runtimeOf(mint: PublicKey, key: string): Promise<LaunchRuntime> {
     let rt = this.runtime.get(key);
     if (!rt) {
-      rt = { nextTradeAt: 0, failures: 0 };
+      rt = { nextTradeAt: 0, failures: 0, windDownAt: 0, windDownFailures: 0 };
       this.runtime.set(key, rt);
     }
     if (rt.symbol === undefined) {
@@ -157,6 +177,60 @@ export class Agent {
         .then((m) => m?.symbol)
         .catch(() => undefined);
     }
+    return rt;
+  }
+
+  /**
+   * Permissionless `wind_down` crank (independent of agent pauses and of which key is the agent authority). The
+   * launch's age and idle time are checked against the tick snapshot first (no RPC); balances are read only once
+   * those pass, at most every WIND_DOWN_RECHECK_MS, and a failed send backs off from there. Returns true when the
+   * launch was wound down.
+   */
+  private async windDown(rt: LaunchRuntime, key: string, account: LaunchAccount, now: bigint): Promise<boolean> {
+    const timing = { status: statusOf(account), launchedAt: account.launchedAt.toNumber(), lastTradeTs: account.lastTradeTs.toNumber() };
+    if (windDownTimingBlocker(timing, Number(now)) !== null || Date.now() < rt.windDownAt) return false;
+    const blocker = await this.client.windDownBlocker(account.mint, Number(now));
+    if (blocker !== null) {
+      rt.windDownAt = Date.now() + WIND_DOWN_RECHECK_MS;
+      return false;
+    }
+    const attempt: WindDown = { mint: key, symbol: rt.symbol, at: nowSec() };
+    if (this.cfg.dryRun) {
+      rt.windDownAt = Date.now() + WIND_DOWN_RECHECK_MS;
+      this.recordWindDown(attempt, { dryRun: true });
+      return false;
+    }
+    const cranker = this.signer.publicKey;
+    const connection = this.client.connection;
+    try {
+      const ix = await this.client.windDownIx(cranker, account.mint);
+      const prepared = await prepareTx(connection, cranker, [ix], this.cfg.priorityFee);
+      prepared.tx.sign(this.signer);
+      const signature = await sendAndConfirm(connection, prepared.tx.serialize(), prepared.lastValidBlockHeight);
+      const landed = await this.landed(signature);
+      const event = landed?.events.find((e) => e.name === "woundDown");
+      const result =
+        event?.name === "woundDown"
+          ? { solToBackers: event.data.solToBackers.toString(), tokensReturned: event.data.tokensReturned.toString() }
+          : {};
+      this.recordWindDown({ ...attempt, signature, ...result }, landed?.cost ?? {});
+      return true;
+    } catch (err) {
+      const retryInMs = Math.min(WIND_DOWN_RECHECK_MS * 2 ** rt.windDownFailures++, WIND_DOWN_IDLE_SECS * 1000);
+      rt.windDownAt = Date.now() + retryInMs;
+      this.recordWindDown({ ...attempt, error: describeError(err) }, { retryInMs });
+      return false;
+    }
+  }
+
+  private recordWindDown(attempt: WindDown, extra: Record<string, unknown>): void {
+    this.windDowns.unshift(attempt);
+    this.windDowns.length = Math.min(this.windDowns.length, MAX_WIND_DOWNS);
+    log("wind_down", { ...attempt, ...extra });
+  }
+
+  private async handle(rt: LaunchRuntime, key: string, account: LaunchAccount, now: bigint, skipReason?: string): Promise<void> {
+    const mint = account.mint;
 
     let ev = evaluate(marketOf(account), this.sizing, now, this.cfg.strategy);
     if (skipReason) {
@@ -236,7 +310,25 @@ export class Agent {
       rt.lastError = undefined;
       rt.nextTradeAt = Date.now() + this.cfg.cooldownMs;
       const landed = await this.landed(signature);
-      this.record(rt, key, ev, { action: plan.action, reason: plan.reason, amount, signature }, plan.kind, { ...extra, ...landed });
+      const events = landed?.events ?? [];
+      const trade = events.find((e) => e.name === "trade");
+      const profit = events.find((e) => e.name === "vaultProfitShared");
+      const fill =
+        trade?.name === "trade"
+          ? {
+              filledSol: trade.data.solAmount.toString(),
+              filledTokens: trade.data.tokenAmount.toString(),
+              vaultSol: trade.data.vaultSol.toString(),
+              vaultTokens: trade.data.vaultTokens.toString(),
+            }
+          : {};
+      const shared = profit?.name === "vaultProfitShared" ? { profitSharedLamports: profit.data.amount.toString() } : {};
+      this.record(rt, key, ev, { action: plan.action, reason: plan.reason, amount, signature }, plan.kind, {
+        ...extra,
+        ...landed?.cost,
+        ...fill,
+        ...shared,
+      });
     } catch (err) {
       const error = describeError(err);
       rt.lastError = error;
@@ -249,22 +341,15 @@ export class Agent {
     }
   }
 
-  /** Compute used, fee paid, actual fill and resulting vault balances of a landed trade (log detail only). */
-  private async landed(signature: string): Promise<Record<string, unknown>> {
+  /** Compute used, fee paid and emitted events of a landed transaction (log detail only; null when unavailable). */
+  private async landed(signature: string): Promise<{ cost: Record<string, unknown>; events: MoshEvent[] } | null> {
     const tx = await this.client.connection
       .getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 })
       .catch(() => null);
-    if (!tx?.meta) return {};
-    const cost = { unitsConsumed: tx.meta.computeUnitsConsumed, feeLamports: tx.meta.fee };
-    const trade = this.client.parseEvents(tx.meta.logMessages ?? []).find((e) => e.name === "trade");
-    if (!trade || trade.name !== "trade") return cost;
-    const d = trade.data;
+    if (!tx?.meta) return null;
     return {
-      ...cost,
-      filledSol: d.solAmount.toString(),
-      filledTokens: d.tokenAmount.toString(),
-      vaultSol: d.vaultSol.toString(),
-      vaultTokens: d.vaultTokens.toString(),
+      cost: { unitsConsumed: tx.meta.computeUnitsConsumed, feeLamports: tx.meta.fee },
+      events: this.client.parseEvents(tx.meta.logMessages ?? []),
     };
   }
 

@@ -44,3 +44,9 @@ pub const MAX_NAME_LEN: usize = 32;
 pub const MAX_SYMBOL_LEN: usize = 10;
 pub const MAX_URI_LEN: usize = 200;
 pub const MAX_PROOF_LEN: usize = 24;
+
+/// `wind_down` needs the launch to have been live this long, so nobody can wind a launch down
+/// before the market had a chance to form.
+pub const WIND_DOWN_MIN_AGE_SECS: i64 = 3 * 86_400;
+/// ...and no public or agent trade for this long.
+pub const WIND_DOWN_IDLE_SECS: i64 = 86_400;

@@ -26,9 +26,10 @@ function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
 }
 
 /**
- * Vault card (§4.5): what's locked and what it's worth, the vault's average cost against spot, the
- * band meter, this window's agent budgets and the agent's latest decision (live from `/status`).
- * `justLaunched` plays the clamp once — the launch happened while this page was open.
+ * Vault card (§4.5): what the vault holds and what it's worth, the vault's average cost against
+ * spot, profit paid to backers and admin withdrawals, the band meter, this window's agent budgets
+ * and the agent's latest decision (live from `/status`). `justLaunched` plays the clamp once — the
+ * launch happened while this page was open.
  */
 export function VaultCard({
   launch: l,
@@ -60,11 +61,11 @@ export function VaultCard({
       id="vault"
       title={
         <span className="flex items-center gap-2.5">
-          {justLaunched ? <ClampLock size={24} title="Vault locked" /> : <Mark size={24} />}
+          {justLaunched ? <ClampLock size={24} title="Vault funded" /> : <Mark size={24} />}
           Vault
         </span>
       }
-      aside={<Chip tone="accent">Locked forever</Chip>}
+      aside={<Chip tone="neutral">Agent-traded</Chip>}
     >
       <div className="grid gap-4 px-4 pb-4">
         <div>
@@ -89,6 +90,25 @@ export function VaultCard({
                 {vsCost.toFixed(1)}% vs cost)
               </span>
             ) : null}
+          </Row>
+          <Row
+            label={
+              <RuleTooltip rule="When the vault agent sells above its average cost, 100% of the realized profit goes to the backers, pro rata. They claim it with their fee share.">
+                Profit to backers
+              </RuleTooltip>
+            }
+          >
+            {fmtSolValue(l.profitSharedSol)} SOL
+          </Row>
+          <Row
+            label={
+              <RuleTooltip rule="Vault SOL and tokens the platform multisig withdrew with admin_withdraw_vault. Each withdrawal is listed under Admin withdrawals.">
+                Admin withdrawn
+              </RuleTooltip>
+            }
+          >
+            {fmtSolValue(l.vaultWithdrawnSol)} SOL
+            {BigInt(l.vaultWithdrawnTokens) > 0n ? ` + ${fmtTokens(l.vaultWithdrawnTokens)}` : ""}
           </Row>
         </dl>
 

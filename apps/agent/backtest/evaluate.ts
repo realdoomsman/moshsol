@@ -121,8 +121,8 @@ function groups(specs: ScenarioSpec[], runs: RunResult[]): { model: string; labe
 /** Markdown table: one row per (flow model, outcome tag, policy) with means over the group's runs. */
 export function table(ev: Evaluator, specs: ScenarioSpec[], byPolicy: Record<string, RunResult[]>): string {
   const rows: string[] = [
-    "| model | tag | n | policy | ΔV@final % | ΔV@VWAP % (median) | vault tokens Δ% | round-trip tokens % | vault SOL Δ | SOL spent | buys/sells | max DD % | DD cut pp | vol× | in band % | planned rej | landed rej (same-slot) |",
-    "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    "| model | tag | n | policy | ΔV@final % | ΔV@VWAP % (median) | vault tokens Δ% | round-trip tokens % | vault SOL Δ | profit shared SOL | SOL spent | buys/sells | max DD % | DD cut pp | vol× | in band % | planned rej | landed rej (same-slot) |",
+    "|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
   ];
   for (const { model, label, idx } of groups(specs, Object.values(byPolicy)[0]!)) {
     for (const [policy, runs] of Object.entries(byPolicy)) {
@@ -131,7 +131,7 @@ export function table(ev: Evaluator, specs: ScenarioSpec[], byPolicy: Record<str
       const trades = policy === "none" ? "–" : `${f(m((c) => c.buys), 0)}/${f(m((c) => c.sells), 0)}`;
       rows.push(
         `| ${model} | ${label} | ${idx.length} | ${policy} | ${f(m((c) => c.dvFinal))} | ${f(m((c) => c.dvVwap))} (${f(median(cs.map((c) => c.dvVwap)))}) | ` +
-          `${f(m((c) => c.dTokensPct))} | ${f(m((c) => c.rtTokensPct))} | ${f(m((c) => c.dSol), 2)} | ${f(m((c) => c.solSpent), 2)} | ${trades} | ${f(m((c) => c.maxDrawdown))} | ` +
+          `${f(m((c) => c.dTokensPct))} | ${f(m((c) => c.rtTokensPct))} | ${f(m((c) => c.dSol), 2)} | ${f(m((c) => c.profitShared), 2)} | ${f(m((c) => c.solSpent), 2)} | ${trades} | ${f(m((c) => c.maxDrawdown))} | ` +
           `${f(m((c) => c.ddCut))} | ${f(m((c) => c.volRatio), 3)} | ${f(m((c) => c.inBand))} | ${cs.reduce((s, c) => s + c.plannedRejects, 0)} | ` +
           `${cs.reduce((s, c) => s + c.landedRejects, 0)} (${cs.reduce((s, c) => s + c.sameSlot, 0)}) |`,
       );

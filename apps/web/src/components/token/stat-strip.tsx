@@ -10,8 +10,8 @@ const sol = (v: number) => `${fmtSolValue(v)} SOL`;
 
 /**
  * Token stat row (§4.5): seven 1px-ruled cells, `label` over `num-l`, values flash on change. The
- * last cell is "Backer fees paid" — what trading has earned the backers so far. Detail page: real
- * small values always show (§5.3 thresholds only gate headline slots).
+ * last cell is "Paid to backers" — fee share, vault agent profit and any wind-down payout so far.
+ * Detail page: real small values always show (§5.3 thresholds only gate headline slots).
  */
 export function StatStrip({ launch: l, className }: { launch: LaunchSummary; className?: string }) {
   const backerPct = l.terms.backerFeeShareBps / 100;
@@ -21,13 +21,13 @@ export function StatStrip({ launch: l, className }: { launch: LaunchSummary; cla
       <Stat label="Vol 24h" value={<NumberTicker value={l.volume24hSol} format={sol} />} />
       <Stat
         label="Liquidity"
-        rule="SOL in the bonding curve. It never migrates and no instruction can withdraw it."
+        rule="SOL in the bonding curve; sellers are paid from it. It never migrates and admin_withdraw_vault can't touch it. A wind-down (no tokens left outside the curve and vault) credits what's left to backers."
         value={<NumberTicker value={lamportsToSol(l.realSol)} format={sol} />}
-        sub="locked in the curve"
+        sub="in the curve"
       />
       <Stat
         label="Vault"
-        rule="Bought at launch with the raise and locked forever. Only the vault agent trades it, within on-chain limits."
+        rule="Bought at launch with the raise. Only the vault agent trades it, within on-chain limits. The platform multisig can withdraw it with admin_withdraw_vault; every withdrawal is listed on this page."
         value={<NumberTicker value={lamportsToSol(l.vaultSol)} format={sol} />}
         sub={`+ ${fmtTokens(l.vaultTokens)} $${l.symbol}`}
       />
@@ -38,10 +38,11 @@ export function StatStrip({ launch: l, className }: { launch: LaunchSummary; cla
         value={<NumberTicker value={l.holders} format={(v) => v.toLocaleString("en-US")} />}
       />
       <Stat
-        label="Backer fees paid"
+        label="Paid to backers"
         className="max-md:col-span-2"
-        rule={`${backerPct}% of every trading fee goes to the launch's backers, pro rata to what they deposited.`}
+        rule={`${backerPct}% of every trading fee, 100% of the vault agent's realized profit and any wind-down payout, pro rata to what backers deposited.`}
         value={<NumberTicker value={lamportsToSol(l.backerFeesAccrued)} format={sol} />}
+        sub={l.profitSharedSol > 0 ? `${fmtSolValue(l.profitSharedSol)} SOL from vault profit` : undefined}
       />
     </StatRow>
   );

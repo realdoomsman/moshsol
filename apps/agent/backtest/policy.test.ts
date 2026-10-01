@@ -21,12 +21,14 @@ const randomSizing = (r: Rng): Sizing => ({ minTradeLamports: BigInt(Math.floor(
 // program checks (vault average cost, average agent sell price × (1 − band), the EMA band edges),
 // idle gaps move the EMA and roll windows, and the agent's own planned trades are applied so
 // buy-backs and cost-basis changes happen. At every step the plan, under random parameters and
-// sizing, must pass the program mirror on that exact state and clock.
+// sizing, must pass the program mirror on that exact state and clock, and every lamport the agent
+// sold for must be back in the vault or credited to backers as profit.
 test("policy never plans a trade the program rejects along launch histories", () => {
   const r = mulberry32(20_260_930);
   let plans = 0;
   let buys = 0;
   let sells = 0;
+  let profitShared = 0n;
   for (let walk = 0; walk < 80; walk++) {
     const chain = launch(
       {
@@ -39,6 +41,7 @@ test("policy never plans a trade the program rejects along launch histories", ()
       BigInt(T0),
     );
     const market = new Market(chain, null);
+    const vaultSol0 = chain.vaultSol;
     for (let step = 0; step < 200; step++) {
       market.t += 1_000 + Math.floor(r() < 0.08 ? r() * 7_200_000 : r() * 60_000);
       const spot = market.spot();
@@ -68,10 +71,17 @@ test("policy never plans a trade the program rejects along launch histories", ()
           else sells++;
         }
       }
+      assert.equal(
+        chain.vaultSol + chain.agentSolSpent + chain.profitShared,
+        vaultSol0 + chain.agentSolReceived,
+        `walk ${walk} step ${step}: vault SOL + spent + profit shared ≠ start + received`,
+      );
     }
+    profitShared += chain.profitShared;
   }
-  // The walks must actually reach both sides, including buy-backs after sells.
+  // The walks must actually reach both sides, including buy-backs after sells and sells in profit.
   assert.ok(plans > 2_000 && buys > 200 && sells > 200, `too few trades exercised: ${plans} plans, ${buys} buys, ${sells} sells`);
+  assert.ok(profitShared > 0n, "no agent sell realized a profit");
 });
 
 /** Lamports for about `sol` SOL. */

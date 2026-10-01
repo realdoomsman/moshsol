@@ -15,7 +15,19 @@ interface LiveContext {
 const Ctx = createContext<LiveContext>({ connected: false, subscribe: () => () => undefined });
 
 /** Per-mint query families refreshed whenever the indexer reports an on-chain event for that mint. */
-const MINT_KEYS = ["trades", "traders", "candles", "backers", "deposits", "holders", "token-balance", "backer", "launch-account"];
+const MINT_KEYS = [
+  "trades",
+  "traders",
+  "candles",
+  "backers",
+  "deposits",
+  "holders",
+  "token-balance",
+  "backer",
+  "launch-account",
+  "launch-activity",
+  "wind-down",
+];
 
 /**
  * Single indexer websocket for the whole app. Pushes launch snapshots straight into the

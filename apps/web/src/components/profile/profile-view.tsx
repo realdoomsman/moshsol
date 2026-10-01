@@ -9,7 +9,7 @@ import { useState, type ReactNode } from "react";
 import { LaunchCard, Change } from "@/components/discover/launch-card";
 import { CopyButton } from "@/components/ui/address";
 import { Button, ButtonLink } from "@/components/ui/button";
-import { StatusChip, type LaunchChipStatus } from "@/components/ui/chip";
+import { StatusChip } from "@/components/ui/chip";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { Identicon } from "@/components/ui/identicon";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,16 +24,12 @@ import { useNow } from "@/lib/hooks";
 import { useFallbackInterval, useLiveEvents } from "@/lib/live";
 import { useLaunches, usePortfolio } from "@/lib/queries";
 import type { ActivityEvent } from "@/lib/types";
-import { userActivityQuery, userQuery, usersApi, USER_ACTIVITY_PAGE, type UserBacked, type UserProfile } from "@/lib/users";
+import { userActivityQuery, userQuery, usersApi, USER_ACTIVITY_PAGE, type UserProfile } from "@/lib/users";
 import { EditProfileDialog } from "./edit-profile";
 
 type Tab = "created" | "backed" | "holdings" | "activity";
 
 const sol = (v: number) => `${fmtSolValue(v)} SOL`;
-
-function statusChip(status: UserBacked["status"]): LaunchChipStatus {
-  return status === "live" ? "live" : status === "refunding" ? "refunding" : "raising";
-}
 
 function TokenCell({ mint, name, symbol, image }: { mint: string; name: string; symbol: string; image: string | null }) {
   return (
@@ -97,8 +93,8 @@ function Stats({ user }: { user: UserProfile }) {
         sub={s.depositedSol ? `${fmtSolValue(s.depositedSol)} SOL deposited` : undefined}
       />
       <Stat
-        label="Backer fees earned"
-        rule="Claimed plus claimable backer fees, pro-rata to this wallet's deposits."
+        label="Backer earnings"
+        rule="Claimed plus claimable backer earnings (fee share, vault agent profit, wind-down payouts), pro-rata to this wallet's deposits."
         value={quiet(s.backerFeesEarnedSol, sol(s.backerFeesEarnedSol))}
         tone={s.backerFeesEarnedSol > 0 ? "accent" : undefined}
       />
@@ -150,7 +146,7 @@ function Created({ user, own }: { user: UserProfile; own: boolean }) {
                 ${u.symbol} · raised {sol(u.raisedSol)}
               </div>
             </div>
-            <StatusChip status={statusChip(u.status)} />
+            <StatusChip status={u.status} />
           </Link>
         );
       })}
@@ -178,7 +174,7 @@ function Backed({ user }: { user: UserProfile }) {
                 <TokenCell {...b} />
               </TD>
               <TD>
-                <StatusChip status={statusChip(b.status)} />
+                <StatusChip status={b.status} />
               </TD>
               <TD align="right">{sol(b.depositedSol)}</TD>
               <TD align="right">{(b.shareBps / 100).toFixed(b.shareBps % 100 ? 2 : 0)}%</TD>
@@ -276,9 +272,15 @@ function describe(e: ActivityEvent): string {
     case "cancelled":
       return `${tick} raise cancelled`;
     case "backer_claim":
-      return `Claimed ${amount} in backer fees from ${tick}`;
+      return `Claimed ${amount} in backer earnings from ${tick}`;
     case "creator_claim":
       return `Claimed ${amount} in creator fees from ${tick}`;
+    case "profit_shared":
+      return `${tick} vault agent shared ${amount} of profit with backers`;
+    case "wound_down":
+      return `${tick} wound down: ${amount} credited to backers`;
+    case "vault_withdrawn":
+      return `Admin withdrew ${amount}${e.tokenAmount && BigInt(e.tokenAmount) > 0n ? ` + ${fmtTokens(e.tokenAmount)} ${tick}` : ""} from the ${tick} vault`;
   }
 }
 

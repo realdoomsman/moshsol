@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
 use anchor_lang::error::ERROR_CODE_OFFSET;
-use anchor_lang::{system_program, AccountDeserialize, InstructionData, ToAccountMetas};
+use anchor_lang::{system_program, AccountDeserialize, AccountSerialize, InstructionData, ToAccountMetas};
+use anchor_spl::associated_token::spl_associated_token_account::instruction::create_associated_token_account_idempotent;
 use anchor_spl::associated_token::{get_associated_token_address_with_program_id, ID as ATA_ID};
 use anchor_spl::token_2022::spl_token_2022::{
     self,
@@ -111,6 +112,19 @@ pub fn assert_err(res: TxResult, expected: MoshError) {
                 f.meta.logs.join("\n")
             ),
         },
+    }
+}
+
+/// Anchor framework error (constraint violations etc.), e.g. `ErrorCode::ConstraintTokenOwner`.
+pub fn assert_anchor_err(res: TxResult, expected: anchor_lang::error::ErrorCode) {
+    match res {
+        Ok(_) => panic!("expected {expected:?}, transaction succeeded"),
+        Err(f) => assert_eq!(
+            f.err,
+            TransactionError::InstructionError(1, InstructionError::Custom(expected as u32)),
+            "expected {expected:?}; logs:\n{}",
+            f.meta.logs.join("\n")
+        ),
     }
 }
 
@@ -298,6 +312,19 @@ impl Env {
             return None;
         }
         Some(Backer::try_deserialize(&mut a.data.as_slice()).unwrap())
+    }
+
+    /// Rewrites the launch account in place: puts the launch in states a test can't reach
+    /// through public instructions alone.
+    pub fn set_launch(&mut self, mint: &Pubkey, f: impl FnOnce(&mut Launch)) {
+        let key = launch_pda(mint);
+        let mut acct = self.svm.get_account(&key).unwrap();
+        let mut l = Launch::try_deserialize(&mut acct.data.as_slice()).unwrap();
+        f(&mut l);
+        let mut data = Vec::with_capacity(acct.data.len());
+        l.try_serialize(&mut data).unwrap();
+        acct.data[..data.len()].copy_from_slice(&data);
+        self.svm.set_account(key, acct).unwrap();
     }
 
     pub fn token_balance(&self, account: &Pubkey) -> u64 {
@@ -604,6 +631,96 @@ impl Env {
             data: moshsol::instruction::AcceptAdmin {}.data(),
         };
         self.send(&[ix], &[signer])
+    }
+
+    pub fn wind_down(&mut self, cranker: &Keypair, mint: &Pubkey) -> TxResult {
+        let launch = launch_pda(mint);
+        let ix = Instruction {
+            program_id: moshsol::ID,
+            accounts: moshsol::accounts::WindDown {
+                cranker: cranker.pubkey(),
+                launch,
+                mint: *mint,
+                curve_tokens: curve_pda(&launch),
+                vault_tokens: vault_pda(&launch),
+                token_program: TOKEN_2022_ID,
+            }
+            .to_account_metas(None),
+            data: moshsol::instruction::WindDown {}.data(),
+        };
+        self.send(&[ix], &[cranker])
+    }
+
+    pub fn admin_withdraw_ix(
+        &self,
+        admin: &Pubkey,
+        mint: &Pubkey,
+        fee_recipient: &Pubkey,
+        recipient_tokens: &Pubkey,
+        sol: u64,
+        tokens: u64,
+    ) -> Instruction {
+        let launch = launch_pda(mint);
+        Instruction {
+            program_id: moshsol::ID,
+            accounts: moshsol::accounts::AdminWithdrawVault {
+                admin: *admin,
+                platform: platform_pda(),
+                launch,
+                mint: *mint,
+                vault_tokens: vault_pda(&launch),
+                fee_recipient: *fee_recipient,
+                recipient_tokens: *recipient_tokens,
+                token_program: TOKEN_2022_ID,
+            }
+            .to_account_metas(None),
+            data: moshsol::instruction::AdminWithdrawVault { sol, tokens }.data(),
+        }
+    }
+
+    /// Withdraws to the platform fee recipient and its token account (created if missing).
+    pub fn admin_withdraw(&mut self, signer: &Keypair, mint: &Pubkey, sol: u64, tokens: u64) -> TxResult {
+        let fr = self.fee_recipient.pubkey();
+        let recipient_tokens = self.create_ata(signer, &fr, mint);
+        let ix = self.admin_withdraw_ix(&signer.pubkey(), mint, &fr, &recipient_tokens, sol, tokens);
+        self.send(&[ix], &[signer])
+    }
+
+    pub fn create_ata(&mut self, payer: &Keypair, owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+        let ix = create_associated_token_account_idempotent(&payer.pubkey(), owner, mint, &TOKEN_2022_ID);
+        ok(self.send(&[ix], &[payer]));
+        ata(owner, mint)
+    }
+
+    /// Moves tokens from `owner`'s account to `to`'s (created if missing): not a trade.
+    pub fn transfer_tokens(&mut self, owner: &Keypair, mint: &Pubkey, to: &Pubkey, amount: u64) {
+        let dest = self.create_ata(owner, to, mint);
+        let ix = spl_token_2022::instruction::transfer_checked(
+            &TOKEN_2022_ID,
+            &ata(&owner.pubkey(), mint),
+            mint,
+            &dest,
+            &owner.pubkey(),
+            &[],
+            amount,
+            TOKEN_DECIMALS,
+        )
+        .unwrap();
+        ok(self.send(&[ix], &[owner]));
+    }
+
+    pub fn burn_tokens(&mut self, owner: &Keypair, mint: &Pubkey, amount: u64) {
+        let ix = spl_token_2022::instruction::burn_checked(
+            &TOKEN_2022_ID,
+            &ata(&owner.pubkey(), mint),
+            mint,
+            &owner.pubkey(),
+            &[],
+            amount,
+            TOKEN_DECIMALS,
+        )
+        .unwrap();
+        ok(self.send(&[ix], &[owner]));
     }
 
     /// Creates a launch, funds it with the given deposits and launches it as the creator.

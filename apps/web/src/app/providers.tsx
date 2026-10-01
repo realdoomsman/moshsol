@@ -11,6 +11,7 @@ import { WalletModalProvider } from "@/components/shell/wallet-modal";
 import { AppToaster } from "@/components/ui/toast";
 import { createBurner } from "@/lib/burner";
 import { IS_TEST_CLUSTER, RPC_URL, WS_URL } from "@/lib/env";
+import { GoogleWalletAdapter } from "@/lib/google-wallet";
 import { ServerNowContext } from "@/lib/hooks";
 import { LiveProvider } from "@/lib/live";
 
@@ -23,8 +24,12 @@ export function Providers({ now, children }: { now: number; children: ReactNode 
         },
       }),
   );
-  // Wallet Standard wallets (Phantom, Solflare, Backpack…) register themselves; the burner is ours.
-  const wallets = useMemo<Adapter[]>(() => (IS_TEST_CLUSTER && typeof window !== "undefined" ? [createBurner()] : []), []);
+  // Wallet Standard wallets (Phantom, Solflare, Backpack…) register themselves; Google (custodial,
+  // every cluster) and the burner (test clusters only) are ours.
+  const wallets = useMemo<Adapter[]>(
+    () => (typeof window === "undefined" ? [] : [new GoogleWalletAdapter(), ...(IS_TEST_CLUSTER ? [createBurner()] : [])]),
+    [],
+  );
   const onError = useCallback((error: WalletError) => {
     toast.error("Your wallet reported an error", { description: error.message || error.name, duration: Infinity });
   }, []);

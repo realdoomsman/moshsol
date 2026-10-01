@@ -36,10 +36,10 @@ export function CreateSuccess({ mint, signature }: { mint: string; signature: st
   const tweet = !l
     ? ""
     : l.status === "live"
-      ? `$${l.symbol} is live on @holdfast. The first buy is locked in the vault forever:`
+      ? `$${l.symbol} is live on @holdfast. Backers bought first and get 100% of the vault agent's profit:`
       : mine
-        ? `I just opened a raise on @holdfast: $${l.symbol}. The first buy gets locked forever. Back it:`
-        : `The $${l.symbol} raise is open on @holdfast. The first buy gets locked forever. Back it:`;
+        ? `I just opened a raise on @holdfast: $${l.symbol}. Backers buy first and share the profit. Back it:`
+        : `The $${l.symbol} raise is open on @holdfast. Backers buy first and share the profit. Back it:`;
 
   const copy = async () => {
     await navigator.clipboard.writeText(url);
@@ -57,10 +57,10 @@ export function CreateSuccess({ mint, signature }: { mint: string; signature: st
         : `${whose} raise is open.`;
   const subline =
     l?.status === "live"
-      ? "The bundle bought at launch is locked in the vault forever."
+      ? "The bundle bought at launch sits in the vault, traded only by the vault agent."
       : l?.status === "refunding"
         ? "Backers can claim a full refund from the launch page."
-        : "Share it with backers. When the raise closes above its minimum, the bundle buys and locks.";
+        : "Share it with backers. When the raise closes above its minimum, the bundle buys first.";
 
   return (
     <div className="mx-auto grid w-full max-w-[640px] gap-8 pt-4 pb-8 md:pt-10">

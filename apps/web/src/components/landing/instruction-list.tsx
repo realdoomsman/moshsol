@@ -3,7 +3,7 @@ import type { InstructionRow } from "./instructions";
 /**
  * The Instruction list (§4.2 §6): one 48px row per program instruction from the IDL — name, who can
  * sign it, what it can move — grouped by lifecycle. Hover or focus expands a one-line description
- * (240 ms height). Ends with the instruction that isn't there.
+ * (240 ms height). Ends with every way value can leave a vault.
  */
 export function InstructionList({ rows }: { rows: InstructionRow[] }) {
   const groups = [...new Set(rows.map((r) => r.group))];
@@ -42,9 +42,11 @@ export function InstructionList({ rows }: { rows: InstructionRow[] }) {
         </div>
       ))}
       <div className="grid min-h-12 items-center gap-x-4 gap-y-1 bg-accent-wash px-4 py-3 md:grid-cols-[minmax(0,11rem)_minmax(0,1fr)]">
-        <span className="mono text-accent-ink line-through">withdraw_vault</span>
+        <span className="label text-accent-ink">Vault exits</span>
         <span className="small text-accent-ink">
-          Does not exist. No instruction moves vault funds except the agent trading the launch&rsquo;s own curve.
+          Agent trades on the launch&rsquo;s own curve, <span className="mono">wind_down</span> (to backers) and{" "}
+          <span className="mono">admin_withdraw_vault</span> (platform admin → fee recipient). Each one is on-chain and shown on the
+          launch page.
         </span>
       </div>
     </div>

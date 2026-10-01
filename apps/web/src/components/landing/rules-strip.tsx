@@ -17,8 +17,8 @@ export function RulesStrip() {
           >
             {shortAddr(program)}
           </a>{" "}
-          · mint authority revoked at creation · no withdraw instruction · fees frozen per launch · agent limits enforced
-          on-chain.
+          · mint authority revoked at creation · fees frozen per launch · agent limits enforced on-chain · vault withdrawals
+          only by the platform admin, each one public.
         </span>{" "}
         <a href="#verify" className="font-[560] text-ink transition-colors hover:text-accent-ink">
           Verify →

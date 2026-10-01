@@ -2,7 +2,7 @@
 
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useState } from "react";
-import { fmtLamports } from "@/lib/format";
+import { fmtLamports, fmtSolValue } from "@/lib/format";
 import { useBackers } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { Chip, RoleChip } from "../ui/chip";
@@ -15,8 +15,9 @@ import { LoadingRows } from "./trades-tab";
 const PAGE = 50;
 
 /**
- * Backers tab (§4.5, bags "fees shared"): who funded the vault and what each has earned — deposit,
- * pool share, claimed, claimable, total — with the launch's total backer fees underneath.
+ * Backers tab (§4.5, bags "fees shared"): who funded the first buy and what each has earned — deposit,
+ * pool share, claimed, claimable, total — with everything paid to backers underneath (fee share,
+ * vault agent profit, wind-down payout: one accumulator, one claim).
  */
 export function BackersTab({ launch: l, onFilterMaker }: { launch: LaunchSummary; onFilterMaker?: (wallet: string) => void }) {
   const q = useBackers(l.mint);
@@ -24,7 +25,8 @@ export function BackersTab({ launch: l, onFilterMaker }: { launch: LaunchSummary
   const me = publicKey?.toBase58();
   const [shown, setShown] = useState(PAGE);
   const all = q.data?.backers ?? [];
-  const live = l.status === "live";
+  // Launched (live or wound down): backers earn and claim.
+  const live = l.status === "live" || l.status === "woundDown";
   const cols = live ? 6 : 3;
 
   return (
@@ -60,7 +62,7 @@ export function BackersTab({ launch: l, onFilterMaker }: { launch: LaunchSummary
               <EmptyState>
                 {l.status === "refunding"
                   ? "Every deposit has been refunded. Refunded backer accounts close on-chain."
-                  : "No backers yet. Deposits fund the locked vault and earn a share of every trade."}
+                  : "No backers yet. Deposits fund the first buy and earn a share of every trade plus all of the vault agent's profit."}
               </EmptyState>
             </TableMessage>
           ) : (
@@ -104,7 +106,10 @@ export function BackersTab({ launch: l, onFilterMaker }: { launch: LaunchSummary
       </Table>
       {live ? (
         <div className="flex flex-wrap items-baseline justify-between gap-3 border-t border-line px-4 py-3">
-          <span className="small text-ink-2">Total fees paid to backers</span>
+          <span className="small text-ink-2">
+            Paid to backers
+            {l.profitSharedSol > 0 ? ` (${fmtSolValue(l.profitSharedSol)} SOL from vault profit)` : ""}
+          </span>
           <span className="num-l text-ink">{fmtLamports(l.backerFeesAccrued)} SOL</span>
         </div>
       ) : null}

@@ -5,7 +5,7 @@ import { pctFromBps } from "../../band/model";
 import { Lockup } from "../../brand/lockup";
 import { Mark } from "../../brand/mark";
 import { faqItems } from "../../landing/faq";
-import { instructionRows } from "../../landing/instructions";
+import { instructionRows, WIND_DOWN_RULE } from "../../landing/instructions";
 import { A, B, C, Callout, Code, P, Table, Ul } from "../prose";
 import type { DocPage } from "../types";
 
@@ -37,7 +37,7 @@ export const overview: DocPage = {
   nav: "Overview",
   title: "Holdfast docs",
   description:
-    "Holdfast is the Solana launchpad where the first buy can never be dumped. Backers' SOL buys the first slice of supply, which is locked forever in an on-chain vault, traded only by a rate-limited agent — and backers earn a share of every trading fee.",
+    "Holdfast is the Solana launchpad where backers buy first and share the profit. Backers' SOL buys the first slice of supply, which sits in an on-chain vault traded only by a rate-limited agent — backers get 100% of the agent's realized profit and a share of every trading fee.",
   sections: ({ p }) => [
     {
       id: "start",
@@ -75,7 +75,10 @@ export const overview: DocPage = {
               </li>
             </>
           ) : null}
-          <li>0 withdraw instructions.</li>
+          <li>100% of the vault agent&rsquo;s realized sell profit to backers.</li>
+          <li>
+            Vault withdrawals only by the platform admin (<C>admin_withdraw_vault</C>), each one shown on the launch page.
+          </li>
         </Ul>
       ),
     },
@@ -184,7 +187,7 @@ export const api: DocPage = {
           rows={[
             ["GET /api/health", "Sync status, slot, lag"],
             ["GET /api/platform", "Platform account and default params"],
-            ["GET /api/stats", "Launch counts, volume, locked vault SOL"],
+            ["GET /api/stats", "Launch counts, volume, vault SOL, profit shared, vault withdrawals"],
             ["GET /api/launches?status=&sort=&q=&limit=&offset=", "Launch summaries (sort: new, trending, volume, mcap, raised)"],
             ["GET /api/launches/:mint", "One launch: on-chain snapshot + indexer fields"],
             ["GET /api/launches/:mint/trades?before=&limit=&agent=1", "Trades, newest first; agent=1 for vault-agent trades"],
@@ -260,8 +263,20 @@ export const risks: DocPage = {
   group: "Reference",
   nav: "Risks",
   title: "Risks",
-  description: "What Holdfast removes — the bundle dump — and everything it doesn't.",
+  description: "What Holdfast removes — sniper first buys and dumps by the creator or backers — and everything it doesn't.",
   sections: () => [
+    {
+      id: "admin-withdraw",
+      title: "The admin can withdraw vaults",
+      body: (
+        <Callout tone="warn" title="Vault funds are not locked">
+          The platform admin can call <C>admin_withdraw_vault</C> on any launch and send its vault SOL and tokens to the platform fee
+          recipient — tokens it could then sell. The admin is a Squads 2-of-3 multisig on mainnet. The instruction can&rsquo;t touch the
+          curve&rsquo;s liquidity or backers&rsquo; accrued earnings, and every withdrawal is on-chain (<C>VaultWithdrawn</C>) and shown on
+          the launch page. See <A href="/docs/verify">Verify on-chain</A>.
+        </Callout>
+      ),
+    },
     {
       id: "market",
       title: "Market risk",
@@ -282,12 +297,15 @@ export const risks: DocPage = {
             <A href="/docs/verify">Verify on-chain</A>.
           </li>
           <li>
-            <B>Admin controls.</B> The admin can pause new launches and deposits and pause the vault agent. Trading, refunds and claims
-            don&rsquo;t depend on it.
+            <B>Admin controls.</B> Besides vault withdrawals, the admin can pause new launches and deposits and pause the vault agent.
+            Trading, refunds and claims don&rsquo;t depend on it.
           </li>
           <li>
             <B>Agent availability.</B> If the agent is offline the vault doesn&rsquo;t trade. Its status is public at{" "}
             <A href="/agents">/agents</A>.
+          </li>
+          <li>
+            <B>Wind-down.</B> Once a launch is {WIND_DOWN_RULE}, anyone can end it: its SOL goes to backers and trading stops for good.
           </li>
           <li>
             <B>Bugs.</B> The program and SDK are unaudited software.{IS_TEST_CLUSTER ? ` ${CLUSTER_LABEL[CLUSTER]} is for testing; its SOL has no value.` : ""}
@@ -300,7 +318,7 @@ export const risks: DocPage = {
       title: "Creator and token risk",
       body: (
         <P>
-          A creator can&rsquo;t dump the bundle, but can hold ordinary tokens bought on the curve like anyone else, and token metadata
+          A creator can&rsquo;t touch the bundle, but can hold ordinary tokens bought on the curve like anyone else, and token metadata
           (name, image, links) is whatever they uploaded. Holdfast doesn&rsquo;t vet launches.
         </P>
       ),
@@ -322,9 +340,9 @@ export const glossary: DocPage = {
         <dl className="border-t border-line">
           {[
             ["Raise", "The pre-launch period where backers deposit SOL toward a min and max."],
-            ["Backer", "A wallet that deposited into a raise; it earns the backers' share of trade fees pro-rata to its deposit."],
+            ["Backer", "A wallet that deposited into a raise; it earns the backers' share of trade fees and of vault-agent profit pro-rata to its deposit."],
             ["Bundle", "The first buy on the curve, made with the raise at launch before any public trade."],
-            ["Vault", "The program-owned account per launch that holds the bundle tokens and the SOL reserve; it has no withdraw."],
+            ["Vault", "The program-owned account per launch that holds the bundle tokens and the SOL reserve; the platform admin can withdraw from it."],
             ["Reserve", "The share of the raise kept as SOL in the vault for the agent to buy dips with."],
             ["Curve", "The launch's constant-product market (x · y = k) with virtual SOL reserves; it never migrates."],
             ["EMA", `Exponential moving average of price, updated at every trade${p ? ` over ${Math.round(p.emaPeriodSecs / 60)} minutes` : ""}.`],
@@ -334,6 +352,8 @@ export const glossary: DocPage = {
             ["Impact", "How far a trade moves the spot price, in percent."],
             ["Terms", "The fee split and agent limits frozen into a launch at creation."],
             ["Vault agent", "The rate-limited signer allowed to call agent_buy and agent_sell."],
+            ["Profit share", "The vault agent's realized sell profit over average cost, paid 100% to backers."],
+            ["Wind-down", `Ending a quiet launch (${WIND_DOWN_RULE}): its SOL goes to backers and trading stops.`],
           ].map(([t, d]) => (
             <div key={t} className="grid gap-1 border-b border-line py-3 sm:grid-cols-[180px_1fr] sm:gap-4">
               <dt className="ui text-ink">{t}</dt>

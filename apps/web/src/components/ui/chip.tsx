@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AgentGlyph, ClampGlyph } from "../brand/glyphs";
+import { AgentGlyph } from "../brand/glyphs";
 import { cn } from "./cn";
 
 export type ChipTone = "neutral" | "muted" | "faint" | "ink" | "accent" | "warn";
@@ -46,31 +46,25 @@ export function Chip({
   );
 }
 
-export type LaunchChipStatus = "raising" | "min-reached" | "live" | "locked" | "refunding" | "ended";
+export type LaunchChipStatus = "raising" | "min-reached" | "live" | "woundDown" | "refunding" | "ended";
 
 const STATUS: Record<LaunchChipStatus, { tone: ChipTone; label: string }> = {
   raising: { tone: "warn", label: "Raising" },
   "min-reached": { tone: "accent", label: "Min reached" },
   live: { tone: "neutral", label: "Live" },
-  locked: { tone: "accent", label: "Locked" },
+  woundDown: { tone: "muted", label: "Wound down" },
   refunding: { tone: "muted", label: "Refunding" },
   ended: { tone: "faint", label: "Ended" },
 };
 
-/** Launch lifecycle chip with the exact colours of §3.4 (Live gets a 6px ink dot, Locked the clamp). */
+/** Launch lifecycle chip with the exact colours of §3.4 (Live gets a 6px ink dot). */
 export function StatusChip({ status, className }: { status: LaunchChipStatus; className?: string }) {
   const s = STATUS[status];
   return (
     <Chip
       tone={s.tone}
       className={className}
-      icon={
-        status === "live" ? (
-          <span aria-hidden className="size-1.5 rounded-full bg-ink" />
-        ) : status === "locked" ? (
-          <ClampGlyph size={12} />
-        ) : undefined
-      }
+      icon={status === "live" ? <span aria-hidden className="size-1.5 rounded-full bg-ink" /> : undefined}
     >
       {s.label}
     </Chip>

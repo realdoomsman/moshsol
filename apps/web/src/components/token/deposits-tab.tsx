@@ -39,7 +39,9 @@ export function DepositsTab({ launch: l, now }: { launch: LaunchSummary; now: nu
           <LoadingRows cols={cols} rows={3} />
         ) : feed.rows.length === 0 ? (
           <TableMessage colSpan={cols}>
-            <EmptyState>No deposits yet. Back it first: backers fund the locked vault and earn a share of every trade.</EmptyState>
+            <EmptyState>
+              No deposits yet. Back it first: backers fund the first buy, earn a share of every trade and all of the vault agent&apos;s profit.
+            </EmptyState>
           </TableMessage>
         ) : (
           feed.rows.map((d) => {

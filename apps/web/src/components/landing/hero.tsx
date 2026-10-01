@@ -8,18 +8,18 @@ import { pctFromBps } from "../band/model";
  * then the verbatim sub-head, the two CTAs and a spec-sheet of invariants (never volume) beside
  * the live Band instrument.
  */
-export function Hero({ withdrawInstructions, backerFeeShareBps }: { withdrawInstructions: number; backerFeeShareBps: number | null }) {
+export function Hero({ backerFeeShareBps }: { backerFeeShareBps: number | null }) {
   const proof = [
-    { label: "Withdraw instructions", value: String(withdrawInstructions) },
     { label: "Mint authority", value: "Revoked" },
     ...(backerFeeShareBps === null ? [] : [{ label: "Backer share of fees", value: pctFromBps(backerFeeShareBps) }]),
+    { label: "Backer share of agent profit", value: "100%" },
   ];
   return (
     <section aria-labelledby="hero-title" className="frame-marketing pb-16 pt-10 md:pb-24 md:pt-12">
       <LiveEyebrow />
       <h1 id="hero-title" className="display-xl mt-5 text-ink">
-        Launches that <br className="hidden sm:block" />
-        can&rsquo;t be dumped.
+        Backers buy first <br className="hidden sm:block" />
+        and share the profit.
       </h1>
       <div className="mt-10 grid grid-cols-1 gap-12 md:mt-12 lg:grid-cols-12 lg:gap-6">
         <div className="flex flex-col lg:col-span-4 lg:pr-4">
@@ -27,8 +27,8 @@ export function Hero({ withdrawInstructions, backerFeeShareBps }: { withdrawInst
             Backers fund the first buy.
             <span className="hidden sm:inline">
               {" "}
-              It&rsquo;s locked in a vault forever, traded only by a rate-limited agent — and backers earn half of every
-              trading fee.
+              It&rsquo;s held in a vault and traded only by a rate-limited agent — backers get all of its realized profit
+              and half of every trading fee.
             </span>
           </p>
           <div className="mt-8 grid gap-3 sm:flex">

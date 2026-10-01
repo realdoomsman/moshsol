@@ -53,7 +53,8 @@ function rows(t: AgentTerms, platform: PlatformInfo, scope: string): RuleRow[] {
     },
     { rule: "EMA period", value: span(t.emaPeriodSecs), by: terms },
     { rule: "Trade fee", value: "None on agent trades", by: "Program" },
-    { rule: "Withdraw", value: "None: the program has no withdraw instruction", by: "Program" },
+    { rule: "Sell profit", value: "100% to backers: fill minus the sold tokens' average cost, paid through the fee accumulator", by: "Program" },
+    { rule: "Withdraw", value: "The agent can't. The platform admin can, with admin_withdraw_vault; every withdrawal is public", by: "Program" },
     {
       rule: "Agent signer",
       value: <Address address={platform.agentAuthority} className="justify-start" />,

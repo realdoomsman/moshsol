@@ -4,12 +4,13 @@ use anchor_spl::token_interface::{self, Mint, TokenAccount, TransferChecked};
 
 use crate::constants::*;
 use crate::errors::MoshError;
-use crate::events::Trade;
+use crate::events::{Trade, VaultProfitShared};
 use crate::math;
 use crate::state::{Launch, LaunchStatus, Platform};
 
-/// Agents can only move value between the launch's own curve and its own locked vault.
-/// No account outside the launch can receive anything from these instructions.
+/// Agents can only move value between the launch's own curve and its own vault (and credit
+/// realized profit to backers). No account outside the launch can receive anything from these
+/// instructions.
 #[derive(Accounts)]
 pub struct AgentTrade<'info> {
     pub agent: Signer<'info>,
@@ -141,6 +142,8 @@ pub fn agent_buy(ctx: Context<AgentTrade>, sol_in: u64, min_tokens_out: u64) -> 
 
 /// Sell vault tokens — only into rallies (price at least `band` over the EMA) and only at a
 /// fill price above the vault's average cost plus band, so the vault never realizes a loss.
+/// The realized profit (fill minus the sold tokens' average cost) goes to backers; only the
+/// cost part returns to the vault and to the buy-back budget.
 pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) -> Result<()> {
     let clock = Clock::get()?;
     let now = clock.unix_timestamp;
@@ -171,13 +174,18 @@ pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) ->
         * (BPS + terms.agent_band_bps as u64) as u128;
     require!(lhs >= rhs, MoshError::AgentBelowCostBasis);
 
-    // Average-cost method: remove the sold tokens' share of the basis.
-    let cost_removed = ((launch.vault_cost_sol as u128) * (tokens_in as u128)
-        / (launch.vault_tokens as u128)) as u64;
-    launch.vault_cost_sol -= cost_removed;
+    // Average-cost method: remove the sold tokens' share of the basis, rounded up, so the basis
+    // left behind never overstates the average cost (a dust remainder can't masquerade as cheap
+    // inventory for the buy-at-or-below-cost rule). Profit is the fill above that cost, so backers
+    // are never credited dust the sell didn't earn.
+    let cost = launch.vault_cost_of(tokens_in);
+    let profit = sol.saturating_sub(cost);
+    let kept = sol - profit;
+    launch.vault_cost_sol -= cost;
     launch.apply_sell(tokens_in, sol)?;
     launch.vault_tokens -= tokens_in;
-    launch.vault_sol += sol;
+    launch.vault_sol += kept;
+    launch.credit_backers(profit)?;
     let after = launch.price_q64()?;
     require!(
         math::move_bps(before, after) <= terms.agent_max_impact_bps as u64,
@@ -188,7 +196,7 @@ pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) ->
     launch.agent_sells = launch.agent_sells.saturating_add(1);
     launch.agent_sol_received = launch.agent_sol_received.saturating_add(sol);
     launch.agent_tokens_sold = launch.agent_tokens_sold.saturating_add(tokens_in);
-    launch.buyback_sol = launch.buyback_sol.saturating_add(sol);
+    launch.buyback_sol = launch.buyback_sol.saturating_add(kept);
     launch.record_volume(sol);
 
     let mint_key = ctx.accounts.mint.key();
@@ -225,5 +233,13 @@ pub fn agent_sell(ctx: Context<AgentTrade>, tokens_in: u64, min_sol_out: u64) ->
         vault_tokens: launch.vault_tokens,
         timestamp: now,
     });
+    if profit > 0 {
+        emit!(VaultProfitShared {
+            launch: launch.key(),
+            mint: mint_key,
+            amount: profit,
+            timestamp: now,
+        });
+    }
     Ok(())
 }

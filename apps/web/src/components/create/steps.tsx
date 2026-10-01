@@ -348,7 +348,7 @@ export function StepVault({
     <div className="grid gap-6">
       <StepHeader
         index={2}
-        help="When the raise closes, it buys the first slice of the curve. That bundle is locked in the vault forever."
+        help="When the raise closes, it buys the first slice of the curve. That bundle is held in the vault and traded only by the vault agent."
       />
       <Field
         label="Max bundle size"
@@ -428,12 +428,12 @@ export function StepVault({
             <strong className="num font-semibold">
               {pctText(range.atMin.supplyPct)}–{pctText(range.atMax.supplyPct)}
             </strong>{" "}
-            of supply at launch, locked forever. Start market cap{" "}
+            of supply at launch, held in the vault. Start market cap{" "}
             <strong className="num font-semibold">
               {range.atMin.marketCapAfter.toFixed(1)}–{range.atMax.marketCapAfter.toFixed(1)} SOL
             </strong>
             . Backers earn <strong className="num font-semibold">{params.backerFeeShareBps / 100}%</strong> of every trade
-            fee.
+            fee and 100% of the vault agent&rsquo;s realized profit.
           </p>
           <div className="grid gap-3">
             <SupplyBar label={`At min · ${fmtLamports(range.lo)} SOL`} supplyPct={range.atMin.supplyPct} />

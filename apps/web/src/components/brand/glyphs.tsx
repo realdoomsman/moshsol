@@ -26,7 +26,7 @@ function Glyph({ size = 16, title, children, ...rest }: GlyphProps & { children:
   );
 }
 
-/** Locked, vault: the mark's jaws in outline around a solid coin. */
+/** Vault: the mark's jaws in outline around a solid coin. */
 export function ClampGlyph(props: GlyphProps) {
   return (
     <Glyph {...props}>

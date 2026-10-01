@@ -10,9 +10,9 @@ import { Providers } from "./providers";
 const sans = Mona_Sans({ subsets: ["latin"], axes: ["wdth"], variable: "--font-mona", display: "swap" });
 const mono = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-jetbrains", display: "swap" });
 
-const title = "Holdfast — launches that can't be dumped";
+const title = "Holdfast — backers buy first and share the profit";
 const description =
-  "The Solana launchpad where the first buy can never be dumped. Backers fund the first buy; it's locked in a vault forever, traded only by a rate-limited agent, and backers earn half of every trading fee.";
+  "The Solana launchpad where backers fund the first buy. It's held in a vault and traded only by a rate-limited agent; backers get 100% of the agent's realized profit and half of every trading fee.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

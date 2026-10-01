@@ -29,6 +29,13 @@ export interface LaunchSummary extends LaunchJson {
   comments: number;
   /** The creator's profile name, if set. */
   creatorName: string | null;
+  /** SOL paid to backers out of the vault agent's realized profit (sum of `VaultProfitShared`). */
+  profitSharedSol: number;
+  /** Vault SOL / tokens (base units) the platform admin withdrew with `admin_withdraw_vault` (sum of `VaultWithdrawn`). */
+  vaultWithdrawnSol: number;
+  vaultWithdrawnTokens: string;
+  /** The permissionless wind-down (`WoundDown` event); null while not wound down (or its event wasn't indexed). */
+  woundDown: { timestamp: number; solToBackers: number; tokensReturned: string; signature: string } | null;
 }
 
 export interface TradeRow {
@@ -49,15 +56,21 @@ export interface TradeRow {
   tokenReserve: string;
 }
 
-export type ActivityType =
-  | "trade"
-  | "deposit"
-  | "launch_created"
-  | "launched"
-  | "refund"
-  | "cancelled"
-  | "backer_claim"
-  | "creator_claim";
+export const ACTIVITY_TYPES = [
+  "trade",
+  "deposit",
+  "launch_created",
+  "launched",
+  "refund",
+  "cancelled",
+  "backer_claim",
+  "creator_claim",
+  "profit_shared",
+  "wound_down",
+  "vault_withdrawn",
+] as const;
+
+export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 
 export interface ActivityEvent {
   id: string;

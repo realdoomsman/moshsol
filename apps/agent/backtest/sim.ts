@@ -211,6 +211,8 @@ export interface RunResult {
   tokens0: number;
   sol1: number;
   tokens1: number;
+  /** Realized agent-sell profit paid out to backers (SOL): the vault's result is sol1 + profitShared. */
+  profitShared: number;
   /** Largest peak-to-trough fall of minute spot, 0..1. */
   maxDrawdown: number;
   /** σ of minute log returns, bps. */
@@ -410,6 +412,7 @@ export function simulate(sc: Scenario, policy: Policy, opt: SimOptions = DEFAULT
     tokens0,
     sol1: Number(chain.vaultSol) / 1e9,
     tokens1: Number(chain.vaultTokens) / 1e6,
+    profitShared: Number(chain.profitShared) / 1e9,
     maxDrawdown,
     volBps: Math.sqrt(Math.max(0, sumSq / n - (sum / n) ** 2)) * 10_000,
     inBand: prices.length > 0 ? inBand / prices.length : 0,

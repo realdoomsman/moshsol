@@ -28,6 +28,13 @@ export interface LaunchSummary extends LaunchJson {
   /** Visible comments. */
   comments: number;
   creatorName: string | null;
+  /** SOL credited to backers from the vault agent's realized profit. */
+  profitSharedSol: number;
+  /** Vault SOL / tokens (base units) withdrawn by the platform admin (`admin_withdraw_vault`). */
+  vaultWithdrawnSol: number;
+  vaultWithdrawnTokens: string;
+  /** The permissionless wind-down; null while not wound down (or its event wasn't indexed). */
+  woundDown: { timestamp: number; solToBackers: number; tokensReturned: string; signature: string } | null;
 }
 
 export interface TradeRow {
@@ -159,7 +166,10 @@ export type ActivityType =
   | "refund"
   | "cancelled"
   | "backer_claim"
-  | "creator_claim";
+  | "creator_claim"
+  | "profit_shared"
+  | "wound_down"
+  | "vault_withdrawn";
 
 export interface ActivityEvent {
   id: string | number;
@@ -181,13 +191,17 @@ export interface PlatformStats {
   totalLaunches: number;
   liveLaunches: number;
   raisingLaunches: number;
+  woundDownLaunches: number;
   totalRaisedSol: number;
   totalVolumeSol: number;
   volume24hSol: number;
+  /** Everything credited to backers: fee share + vault profit share + wind-down payouts. */
   backerFeesAccruedSol: number;
+  profitSharedSol: number;
   agentTrades: number;
-  lockedVaultSol: number;
-  lockedVaultTokensValueSol: number;
+  vaultSol: number;
+  vaultTokensValueSol: number;
+  vaultWithdrawnSol: number;
 }
 
 export interface PlatformInfo {

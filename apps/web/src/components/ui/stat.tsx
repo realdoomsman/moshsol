@@ -72,7 +72,7 @@ export function StatRow({ children, scroll, className }: { children: ReactNode; 
 
 /**
  * A marketing/strip headline number gated by §5.3 (`lib/thresholds.ts`): shows the stat once it
- * clears its threshold, otherwise the invariant fallback ("Withdraw instructions 0"), otherwise
+ * clears its threshold, otherwise the invariant fallback ("Backer share of agent profit 100%"), otherwise
  * nothing. Tables and detail pages show real values directly — don't use this there.
  */
 export function HeadlineStat({

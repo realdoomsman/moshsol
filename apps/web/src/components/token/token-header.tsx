@@ -23,22 +23,21 @@ import { displayName } from "../wallet-peek/wallet-peek";
 import { SocialIcon, socialLinks, XLogo } from "./creator-card";
 
 function PhaseChips({ launch: l, phase }: { launch: LaunchSummary; phase: Phase }) {
-  if (phase === "live") {
-    return (
-      <>
-        <StatusChip status="live" />
-        <StatusChip status="locked" />
-      </>
-    );
-  }
+  if (phase === "live") return <StatusChip status="live" />;
+  if (phase === "woundDown") return <StatusChip status="woundDown" />;
   if (phase === "failed" || phase === "refunding") return <StatusChip status="refunding" />;
   const minMet = BigInt(l.raised) >= BigInt(l.raiseMin);
   return <StatusChip status={minMet ? "min-reached" : "raising"} />;
 }
 
 function shareText(l: LaunchSummary): string {
-  if (l.status === "live") return `$${l.symbol} on Holdfast: ${fmtSolValue(l.marketCapSol)} SOL mcap, first buy locked in the vault forever.`;
-  if (l.status === "raising") return `Backing $${l.symbol} on Holdfast: the first buy gets locked in the vault forever, and backers earn half of every trading fee.`;
+  const backerPct = l.terms.backerFeeShareBps / 100;
+  if (l.status === "live") {
+    return `$${l.symbol} on Holdfast: ${fmtSolValue(l.marketCapSol)} SOL mcap. Backers bought first, earn ${backerPct}% of every trading fee and 100% of the vault agent's profit.`;
+  }
+  if (l.status === "raising") {
+    return `Backing $${l.symbol} on Holdfast: backers make the first buy, earn ${backerPct}% of every trading fee and 100% of the vault agent's profit.`;
+  }
   return `$${l.symbol} on Holdfast`;
 }
 

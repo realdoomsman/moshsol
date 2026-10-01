@@ -3,11 +3,12 @@
   "private": true,
   "packageManager": "pnpm@10.13.1",
   "scripts": {
-    "dev": "pnpm -s preflight && concurrently --kill-others --names indexer,agent,web --prefix-colors cyan,magenta,green \"pnpm:dev:indexer\" \"pnpm:dev:agent\" \"pnpm:dev:web\"",
-    "start": "pnpm -s preflight && pnpm --filter @holdfast/web build && concurrently --kill-others --names indexer,agent,web --prefix-colors cyan,magenta,green \"pnpm --filter @holdfast/indexer start\" \"pnpm --filter @holdfast/agent start\" \"pnpm --filter @holdfast/web start\"",
+    "dev": "pnpm -s preflight && concurrently --kill-others --names indexer,agent,accounts,web --prefix-colors cyan,magenta,yellow,green \"pnpm:dev:indexer\" \"pnpm:dev:agent\" \"pnpm:dev:accounts\" \"pnpm:dev:web\"",
+    "start": "pnpm -s preflight && pnpm --filter @holdfast/web build && concurrently --kill-others --names indexer,agent,accounts,web --prefix-colors cyan,magenta,yellow,green \"pnpm --filter @holdfast/indexer start\" \"pnpm --filter @holdfast/agent start\" \"pnpm --filter @holdfast/accounts start\" \"pnpm --filter @holdfast/web start\"",
     "dev:web": "pnpm --filter @holdfast/web dev",
     "dev:indexer": "pnpm --filter @holdfast/indexer dev",
     "dev:agent": "pnpm --filter @holdfast/agent dev",
+    "dev:accounts": "pnpm --filter @holdfast/accounts dev",
     "preflight": "pnpm --silent --filter @holdfast/scripts run preflight",
     "localnet": "node scripts/localnet.mjs",
     "stop:localnet": "node scripts/localnet.mjs stop",
@@ -16,6 +17,7 @@
     "seed:localnet": "pnpm --filter @holdfast/scripts run seed",
     "simulate:localnet": "pnpm --filter @holdfast/scripts run simulate",
     "handoff": "pnpm --filter @holdfast/scripts run handoff",
+    "upgrade": "pnpm --filter @holdfast/scripts run upgrade",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {

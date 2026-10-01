@@ -13,7 +13,7 @@ export const LANES: { value: Lane; label: string; short: string }[] = [
   { value: "live", label: "Live", short: "Live" },
 ];
 
-/** Which lane a launch sits in; `null` = off the board (failed or refunding raises). */
+/** Which lane a launch sits in; `null` = off the board (failed or refunding raises, wound-down launches). */
 export function laneOf(l: LaunchSummary, now: number): Lane | null {
   const phase = phaseOf(l, now);
   if (phase === "live") return "live";
@@ -26,11 +26,12 @@ export function chipStatus(l: LaunchSummary, now: number): LaunchChipStatus {
   const phase = phaseOf(l, now);
   if (phase === "live") return "live";
   if (phase === "refunding") return "refunding";
+  if (phase === "woundDown") return "woundDown";
   if (phase === "failed") return "ended";
   return BigInt(l.raised) >= BigInt(l.raiseMin) ? "min-reached" : "raising";
 }
 
-/** Vault holdings: SOL plus the share of total supply locked (tokens). */
+/** Vault holdings: SOL plus the share of total supply held (tokens). */
 export function vaultOf(l: LaunchSummary): { sol: number; supplyPct: number; valueSol: number } {
   const sol = lamportsToSol(l.vaultSol);
   const supplyPct = pctOf(l.vaultTokens, TOTAL_SUPPLY);

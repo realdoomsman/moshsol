@@ -32,9 +32,9 @@ export const DEMO = {
   theLock: (
     <VideoSlot
       name="the-lock"
-      label="The raise fills, the launch runs and the clamp closes on the vault."
+      label="The raise fills, the launch runs and the bundle lands in the vault."
       fallback={<LockFallback />}
-      fallbackCaption={`Live from ${CLUSTER_NAME} · a locked vault`}
+      fallbackCaption={`Live from ${CLUSTER_NAME} · a launch's vault`}
     />
   ),
   agentDefends: (
@@ -65,9 +65,9 @@ export function launchSteps(p: Params): HowStep[] {
       frame: DEMO.backARaise,
     },
     {
-      title: "The bundle locks",
+      title: "The bundle buys first",
       description:
-        "At launch, the pool buys first, before any public trade can exist, and the tokens are clamped into the vault. There is no instruction to take them out.",
+        "At launch, the pool buys first, before any public trade can exist, and the tokens go into the vault. Only the vault agent trades them; the platform admin can withdraw, and every withdrawal is public.",
       rule: p ? `Bundle: ≤ ${pctFromBps(p.maxBundleSupplyBps)} of supply` : null,
       frame: DEMO.theLock,
     },
@@ -85,9 +85,9 @@ export function launchSteps(p: Params): HowStep[] {
     {
       title: "Backers earn",
       description: p
-        ? `${pctFromBps(p.backerFeeShareBps)} of every ${pctFromBps(p.tradeFeeBps)} trading fee goes to backers, pro-rata, forever. Claim any time.`
-        : "A fixed share of every trading fee goes to backers, pro-rata, forever. Claim any time.",
-      rule: p ? `${pctFromBps(p.backerFeeShareBps)} of fees to backers` : null,
+        ? `${pctFromBps(p.backerFeeShareBps)} of every ${pctFromBps(p.tradeFeeBps)} trading fee and 100% of the vault agent's realized profit go to backers, pro-rata. Claim any time.`
+        : "A fixed share of every trading fee and 100% of the vault agent's realized profit go to backers, pro-rata. Claim any time.",
+      rule: p ? `${pctFromBps(p.backerFeeShareBps)} of fees, 100% of agent profit to backers` : null,
       frame: DEMO.claim,
     },
   ];

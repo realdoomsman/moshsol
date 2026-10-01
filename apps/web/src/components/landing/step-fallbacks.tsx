@@ -20,7 +20,7 @@ import { TokenAvatar } from "../ui/token-avatar";
 
 /**
  * Live stand-ins for the four product-loop recordings (§3.9) until the files exist: each shows the
- * same moment from real on-chain data — an open raise, a locked bundle, the agent's latest call, the
+ * same moment from real on-chain data — an open raise, a launch's vault, the agent's latest call, the
  * backer fee ledger.
  */
 
@@ -109,10 +109,10 @@ export function RaiseFallback() {
   );
 }
 
-/** 02 The bundle locks: a live launch's vault, clamped. */
+/** 02 The bundle buys first: a live launch's vault, with what has left it. */
 export function LockFallback() {
   const { seed, loading } = useHeroPick();
-  if (!seed) return loading ? <Loading /> : <EmptyState>No launch has locked a bundle yet.</EmptyState>;
+  if (!seed) return loading ? <Loading /> : <EmptyState>No launch has bought its bundle yet.</EmptyState>;
   const l = seed;
   return (
     <div>
@@ -120,14 +120,17 @@ export function LockFallback() {
       <div className="flex items-center gap-4 px-5 pt-5">
         <Mark size={40} className="text-ink" />
         <div>
-          <p className="h3 num text-ink">Bundle locked · {pctOf(l.bundleTokens, TOTAL_SUPPLY).toFixed(2)}% of supply</p>
-          <p className="small text-ink-3">Withdraw instructions: 0</p>
+          <p className="h3 num text-ink">Bundle in the vault · {pctOf(l.bundleTokens, TOTAL_SUPPLY).toFixed(2)}% of supply</p>
+          <p className="small num text-ink-3">
+            Withdrawn by the admin: {fmtSolValue(l.vaultWithdrawnSol)} SOL · {fmtTokens(l.vaultWithdrawnTokens)} tokens
+          </p>
         </div>
       </div>
       <div className="px-5 pb-4 pt-4">
         <Row k="Vault tokens">{fmtTokens(l.vaultTokens)}</Row>
         <Row k="Vault SOL">{fmtLamports(l.vaultSol)} SOL</Row>
         <Row k="Bundle bought at">{fmtPrice(lamportsToSol(l.bundleSol) / (Number(BigInt(l.bundleTokens)) / 1e6))} SOL</Row>
+        <Row k="Agent profit to backers">{fmtSolValue(l.profitSharedSol)} SOL</Row>
       </div>
     </div>
   );

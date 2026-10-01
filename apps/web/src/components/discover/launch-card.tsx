@@ -84,13 +84,23 @@ function LiveBody({ l, now }: { l: LaunchSummary; now: number }) {
       <div className="small mt-2 flex min-w-0 items-center gap-1.5 text-ink-2">
         <ClampGlyph className="shrink-0 text-accent-ink" />
         <span className="num truncate">
-          {fmtSolValue(vault.sol)} SOL + {vault.supplyPct.toFixed(vault.supplyPct >= 10 ? 1 : 2)}% supply locked
+          {fmtSolValue(vault.sol)} SOL + {vault.supplyPct.toFixed(vault.supplyPct >= 10 ? 1 : 2)}% supply in the vault
         </span>
       </div>
       <div className="small num mt-1 text-ink-3">
         {l.backerCount} {l.backerCount === 1 ? "backer" : "backers"} · {l.holders} {l.holders === 1 ? "holder" : "holders"}
       </div>
     </>
+  );
+}
+
+function WoundDownBody({ l }: { l: LaunchSummary }) {
+  return (
+    <div className="small num text-ink-3">
+      Trading ended ·{" "}
+      {l.woundDown ? `${fmtSolValue(l.woundDown.solToBackers)} SOL to backers` : "payout to backers"} · {l.backerCount}{" "}
+      {l.backerCount === 1 ? "backer" : "backers"}
+    </div>
   );
 }
 
@@ -194,7 +204,9 @@ export function LaunchCard({
           <Byline l={l} now={now} />
         </div>
       </div>
-      <div className="mt-4 border-t border-line pt-3">{live ? <LiveBody l={l} now={now} /> : <RaisingBody l={l} now={now} />}</div>
+      <div className="mt-4 border-t border-line pt-3">
+        {live ? <LiveBody l={l} now={now} /> : status === "woundDown" ? <WoundDownBody l={l} /> : <RaisingBody l={l} now={now} />}
+      </div>
     </article>
   );
 }
@@ -239,6 +251,8 @@ export function LaunchRow({ launch: l, now, flash, fresh }: { launch: LaunchSumm
           <Mcap l={l} className="ui block text-ink" />
           <Change value={l.change24h} className="small" />
         </div>
+      ) : status === "woundDown" ? (
+        <div className="small shrink-0 text-right text-ink-3">Wound down</div>
       ) : (
         <div className="w-28 shrink-0 text-right">
           <div className="small num text-ink">

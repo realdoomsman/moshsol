@@ -28,6 +28,7 @@ import { TradePanel, type Side } from "./trade-panel";
 import { NO_FILTERS, type TradeFilters } from "./trades-tab";
 import { VaultCard } from "./vault-card";
 import { VerifyCard } from "./verify-card";
+import { AdminWithdrawals, WindDownCard } from "./wind-down";
 
 type Section = "chart" | "trades" | "vault" | "thread" | "holders" | "more";
 const SECTIONS: { value: Section; label: string }[] = [
@@ -99,6 +100,7 @@ function BottomBar({ children }: { children: ReactNode }) {
   );
 }
 
+/** Live and wound-down launches: chart, activity and the trade rail (read-only once wound down). */
 function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLaunched: boolean }) {
   const now = useNow(5_000);
   const zones = useMemo(() => agentZones(l, now), [l, now]);
@@ -110,6 +112,7 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
   const [filters, setFilters] = useState<TradeFilters>(NO_FILTERS);
   const [side, setSide] = useState<Side>("buy");
   const [sheet, setSheet] = useState(false);
+  const woundDown = l.status === "woundDown";
 
   const reveal = () => requestAnimationFrame(() => document.getElementById("activity")?.scrollIntoView({ block: "start" }));
   const filterMaker = (wallet: string) => {
@@ -133,6 +136,12 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
 
   return (
     <div className="grid gap-3">
+      {woundDown ? (
+        <div role="status" className="body rounded-md bg-raised px-4 py-3 text-ink">
+          This launch wound down. Trading has ended for good; the curve and vault SOL were credited to the backers, who claim
+          it under Your position.
+        </div>
+      ) : null}
       <SectionTabs value={section} onChange={setSection} />
       <StatStrip launch={l} className="rounded-md border-x bg-surface max-lg:hidden" />
       <Columns
@@ -149,9 +158,13 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
             </div>
             <PositionPanel launch={l} className={shownIn("chart")} />
             <TokenInfo launch={l} now={now} className={shownIn("chart")} />
-            <div className={shownIn("vault")}>
-              <VaultCard launch={l} zones={zones} justLaunched={justLaunched} onAgentLog={openAgentLog} />
-            </div>
+            {woundDown ? null : (
+              <div className={shownIn("vault")}>
+                <VaultCard launch={l} zones={zones} justLaunched={justLaunched} onAgentLog={openAgentLog} />
+              </div>
+            )}
+            <WindDownCard launch={l} now={now} className={shownIn("vault")} />
+            <AdminWithdrawals launch={l} now={now} className={shownIn("vault")} />
             <VerifyCard launch={l} className={shownIn("vault")} />
             <CreatorCard launch={l} className={shownIn("more")} />
           </>
@@ -172,28 +185,36 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
         }
       />
       <BottomBar>
-        <Button
-          variant="buy"
-          size="lg"
-          className="flex-1"
-          onClick={() => {
-            setSide("buy");
-            setSheet(true);
-          }}
-        >
-          Buy
-        </Button>
-        <Button
-          variant="sell"
-          size="lg"
-          className="flex-1"
-          onClick={() => {
-            setSide("sell");
-            setSheet(true);
-          }}
-        >
-          Sell
-        </Button>
+        {woundDown ? (
+          <Button variant="secondary" size="lg" className="flex-1" disabled>
+            Trading has ended
+          </Button>
+        ) : (
+          <>
+            <Button
+              variant="buy"
+              size="lg"
+              className="flex-1"
+              onClick={() => {
+                setSide("buy");
+                setSheet(true);
+              }}
+            >
+              Buy
+            </Button>
+            <Button
+              variant="sell"
+              size="lg"
+              className="flex-1"
+              onClick={() => {
+                setSide("sell");
+                setSheet(true);
+              }}
+            >
+              Sell
+            </Button>
+          </>
+        )}
       </BottomBar>
       <Sheet open={sheet} onOpenChange={setSheet} title={`Trade $${l.symbol}`} hideTitle>
         <TradePanel launch={l} side={side} onSideChange={setSide} bare />
@@ -289,9 +310,9 @@ function TokenSkeleton() {
 }
 
 /**
- * Token page `/launch/[mint]` (§4.5): header, then the live layout (chart, activity, trade rail) or
- * the raise layout (raise panel, back/refund rail) by phase. A launch confirmed seconds ago renders
- * an "indexing" state until the indexer has it.
+ * Token page `/launch/[mint]` (§4.5): header, then the live layout (chart, activity, trade rail;
+ * read-only once wound down) or the raise layout (raise panel, back/refund rail) by phase. A launch
+ * confirmed seconds ago renders an "indexing" state until the indexer has it.
  */
 export function TokenView({ mint }: { mint: string }) {
   const { data, error, isLoading } = useLaunch(mint);
@@ -332,7 +353,7 @@ export function TokenView({ mint }: { mint: string }) {
   return (
     <div className="grid gap-6 max-lg:pb-16">
       <TokenHeader launch={data} phase={phase} now={now} />
-      {phase === "live" ? (
+      {phase === "live" || phase === "woundDown" ? (
         <LiveLayout key={data.mint} launch={data} justLaunched={firstStatus === "raising"} />
       ) : (
         <RaiseLayout key={data.mint} launch={data} phase={phase} />

@@ -191,7 +191,7 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
         setClaimProgress({ done: i, total: batches });
         const sig = await tx.run({
           label: batches > 1 ? `${CLAIM_ALL} (${i + 1}/${batches})` : CLAIM_ALL,
-          successMessage: batches > 1 ? `Claimed batch ${i + 1} of ${batches}` : `Claimed ${fmtLamports(total)} SOL in fees`,
+          successMessage: batches > 1 ? `Claimed batch ${i + 1} of ${batches}` : `Claimed ${fmtLamports(total)} SOL`,
           build: async (payer) => Promise.all(chunk.map((make) => make(payer))),
           invalidate: invalidate(),
         });
@@ -301,7 +301,7 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <Stat
                   label="Claimable"
-                  rule="Backer fees plus creator fees you can claim right now."
+                  rule="Backer earnings (fee share, vault agent profit, wind-down payouts) plus creator fees you can claim right now."
                   tone={split.totalClaimable > 0n ? "accent" : undefined}
                   value={quiet(split.totalClaimable > 0n, `${fmtLamports(split.totalClaimable)} SOL`)}
                   sub={claimCount > 0 ? `${claimCount} ${claimCount === 1 ? "position" : "positions"}` : undefined}

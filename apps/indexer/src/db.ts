@@ -119,6 +119,18 @@ export type TradeAggDbRow = {
   last_ts: number | null;
 };
 
+/** Per-launch vault payouts/withdrawals from events (lamports and base units as decimal strings). */
+export type VaultEventAggDbRow = {
+  launch: string;
+  profit_shared: string;
+  withdrawn_sol: string;
+  withdrawn_tokens: string;
+  wound_down_ts: number | null;
+  wound_down_sol: string | null;
+  wound_down_tokens: string | null;
+  wound_down_sig: string | null;
+};
+
 export type CommentDbRow = {
   id: number;
   mint: string;
@@ -302,6 +314,7 @@ CREATE INDEX IF NOT EXISTS deposits_backer ON deposits(backer, launch);
 CREATE INDEX IF NOT EXISTS trades_trader ON trades(trader, timestamp);
 CREATE INDEX IF NOT EXISTS events_actor ON events(actor, timestamp);
 CREATE INDEX IF NOT EXISTS events_launch ON events(launch);
+CREATE INDEX IF NOT EXISTS events_type ON events(type, launch);
 CREATE TABLE IF NOT EXISTS comments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   mint TEXT NOT NULL,
@@ -369,6 +382,17 @@ const TRADE_AGG = `
     COUNT(DISTINCT CASE WHEN timestamp >= :day AND is_agent = 0 AND is_buy = 0 THEN trader END) AS sellers24,
     MAX(timestamp) AS last_ts
   FROM trades`;
+const VAULT_EVENT_AGG = `
+  SELECT launch,
+    CAST(COALESCE(SUM(CASE WHEN type = 'profit_shared' THEN CAST(sol_amount AS INTEGER) END), 0) AS TEXT) AS profit_shared,
+    CAST(COALESCE(SUM(CASE WHEN type = 'vault_withdrawn' THEN CAST(sol_amount AS INTEGER) END), 0) AS TEXT) AS withdrawn_sol,
+    CAST(COALESCE(SUM(CASE WHEN type = 'vault_withdrawn' THEN CAST(token_amount AS INTEGER) END), 0) AS TEXT)
+      AS withdrawn_tokens,
+    MAX(CASE WHEN type = 'wound_down' THEN timestamp END) AS wound_down_ts,
+    MAX(CASE WHEN type = 'wound_down' THEN sol_amount END) AS wound_down_sol,
+    MAX(CASE WHEN type = 'wound_down' THEN token_amount END) AS wound_down_tokens,
+    MAX(CASE WHEN type = 'wound_down' THEN signature END) AS wound_down_sig
+  FROM events WHERE type IN ('profit_shared', 'vault_withdrawn', 'wound_down')`;
 const WALLET_TRADE_AGG = `
   COUNT(*) AS trades, COALESCE(SUM(t.is_buy), 0) AS buys,
   COALESCE(SUM(CASE WHEN t.is_buy = 1 THEN t.sol END), 0) AS buy_sol,
@@ -429,6 +453,8 @@ const SQL = {
   setHolders: "UPDATE launches SET holders = ?, top_holder_pct = ?, holders_at = ? WHERE address = ?",
   tradeAggAll: `${TRADE_AGG} GROUP BY launch`,
   tradeAggOne: `${TRADE_AGG} WHERE launch = :launch`,
+  vaultEventAggAll: `${VAULT_EVENT_AGG} GROUP BY launch`,
+  vaultEventAggOne: `${VAULT_EVENT_AGG} AND launch = ? GROUP BY launch`,
   priceAt: "SELECT price_sol FROM trades WHERE launch = ? AND timestamp <= ? ORDER BY slot DESC, rowid DESC LIMIT 1",
   firstPrice: "SELECT price_sol FROM trades WHERE launch = ? ORDER BY slot ASC, rowid ASC LIMIT 1",
   trades: `
@@ -446,6 +472,9 @@ const SQL = {
   volumeSince: "SELECT COALESCE(SUM(sol), 0) AS v FROM trades WHERE timestamp >= ?",
   activity: `${ACTIVITY_SELECT} ORDER BY e.slot DESC, e.rowid DESC LIMIT ?`,
   activityOne: `${ACTIVITY_SELECT} WHERE e.signature = ? AND e.event_index = ?`,
+  launchActivity: `${ACTIVITY_SELECT}
+    WHERE e.launch = :launch AND e.timestamp < :before AND (:type IS NULL OR e.type = :type)
+    ORDER BY e.slot DESC, e.rowid DESC LIMIT :limit`,
   counts: `
     SELECT (SELECT COUNT(*) FROM txs) AS txs, (SELECT COUNT(*) FROM events) AS events,
       (SELECT COUNT(*) FROM trades) AS trades, (SELECT COUNT(*) FROM deposits) AS deposits,
@@ -731,6 +760,14 @@ export class Store {
     return r && r.launch !== null ? r : undefined;
   }
 
+  vaultEventAggregates(): Map<string, VaultEventAggDbRow> {
+    return new Map(rows<VaultEventAggDbRow>(this.stmts.vaultEventAggAll).map((r) => [r.launch, r]));
+  }
+
+  vaultEventAggregate(launch: string): VaultEventAggDbRow | undefined {
+    return row<VaultEventAggDbRow>(this.stmts.vaultEventAggOne, [launch]);
+  }
+
   /** Price of the last trade at or before `ts`. */
   priceAt(launch: string, ts: number): number | null {
     return row<{ price_sol: number }>(this.stmts.priceAt, [launch, ts])?.price_sol ?? null;
@@ -774,6 +811,11 @@ export class Store {
 
   activityEvent(signature: string, eventIndex: number): ActivityDbRow | undefined {
     return row<ActivityDbRow>(this.stmts.activityOne, [signature, eventIndex]);
+  }
+
+  /** One launch's activity, newest first; `type` narrows to one event type. */
+  launchActivity(launch: string, type: ActivityType | null, beforeTs: number, limit: number): ActivityDbRow[] {
+    return rows<ActivityDbRow>(this.stmts.launchActivity, { launch, type, before: beforeTs, limit });
   }
 
   // ---------------- comments ----------------

@@ -1,6 +1,7 @@
 import { AGENT_URL, INDEXER_URL } from "./env";
 import type {
   ActivityEvent,
+  ActivityType,
   AgentStatus,
   AgentsOverview,
   BackerRow,
@@ -53,7 +54,7 @@ export async function request<T>(base: string, path: string, init?: RequestInit)
   return (await res.json()) as T;
 }
 
-export type LaunchFilter = "raising" | "live" | "refunding" | "all";
+export type LaunchFilter = "raising" | "live" | "refunding" | "woundDown" | "all";
 export type LaunchSort = "trending" | "new" | "mcap" | "volume" | "raised";
 export type Timeframe = 60 | 300 | 900 | 3600 | 86400;
 
@@ -151,6 +152,13 @@ export const api = {
     request<{ holders: HolderRow[] }>(INDEXER_URL, `/api/launches/${mint}/holders?limit=${limit}`),
   portfolio: (wallet: string) => request<Portfolio>(INDEXER_URL, `/api/portfolio/${wallet}`),
   activity: (limit = 40) => request<{ events: ActivityEvent[] }>(INDEXER_URL, `/api/activity?limit=${limit}`),
+  /** One launch's events, newest first; `type` narrows to one event type (e.g. admin `vault_withdrawn`). */
+  launchActivity: (mint: string, p: { type?: ActivityType; limit: number; before?: number }) => {
+    const qs = new URLSearchParams({ limit: String(p.limit) });
+    if (p.type) qs.set("type", p.type);
+    if (p.before !== undefined) qs.set("before", String(p.before));
+    return request<{ events: ActivityEvent[] }>(INDEXER_URL, `/api/launches/${mint}/activity?${qs}`);
+  },
   agents: () => request<AgentsOverview>(INDEXER_URL, "/api/agents"),
   agentStatus: () => request<AgentStatus>(AGENT_URL, "/status"),
   upload: (input: UploadInput) => {

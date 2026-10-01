@@ -4,11 +4,11 @@
  * Tables and detail pages always show real small values — these thresholds never apply there.
  */
 
-export type HeadlineStat = "lockedSol" | "backerFeesSol" | "launches" | "agentTrades" | "volume24hSol";
+export type HeadlineStat = "vaultSol" | "backerFeesSol" | "launches" | "agentTrades" | "volume24hSol";
 
 /** Headline only if the value is ≥ this. */
 export const HEADLINE_MIN: Record<HeadlineStat, number> = {
-  lockedSol: 100,
+  vaultSol: 100,
   backerFeesSol: 1,
   launches: 25,
   agentTrades: 50,
@@ -32,8 +32,8 @@ export interface InvariantContext {
  */
 export function invariantFor(stat: HeadlineStat, ctx: InvariantContext = {}): Invariant | null {
   switch (stat) {
-    case "lockedSol":
-      return { label: "Withdraw instructions", value: "0" };
+    case "vaultSol":
+      return { label: "Backer share of agent profit", value: "100%" };
     case "backerFeesSol":
       return ctx.backerFeeShareBps === undefined
         ? null

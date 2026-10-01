@@ -4,7 +4,7 @@ import { explorerAddress } from "@/lib/explorer";
 import { pctFromBps } from "../../band/model";
 import { SplitBar } from "../../landing/fee-split";
 import { InstructionList } from "../../landing/instruction-list";
-import { instructionRows } from "../../landing/instructions";
+import { instructionRows, WIND_DOWN_RULE } from "../../landing/instructions";
 import { DEMO, EmaTerm } from "../../landing/launch-steps";
 import { ProofTiles } from "../../landing/proof-tiles";
 import { SimulatorPanel } from "../../landing/simulator-panel";
@@ -16,7 +16,7 @@ export const theVault: DocPage = {
   group: "Protocol",
   nav: "The vault",
   title: "The vault",
-  description: "Where the bundle lives: a program-owned account per launch that no instruction can empty.",
+  description: "Where the bundle lives: a program-owned account per launch, what can move it, who gets its profit, and how it winds down.",
   sections: ({ seed }) => [
     {
       id: "what-is-in-it",
@@ -33,18 +33,57 @@ export const theVault: DocPage = {
       ),
     },
     {
-      id: "no-withdraw",
-      title: "There is no withdraw",
+      id: "who-can-move-it",
+      title: "Who can move it",
       body: (
         <>
           <P>
-            The program has no instruction that sends vault tokens or vault SOL to a wallet — not for the creator, the admin or the
-            agent. The only instructions that touch the vault are <C>agent_buy</C> and <C>agent_sell</C>, and both move value between
-            the vault and <B>the same launch&rsquo;s curve</B>.
+            The creator has no instruction that touches the vault. Three instructions do, and each emits an event the launch page
+            shows:
           </P>
-          <Callout tone="accent" title="withdraw_vault does not exist">
-            Every instruction is listed on <A href="/docs/program">Program reference</A>, generated from the IDL.
+          <Table
+            head={["Instruction", "Signer", "What it moves"]}
+            rows={[
+              [<C key="a">agent_buy / agent_sell</C>, "Agent authority", "Value between the vault and the same launch's curve, inside the agent rules"],
+              [<C key="w">wind_down</C>, "Anyone, once eligible", "Vault tokens back to the curve; the curve's and vault's SOL to backers"],
+              [<C key="x">admin_withdraw_vault</C>, "Platform admin", "Any amount of vault SOL and tokens to the platform fee recipient"],
+            ]}
+          />
+          <Callout tone="warn" title="The admin can withdraw a vault">
+            <C>admin_withdraw_vault</C> lets the platform admin — a Squads 2-of-3 multisig on mainnet — send a vault&rsquo;s SOL and
+            tokens to the platform fee recipient. It can&rsquo;t touch the curve&rsquo;s liquidity or backers&rsquo; accrued earnings.
+            Every withdrawal emits <C>VaultWithdrawn</C> and is listed on the launch page. See <A href="/docs/risks">Risks</A>.
           </Callout>
+        </>
+      ),
+    },
+    {
+      id: "profit-share",
+      title: "Profit share",
+      body: (
+        <P>
+          When the agent sells, the fill minus the sold tokens&rsquo; average cost is realized profit. <B>100% of it goes to backers</B>,
+          pro-rata to their deposit, through the same accumulator as the fee share — claim both with <C>claim_backer_fees</C>. Only the
+          cost part returns to the vault&rsquo;s SOL and its buy-back budget. Each payout emits <C>VaultProfitShared</C> right after the
+          agent&rsquo;s trade.
+        </P>
+      ),
+    },
+    {
+      id: "wind-down",
+      title: "Wind-down",
+      body: (
+        <>
+          <P>
+            Anyone can call <C>wind_down</C> on a live launch that is {WIND_DOWN_RULE} (measured from real balances: the mint&rsquo;s
+            supply equals the curve&rsquo;s plus the vault&rsquo;s tokens; burned tokens don&rsquo;t count). It returns the
+            vault&rsquo;s tokens to the curve and credits the curve&rsquo;s and vault&rsquo;s SOL to backers pro-rata, claimable with{" "}
+            <C>claim_backer_fees</C>.
+          </P>
+          <P>
+            The launch then shows <B>Wound down</B>: buys, sells and agent trades stop for good. Backer, creator and platform fee
+            claims keep working.
+          </P>
         </>
       ),
     },
@@ -150,7 +189,7 @@ export const agents: DocPage = {
             its transactions don&rsquo;t fail on EMA drift.
           </P>
           <Callout title="If the agent is offline">
-            Vaults stop trading until it&rsquo;s back; nothing can leave them either way, and public trading carries on. The admin can
+            Vaults stop trading until it&rsquo;s back, and public trading carries on. The admin can
             also pause agents (<C>agents_paused</C>) — the pause is visible in <C>/api/platform</C>.
           </Callout>
           <Figure>{DEMO.agentDefends}</Figure>
@@ -189,6 +228,7 @@ export const fees: DocPage = {
             ["Launch fee", p ? `${pctFromBps(p.launchFeeBps)} of the raise` : "—", "The raise, at launch", "Platform"],
             ["Create fee", p ? `${lamportsToSol(p.createFeeLamports)} SOL` : "—", "Creator", "Platform fee recipient"],
             ["Agent trades", "0", "—", "—"],
+            ["Agent sell profit", "100% of fill above average cost", "Vault-agent sells", "Backers, pro-rata"],
             ["Refunds", "0", "—", "—"],
           ]}
         />
@@ -226,9 +266,27 @@ export const verify: DocPage = {
               executable.
             </li>
             <li>A launch&rsquo;s mint shows no mint authority and no freeze authority, and a supply of exactly 1,000,000,000.</li>
-            <li>The vault is the program address <C>[&quot;vault&quot;, launch]</C> — only the program can move its tokens.</li>
+            <li>
+              The vault is the program address <C>[&quot;vault&quot;, launch]</C> — only the program can sign for it, through the
+              agent trades, <C>wind_down</C> and <C>admin_withdraw_vault</C>.
+            </li>
             <li>The launch account&rsquo;s <C>terms</C> hold the fee split and agent limits you backed under.</li>
-            <li>The instruction list below has nothing that moves vault funds to a wallet.</li>
+            <li>
+              The platform account&rsquo;s <C>admin</C> is the only key that can call <C>admin_withdraw_vault</C>, and its{" "}
+              <C>fee_recipient</C> is where withdrawals go
+              {platform ? (
+                <>
+                  {" "}
+                  (admin <A href={explorerAddress(platform.admin)}>{shortAddr(platform.admin)}</A>, recipient{" "}
+                  <A href={explorerAddress(platform.feeRecipient)}>{shortAddr(platform.feeRecipient)}</A>)
+                </>
+              ) : null}
+              .
+            </li>
+            <li>
+              Every withdrawal is a <C>VaultWithdrawn</C> event: it&rsquo;s listed on the launch page and at{" "}
+              <C>/api/launches/:mint/activity?type=vault_withdrawn</C>.
+            </li>
           </Ol>
           <Figure caption={`Read live from ${CLUSTER_NAME} on the server; each tile links to the account.`}>
             <ProofTiles facts={facts} platform={platform} example={seed} />
@@ -270,8 +328,9 @@ const curve = curvePda(launch);       // ["curve", launch]`}</Code>
               : "Check whether the program is upgradeable on the explorer; an upgrade could change any rule."}
           </li>
           <li>
-            <B>The admin</B> can pause new launches and deposits, pause the agent, and change defaults for future launches — not the
-            terms of existing ones.
+            <B>The admin</B> can withdraw any vault&rsquo;s SOL and tokens to the fee recipient with <C>admin_withdraw_vault</C>
+            (never the curve&rsquo;s liquidity), pause new launches and deposits, pause the agent, and change defaults for future
+            launches — not the terms of existing ones.
           </li>
           <li>
             <B>The agent operator</B> decides when to trade within the rules; it can&rsquo;t break them.

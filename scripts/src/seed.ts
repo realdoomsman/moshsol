@@ -164,7 +164,7 @@ const PLANS: Plan[] = [
   {
     symbol: "MOSH",
     name: "Moshpit",
-    description: "The flagship pit. Backers locked a 20% bundle forever; agents trade it only on dips and rallies.",
+    description: "The flagship pit. Backers bought a 20% bundle first; agents trade it only on dips and rallies, and backers keep the profit.",
     twitter: "@moshpit_sol",
     telegram: "https://t.me/moshpit_sol",
     website: "https://moshpit.example",

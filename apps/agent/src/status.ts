@@ -19,6 +19,22 @@ export interface Decision {
   error?: string;
 }
 
+/**
+ * One entry of `GET /status` → `windDowns`: a `wind_down` the agent cranked for a launch that met every rule
+ * (in dry run: would have sent). Neither `signature` nor `error` = dry run.
+ */
+export interface WindDown {
+  mint: string;
+  symbol?: string;
+  /** Unix seconds (wall clock) of the attempt. */
+  at: number;
+  signature?: string;
+  error?: string;
+  /** From the landed `WoundDown` event: lamports credited to backers, token base units returned to the curve. */
+  solToBackers?: string;
+  tokensReturned?: string;
+}
+
 export interface StatusSnapshot {
   agent: string;
   dryRun: boolean;
@@ -28,6 +44,8 @@ export interface StatusSnapshot {
   /** Fee wallet balance as of the last tick (null before the first). */
   balanceSol: number | null;
   decisions: Decision[];
+  /** Recent wind-down attempts, newest first. */
+  windDowns: WindDown[];
 }
 
 const CORS = {

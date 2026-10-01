@@ -197,7 +197,7 @@ async function termsCommand(ev: Evaluator, entries: PoolEntry[], trainSpecs: Sce
   const budget = intFlag("rug-budget", 10);
   const [random, gens] = [intFlag("random", 200), intFlag("gens", 25)];
   say(`\nbaseline: ${fmtTerms(baseTerms)} (bps, per window); policy fixed at DEFAULT_PARAMS; launch reserve drawn from 20–50% as in every other command.`);
-  say(`every statistic is taken at its worst flow model; ΔV is vault value vs no agent under the same terms (VWAP mark); rug budget: rug SOL lost ≤ baseline + ${budget} pp of the starting vault SOL.`);
+  say(`every statistic is taken at its worst flow model; ΔV is vault value (plus agent profit paid to backers) vs no agent under the same terms (VWAP mark); rug budget: rug SOL lost ≤ baseline + ${budget} pp of the starting vault SOL.`);
   say(`picks, rounded to 25 bps (band, impact), 50 bps (caps) and 5 min (window, EMA) and measured again:\n`);
   for (const rule of RULES) say(`- **${rule}**: ${RULE_DOC[rule]}`);
   const { wfTrain, wfTest } = walkForward(entries);

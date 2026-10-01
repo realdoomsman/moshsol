@@ -37,7 +37,7 @@ export function Creators() {
   const facts = [
     "Fixed 1B supply, mint authority revoked",
     "Your backers can’t dump on your community",
-    ...(creatorPct ? [`${creatorPct} of every trade to you, forever`] : []),
+    ...(creatorPct ? [`${creatorPct} of every trade to you, for the life of the launch`] : []),
   ];
 
   const lo = lamportsOf(min);

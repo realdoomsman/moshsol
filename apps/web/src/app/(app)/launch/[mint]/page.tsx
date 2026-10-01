@@ -18,6 +18,7 @@ import {
   platformQuery,
   recentTradesQuery,
   tradeFeed,
+  vaultWithdrawalsQuery,
 } from "@/lib/query-options";
 import { launchOnChain, loadLaunch, parseMint } from "@/lib/server";
 
@@ -36,12 +37,15 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   if (r.state !== "found") return { title: "Launch" };
   const l = r.launch;
   const title = `${l.name} ($${l.symbol})`;
+  const backerPct = l.terms.backerFeeShareBps / 100;
   const description =
     l.status === "live"
-      ? `$${l.symbol}: ${fmtSolValue(l.marketCapSol)} SOL market cap at ${fmtPrice(l.priceSol)} SOL. ${fmtSolValue(lamportsToSol(l.vaultSol))} SOL and ${l.bundleSupplyBps / 100}% of supply locked in the vault forever.`
+      ? `$${l.symbol}: ${fmtSolValue(l.marketCapSol)} SOL market cap at ${fmtPrice(l.priceSol)} SOL. The vault holds ${fmtSolValue(lamportsToSol(l.vaultSol))} SOL, traded only by a rate-limited agent; backers get ${backerPct}% of every trading fee and 100% of its profit.`
       : l.status === "raising"
-        ? `Raising ${fmtSolValue(lamportsToSol(l.raised))} of ${fmtSolValue(lamportsToSol(l.raiseMax))} SOL. The first buy is locked in the vault forever, and backers earn ${l.terms.backerFeeShareBps / 100}% of every trading fee.`
-        : `The $${l.symbol} raise closed without launching. Every backer can refund 100%.`;
+        ? `Raising ${fmtSolValue(lamportsToSol(l.raised))} of ${fmtSolValue(lamportsToSol(l.raiseMax))} SOL. Backers make the first buy, earn ${backerPct}% of every trading fee and 100% of the vault agent's profit.`
+        : l.status === "woundDown"
+          ? `$${l.symbol} wound down: trading has ended and the curve and vault SOL were credited to its backers.`
+          : `The $${l.symbol} raise closed without launching. Every backer can refund 100%.`;
   return {
     title,
     description,
@@ -71,9 +75,9 @@ export default async function LaunchPage({ params }: Params) {
   if (r.state === "missing" && (await launchOnChain(mint)) === false) notFound();
   if (r.state === "found") {
     client.setQueryData(launchQuery(mint).queryKey, r.launch);
-    if (phaseOf(r.launch, Math.floor(Date.now() / 1000)) !== "live") {
-      pending.push(prefetch(client, feedHeadQuery(depositFeed(mint))), prefetch(client, commentsQuery(mint)));
-    }
+    const phase = phaseOf(r.launch, Math.floor(Date.now() / 1000));
+    if (phase === "live" || phase === "woundDown") pending.push(prefetch(client, vaultWithdrawalsQuery(mint)));
+    else pending.push(prefetch(client, feedHeadQuery(depositFeed(mint))), prefetch(client, commentsQuery(mint)));
   }
   await Promise.all(pending);
   return (

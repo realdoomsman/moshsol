@@ -5,6 +5,7 @@ pub mod launch_token;
 pub mod platform;
 pub mod raise;
 pub mod trade;
+pub mod vault;
 
 pub use agent::*;
 pub use create_launch::*;
@@ -13,6 +14,7 @@ pub use launch_token::*;
 pub use platform::*;
 pub use raise::*;
 pub use trade::*;
+pub use vault::*;
 
 use anchor_lang::prelude::*;
 

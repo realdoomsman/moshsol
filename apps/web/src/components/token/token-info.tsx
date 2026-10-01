@@ -63,7 +63,7 @@ export function TokenInfo({ launch: l, now, className }: { launch: LaunchSummary
   const cells = [
     {
       label: "Vault",
-      rule: "Share of the supply locked in the vault forever.",
+      rule: "Share of the supply held in the vault. Only the vault agent trades it; the platform multisig can withdraw it (listed on this page).",
       value: fmtPct(h.vaultPct),
     },
     {

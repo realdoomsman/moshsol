@@ -34,6 +34,12 @@ const COLUMNS = [
   },
 ] as const;
 
+const STRIP_LINKS = [
+  { href: "/docs/risks", label: "Risks" },
+  { href: "/terms", label: "Terms" },
+  { href: "/privacy", label: "Privacy" },
+] as const;
+
 /**
  * The one footer for every route (§4.2 §12, #25): lockup + program ID, link columns, then the live
  * status strip (indexer sync, agent heartbeat, network). The strip is its own element so it can pin
@@ -49,7 +55,7 @@ export function SiteFooter() {
             <Link href="/" aria-label="Holdfast home" className="w-fit rounded-xs text-ink">
               <Lockup size={20} />
             </Link>
-            <p className="small max-w-[34ch] text-ink-3">Launches that can&rsquo;t be dumped. The first buy is locked in a vault forever.</p>
+            <p className="small max-w-[34ch] text-ink-3">Backers buy first and share the profit. Every vault move is on-chain.</p>
             <div className="grid gap-1">
               <span className="label text-ink-3">Program</span>
               <Address address={PROGRAM_ID.toBase58()} chars={6} />
@@ -75,9 +81,11 @@ export function SiteFooter() {
         <div className="frame-app flex flex-col gap-2 py-3 md:h-8 md:flex-row md:items-center md:justify-between md:gap-4 md:py-0">
           <StatusBar className="md:flex-nowrap md:overflow-hidden" />
           <div className="micro flex shrink-0 items-center gap-4 text-ink-3">
-            <Link href="/docs/risks" className="rounded-xs transition-colors hover:text-ink">
-              Risks
-            </Link>
+            {STRIP_LINKS.map((l) => (
+              <Link key={l.href} href={l.href} className="rounded-xs transition-colors hover:text-ink">
+                {l.label}
+              </Link>
+            ))}
             <span>© {new Date().getFullYear()} Holdfast</span>
           </div>
         </div>

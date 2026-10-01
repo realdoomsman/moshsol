@@ -193,7 +193,7 @@ function Footer({ launch: l, href }: { launch: LaunchSummary; href: string }) {
 
   return (
     <Link href={href} className="grid border-t border-line transition-colors hover:bg-raised md:grid-cols-3">
-      <Cell label="Locked in vault">
+      <Cell label="Held in vault">
         <span className="num text-ink">
           {fmtTokens(l.vaultTokens)} <span className="text-ink-3">+ {fmtLamports(l.vaultSol)} SOL</span>
         </span>

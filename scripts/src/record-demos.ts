@@ -315,7 +315,7 @@ async function main(): Promise<void> {
       const mint = await createRaise(client, creator, {
         name: flag("name", "Tidepool"),
         symbol: flag("symbol", "TIDE"),
-        description: "A slow-filling pool for patient backers. Raise 2–10 SOL, bundle locked in the vault forever.",
+        description: "A slow-filling pool for patient backers. Raise 2–10 SOL; the bundle buys first and backers share its profit.",
         bg: "#0E7490",
         fg: "#ECFEFF",
       });
@@ -332,7 +332,7 @@ async function main(): Promise<void> {
       const mint = await createRaise(clientFor(connection, burner), burner, {
         name: flag("name", "Anchorage"),
         symbol: flag("symbol", "ANCR"),
-        description: "Dropped anchor: a fifth of supply bundled into a vault nobody can withdraw from.",
+        description: "Dropped anchor: a fifth of supply bundled into the vault, traded only by the rate-limited agent.",
         bg: "#1E293B",
         fg: "#FDBA74",
       });

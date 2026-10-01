@@ -33,3 +33,8 @@ export const LIMITS = {
   maxProofLen: 24,
   maxRaiseLamports: 100_000n * 1_000_000_000n,
 } as const;
+
+/** `wind_down` opens once a launch has been live this long… */
+export const WIND_DOWN_MIN_AGE_SECS = 3 * 86_400;
+/** …and saw no public or agent trade for this long (plus no tokens outside the curve and vault). */
+export const WIND_DOWN_IDLE_SECS = 86_400;

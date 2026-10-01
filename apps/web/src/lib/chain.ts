@@ -86,6 +86,20 @@ export function useChainWhitelistRoot(mint: string, enabled: boolean) {
   });
 }
 
+/**
+ * Why `wind_down` would fail right now (null = it would succeed), read from chain: status, age, idle
+ * time and real token balances. Token transfers between wallets aren't program events, so it polls.
+ */
+export function useWindDownBlocker(mint: string, enabled: boolean) {
+  const client = useMoshClient();
+  return useQuery({
+    queryKey: ["wind-down", mint],
+    enabled,
+    refetchInterval: 30_000,
+    queryFn: () => client.windDownBlocker(new PublicKey(mint)),
+  });
+}
+
 export interface MintFacts {
   supply: bigint;
   decimals: number;

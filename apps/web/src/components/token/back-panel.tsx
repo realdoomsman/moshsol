@@ -36,8 +36,9 @@ function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
 }
 
 /**
- * "What you get" (§4.5): the deposit's share of the backer fee pool (so of every trade), the vault
- * slice it funds at launch, and the refund guarantee — recomputed live from the typed amount.
+ * "What you get" (§4.5): the deposit's share of the backer pool (fee share of every trade plus 100%
+ * of the vault agent's realized profit and any wind-down payout), the vault slice it funds at
+ * launch, and the refund guarantee — recomputed live from the typed amount.
  */
 function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSummary; deposited: bigint; add: bigint | null; example: bigint }) {
   const extra = add ?? (deposited > 0n ? 0n : example);
@@ -68,9 +69,12 @@ function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSumm
       </div>
       <dl className="small grid gap-3">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3">
-          <dt className="text-ink-2">Fee share</dt>
-          <dd className="num text-right text-ink">{fmtPct(share)} of backer fees</dd>
-          <dd className="col-span-2 mt-0.5 text-ink-3">≈ {+feePctOfTrade.toPrecision(2)}% of every trade, forever. Shrinks as others back it.</dd>
+          <dt className="text-ink-2">Backer share</dt>
+          <dd className="num text-right text-ink">{fmtPct(share)} of backer payouts</dd>
+          <dd className="col-span-2 mt-0.5 text-ink-3">
+            ≈ {+feePctOfTrade.toPrecision(2)}% of every trade while it trades, plus your share of 100% of the vault agent&apos;s
+            profit and of any wind-down payout. One claim button. Shrinks as others back it.
+          </dd>
         </div>
         {bundle ? (
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3">
@@ -79,7 +83,8 @@ function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSumm
               {fmtTokens((bundle.bundleTokens * mine) / total)} ${l.symbol}
             </dd>
             <dd className="col-span-2 mt-0.5 text-ink-3">
-              + {fmtLamports((bundle.vaultSol * mine) / total)} SOL, locked forever. Only the vault agent trades it.
+              + {fmtLamports((bundle.vaultSol * mine) / total)} SOL, held in the vault. Only the vault agent trades it; the platform
+              multisig can withdraw it (every withdrawal is shown on the launch page).
             </dd>
           </div>
         ) : null}
@@ -265,7 +270,7 @@ export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSum
             onClick={() =>
               void tx.run({
                 label: launchLabel,
-                successMessage: `$${l.symbol} is live. The bundle is locked in the vault.`,
+                successMessage: `$${l.symbol} is live. The bundle is in the vault.`,
                 build: async (payer) => [await client.launchIx(payer, mint)],
               })
             }

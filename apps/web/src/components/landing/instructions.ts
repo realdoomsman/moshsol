@@ -1,4 +1,4 @@
-import { IDL } from "@holdfast/sdk";
+import { IDL, WIND_DOWN_IDLE_SECS, WIND_DOWN_MIN_AGE_SECS } from "@holdfast/sdk";
 
 /**
  * The program's instruction surface, generated from the SDK's IDL (§4.2 §6): every instruction the
@@ -20,6 +20,9 @@ export interface InstructionRow {
 export type InstructionGroup = "Launch lifecycle" | "Trading" | "Vault agent" | "Fees" | "Platform admin" | "Other";
 
 const GROUPS: InstructionGroup[] = ["Launch lifecycle", "Trading", "Vault agent", "Fees", "Platform admin", "Other"];
+
+/** When `wind_down` becomes callable, from the program's constants (read by the FAQ and docs too). */
+export const WIND_DOWN_RULE = `at least ${WIND_DOWN_MIN_AGE_SECS / 86_400} days old, no trade for ${WIND_DOWN_IDLE_SECS / 3_600} hours, and no tokens held outside the curve and vault`;
 
 const KNOWN: Record<string, { group: InstructionGroup; caller: string; moves: string; description: string }> = {
   create_launch: {
@@ -54,6 +57,13 @@ const KNOWN: Record<string, { group: InstructionGroup; caller: string; moves: st
     description:
       "Opens trading. The bundle buy runs first, before any public trade can exist; the tokens and the SOL reserve go into the vault.",
   },
+  wind_down: {
+    group: "Launch lifecycle",
+    caller: "Anyone, once eligible",
+    moves: "Vault tokens → curve; curve + vault SOL → backers",
+    description:
+      `Ends a live launch that is ${WIND_DOWN_RULE}. Returns the vault's tokens to the curve, credits the curve's and vault's SOL to backers pro-rata (claim_backer_fees) and stops trading for good.`,
+  },
   buy: {
     group: "Trading",
     caller: "Anyone",
@@ -76,15 +86,15 @@ const KNOWN: Record<string, { group: InstructionGroup; caller: string; moves: st
   agent_sell: {
     group: "Vault agent",
     caller: "Agent authority",
-    moves: "Vault tokens → curve; SOL → vault",
+    moves: "Vault tokens → curve; cost → vault; profit → backers",
     description:
-      "Only into rallies at least the band over the EMA, at a fill of at least the vault's average cost plus the band, within the window budget and impact limit.",
+      "Only into rallies at least the band over the EMA, at a fill of at least the vault's average cost plus the band, within the window budget and impact limit. The realized profit over average cost goes 100% to backers.",
   },
   claim_backer_fees: {
     group: "Fees",
     caller: "Backer",
-    moves: "Your accrued fees → you",
-    description: "Pays the backer's pro-rata share of every trade fee accrued so far. Claim any time.",
+    moves: "Your accrued fees and profit share → you",
+    description: "Pays the backer's pro-rata share of trade fees, vault-agent profit and any wind-down payout accrued so far. Claim any time.",
   },
   claim_creator_fees: {
     group: "Fees",
@@ -97,6 +107,13 @@ const KNOWN: Record<string, { group: InstructionGroup; caller: string; moves: st
     caller: "Anyone",
     moves: "Platform fees → the fixed fee recipient",
     description: "Permissionless: it can only ever pay the platform's configured fee recipient.",
+  },
+  admin_withdraw_vault: {
+    group: "Platform admin",
+    caller: "Admin",
+    moves: "Vault SOL and tokens → fee recipient",
+    description:
+      "Withdraws any amount of a launch's vault SOL and tokens to the platform fee recipient. It can't touch the curve's liquidity. Every withdrawal emits VaultWithdrawn and is shown on the launch page.",
   },
   initialize_platform: {
     group: "Platform admin",
@@ -113,8 +130,8 @@ const KNOWN: Record<string, { group: InstructionGroup; caller: string; moves: st
   set_fee_recipient: {
     group: "Platform admin",
     caller: "Admin",
-    moves: "Nothing — where future platform fees go",
-    description: "Points platform fee sweeps at a new recipient.",
+    moves: "Nothing — where platform fees and vault withdrawals go",
+    description: "Points platform fee sweeps and vault withdrawals at a new recipient.",
   },
   set_agent_authority: {
     group: "Platform admin",
@@ -173,9 +190,4 @@ export function instructionRows(): InstructionRow[] {
     return GROUPS.indexOf(r.group) * 1000 + (i < 0 ? 999 : i);
   };
   return rows.sort((a, b) => rank(a) - rank(b));
-}
-
-/** Instructions whose name mentions withdrawing — the program has none (the landing's "0"). */
-export function withdrawInstructionCount(): number {
-  return IDL.instructions.filter((ix) => /withdraw/i.test(ix.name)).length;
 }

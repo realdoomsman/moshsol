@@ -14,7 +14,7 @@ import type { LaunchDbRow, Store, TradeDbRow } from "./db";
 import { parsePubkey, ValidationError } from "./sanitize";
 import { allSummaries, summaryOf } from "./summaries";
 import { activityFromRow, type ChainSync } from "./sync";
-import type { Candle, LaunchSummary, TradeRow } from "./types";
+import { ACTIVITY_TYPES, type Candle, type LaunchSummary, type TradeRow } from "./types";
 
 export class NotFoundError extends Error {}
 
@@ -26,7 +26,7 @@ export interface RouteDeps {
 
 export type Query = Record<string, string | undefined>;
 
-const STATUSES = ["raising", "live", "refunding", "all"] as const;
+const STATUSES = ["raising", "live", "refunding", "woundDown", "all"] as const;
 const SORTS = ["new", "trending", "volume", "mcap", "raised"] as const;
 const TIMEFRAMES = [60, 300, 900, 3600, 86400] as const;
 /** Look-back windows (seconds; 0 = all time) shared by trader stats and leaderboards. */
@@ -319,6 +319,14 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
     return { holders: set.holders.slice(0, limit) };
   });
 
+  app.get<{ Params: { mint: string }; Querystring: Query }>("/api/launches/:mint/activity", async (req) => {
+    const row = launchRow(req.params.mint);
+    const limit = intQuery(req.query, "limit", 50, 500);
+    const before = intQuery(req.query, "before", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+    const type = req.query.type ? oneOf(ACTIVITY_TYPES, req.query.type, "trade", "type") : null;
+    return { events: store.launchActivity(row.address, type, before, limit).map(activityFromRow) };
+  });
+
   app.get<{ Params: { wallet: string } }>("/api/portfolio/:wallet", async (req) => {
     const owner = pubkeyParam(req.params.wallet, "wallet");
     const wallet = owner.toBase58();
@@ -389,13 +397,16 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync }: Ro
       totalLaunches: all.length,
       liveLaunches: all.filter((l) => l.status === "live").length,
       raisingLaunches: all.filter((l) => l.status === "raising").length,
+      woundDownLaunches: all.filter((l) => l.status === "woundDown").length,
       totalRaisedSol: sum((l) => (l.status === "refunding" ? 0 : lamportsToSol(l.raised))),
       totalVolumeSol: sum((l) => lamportsToSol(l.volumeSol)),
       volume24hSol: store.volumeSince(Math.floor(Date.now() / 1000) - 86_400),
       backerFeesAccruedSol: sum((l) => lamportsToSol(l.backerFeesAccrued)),
+      profitSharedSol: sum((l) => l.profitSharedSol),
       agentTrades: sum((l) => l.agentBuys + l.agentSells),
-      lockedVaultSol: sum((l) => lamportsToSol(l.vaultSol)),
-      lockedVaultTokensValueSol: sum((l) => tokensToUi(l.vaultTokens) * l.priceSol),
+      vaultSol: sum((l) => lamportsToSol(l.vaultSol)),
+      vaultTokensValueSol: sum((l) => tokensToUi(l.vaultTokens) * l.priceSol),
+      vaultWithdrawnSol: sum((l) => l.vaultWithdrawnSol),
     };
   });
 

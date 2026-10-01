@@ -82,7 +82,7 @@ export function BundleTable({ range, loading }: { range: BundleRange | null; loa
   }
   const rows: { label: ReactNode; min: string; max: string }[] = [
     { label: "Supply bought", min: pct(range.atMin.supplyPct), max: pct(range.atMax.supplyPct) },
-    { label: "Tokens locked", min: fmtTokens(range.atMin.bundleTokens), max: fmtTokens(range.atMax.bundleTokens) },
+    { label: "Held in vault", min: fmtTokens(range.atMin.bundleTokens), max: fmtTokens(range.atMax.bundleTokens) },
     {
       label: <RuleTooltip rule="Fully diluted: 1B supply × the curve price right after the bundle buy.">Start mcap</RuleTooltip>,
       min: `${fmtSolValue(range.atMin.marketCapAfter)} SOL`,

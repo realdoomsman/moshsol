@@ -112,8 +112,11 @@ export function TradePanel({
   const impactPct = quote ? quote.q.impactBps / 100 : 0;
   const impactTone = impactPct > IMPACT_DANGER_PCT ? "text-down" : impactPct > IMPACT_WARN_PCT ? "text-warn" : undefined;
 
+  // Buys and sells require a live launch; a wound-down curve never trades again.
+  const ended = l.status !== "live";
   let reason: string | null = null;
-  if (platform.data?.params.paused) reason = "Trading is paused";
+  if (ended) reason = "Trading has ended";
+  else if (platform.data?.params.paused) reason = "Trading is paused";
   else if (!raw || raw <= 0n) reason = "Enter an amount";
   else if (!quote) reason = side === "buy" ? "Exceeds curve liquidity" : "Invalid amount";
   else if (quote.kind === "buy" && quote.q.tokensOut === 0n) reason = "Amount too small";
@@ -229,6 +232,7 @@ export function TradePanel({
         }
         balance={balance}
         presets={presets}
+        disabled={ended}
       />
 
       <dl className="small grid gap-2">
@@ -254,7 +258,7 @@ export function TradePanel({
       </dl>
 
       <div className="grid gap-2">
-        {publicKey ? (
+        {publicKey || ended ? (
           <Button
             variant={side}
             size="lg"
@@ -270,7 +274,11 @@ export function TradePanel({
             Connect wallet
           </Button>
         )}
-        <p className="micro text-center text-ink-3">{backerPct}% of this fee goes to the launch&apos;s backers.</p>
+        <p className="micro text-center text-ink-3">
+          {ended
+            ? "This launch wound down: its curve and vault SOL were credited to the backers, and it no longer trades."
+            : `${backerPct}% of this fee goes to the launch's backers.`}
+        </p>
       </div>
 
       <TradeSettings open={settingsOpen} onOpenChange={setSettingsOpen} settings={settings} />

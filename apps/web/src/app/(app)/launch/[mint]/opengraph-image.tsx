@@ -7,7 +7,7 @@ import { ogFonts } from "@/lib/og-fonts";
 import { loadLaunch, parseMint } from "@/lib/server";
 import type { LaunchSummary } from "@/lib/types";
 
-export const alt = "Holdfast launch: the first buy is locked in the vault forever";
+export const alt = "Holdfast launch: backers buy first and share the profit";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -106,13 +106,13 @@ function RaiseFooter({ l, nowSec }: { l: LaunchSummary; nowSec: number }) {
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 22, color: C.ink3 }}>
         <div style={{ display: "flex" }}>{`min ${fmtSolValue(min)} SOL · 100% refundable if it isn't met`}</div>
-        <div style={{ display: "flex" }}>{`${l.terms.backerFeeShareBps / 100}% of trading fees to backers`}</div>
+        <div style={{ display: "flex" }}>{`${l.terms.backerFeeShareBps / 100}% of fees + all vault profit to backers`}</div>
       </div>
     </div>
   );
 }
 
-/** Share card for a launch (§5.1 #27): live (market cap, vault) or raising (progress, countdown). */
+/** Share card for a launch (§5.1 #27): live (market cap, vault), raising (progress, countdown) or wound down. */
 export default async function Image({ params }: { params: Promise<{ mint: string }> }) {
   const { mint } = await params;
   const r = parseMint(mint) ? await loadLaunch(mint) : ({ state: "missing" } as const);
@@ -122,14 +122,16 @@ export default async function Image({ params }: { params: Promise<{ mint: string
   const phase = l ? phaseOf(l, nowSec) : null;
   const chip =
     phase === "live"
-      ? { text: "Live · Locked", bg: C.accentWash, fg: C.accentInk }
+      ? { text: "Live", bg: C.accentWash, fg: C.accentInk }
       : phase === "raising" || phase === "ready"
         ? BigInt(l!.raised) >= BigInt(l!.raiseMin)
           ? { text: "Min reached", bg: C.accentWash, fg: C.accentInk }
           : { text: "Raising", bg: C.warnWash, fg: C.warn }
-        : phase
-          ? { text: "Refunding", bg: C.surface, fg: C.ink2 }
-          : null;
+        : phase === "woundDown"
+          ? { text: "Wound down", bg: C.surface, fg: C.ink2 }
+          : phase
+            ? { text: "Refunding", bg: C.surface, fg: C.ink2 }
+            : null;
 
   return new ImageResponse(
     (
@@ -178,18 +180,24 @@ export default async function Image({ params }: { params: Promise<{ mint: string
               {l ? l.name : "Holdfast"}
             </div>
             <div style={{ fontSize: 36, color: C.ink2 }}>
-              {l ? `$${l.symbol}` : "The Solana launchpad where the first buy can never be dumped."}
+              {l ? `$${l.symbol}` : "The Solana launchpad where backers buy first and share the profit."}
             </div>
           </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", paddingTop: 28, borderTop: `1px solid ${C.line}` }}>
           {!l || !phase ? (
-            <div style={{ fontSize: 30, color: C.ink2 }}>Launches that can&apos;t be dumped.</div>
+            <div style={{ fontSize: 30, color: C.ink2 }}>Backers buy first and share the profit.</div>
           ) : phase === "live" ? (
             <LiveFooter l={l} />
           ) : phase === "raising" || phase === "ready" ? (
             <RaiseFooter l={l} nowSec={nowSec} />
+          ) : phase === "woundDown" ? (
+            <div style={{ display: "flex", fontSize: 34, color: C.ink2 }}>
+              {l.woundDown
+                ? `Wound down: ${fmtSolValue(l.woundDown.solToBackers)} SOL credited to backers. Trading has ended.`
+                : "Wound down: the curve and vault SOL went to backers. Trading has ended."}
+            </div>
           ) : (
             <div style={{ display: "flex", fontSize: 34, color: C.ink2 }}>
               The raise closed without launching. Every backer can refund 100%.

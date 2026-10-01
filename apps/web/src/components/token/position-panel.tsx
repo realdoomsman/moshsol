@@ -22,7 +22,8 @@ function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
 }
 
 /**
- * Your position (§4.5): holdings, backer share + claimable fees, creator fees if you created it.
+ * Your position (§4.5): holdings, backer share + claimable earnings (fee share, vault agent profit,
+ * wind-down payout — one accumulator, one claim), creator fees if you created it.
  * Hidden while disconnected — no "connect to see" wall.
  */
 export function PositionPanel({ launch: l, className }: { launch: LaunchSummary; className?: string }) {
@@ -68,22 +69,25 @@ export function PositionPanel({ launch: l, className }: { launch: LaunchSummary;
         {deposited > 0n ? (
           <div className="grid gap-3 border-t border-line pt-3">
             <dl className="small grid gap-2">
-              <Row label="Backer share">{fmtPct(share)} of fees</Row>
+              <Row label="Backer share">{fmtPct(share)} of backer payouts</Row>
               <Row label="Deposited">{fmtLamports(deposited)} SOL</Row>
               <Row label="Your vault slice">
                 {fmtSolValue((lamportsToSol(l.vaultSol) * share) / 100)} SOL + {fmtTokens((BigInt(l.vaultTokens) * BigInt(Math.round(share * 10_000))) / 1_000_000n)}
               </Row>
               <Row label="Claimed">{fmtLamports(backer.data?.feesClaimed ?? 0n)} SOL</Row>
             </dl>
+            <p className="small text-ink-3">
+              Your fee share, your share of the vault agent&apos;s profit and any wind-down payout add up here. One claim collects all of it.
+            </p>
             <Button
               variant="accent"
               size="sm"
               className="justify-self-start"
               disabled={claimable === 0n}
-              busy={busy("Claim backer fees")}
-              onClick={() => claim("Claim backer fees", claimable, (payer) => client.claimBackerFeesIx(payer, mint))}
+              busy={busy("Claim backer earnings")}
+              onClick={() => claim("Claim backer earnings", claimable, (payer) => client.claimBackerFeesIx(payer, mint))}
             >
-              {busy("Claim backer fees") && tx.stage
+              {busy("Claim backer earnings") && tx.stage
                 ? TX_STAGE_LABEL[tx.stage]
                 : claimable === 0n
                   ? "Nothing to claim yet"

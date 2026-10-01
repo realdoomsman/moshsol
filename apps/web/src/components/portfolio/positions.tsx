@@ -30,7 +30,7 @@ export interface PositionActions {
   refund: (b: PortfolioBacked) => void;
 }
 
-export const claimBackerLabel = (l: LaunchSummary) => `Claim $${l.symbol} fees`;
+export const claimBackerLabel = (l: LaunchSummary) => `Claim $${l.symbol} backer earnings`;
 export const claimCreatorLabel = (l: LaunchSummary) => `Claim $${l.symbol} creator fees`;
 export const refundLabel = (l: LaunchSummary) => `Refund $${l.symbol}`;
 
@@ -98,7 +98,9 @@ export function BackedPanel({ rows, actions, now }: { rows: PortfolioBacked[]; a
     return (
       <EmptyState action={<ButtonLink href="/app" size="sm" variant="secondary">Find a raise</ButtonLink>}>
         No backed launches.
-        {params ? ` Backers earn ${params.backerFeeShareBps / 100}% of every trade fee, forever.` : ""}
+        {params
+          ? ` Backers earn ${params.backerFeeShareBps / 100}% of every trade fee and 100% of the vault agent's profit.`
+          : ""}
       </EmptyState>
     );
   }
@@ -146,7 +148,7 @@ export function BackedPanel({ rows, actions, now }: { rows: PortfolioBacked[]; a
           <TH align="right">Deposited</TH>
           <TH align="right">Share</TH>
           <TH align="right" className="hidden xl:table-cell">
-            Vault share (locked)
+            Vault share
           </TH>
           <TH align="right">Earned</TH>
           <TH align="right">Claimable</TH>
@@ -450,8 +452,11 @@ const ACTIVITY_VERB: Record<ActivityEvent["type"], string> = {
   launched: "Launched",
   refund: "Refunded",
   cancelled: "Raise failed",
-  backer_claim: "Claimed backer fees",
+  backer_claim: "Claimed backer earnings",
   creator_claim: "Claimed creator fees",
+  profit_shared: "Vault profit to backers",
+  wound_down: "Wound down",
+  vault_withdrawn: "Admin vault withdrawal",
 };
 
 function verbOf(e: ActivityEvent): string {
@@ -463,7 +468,10 @@ function amountOf(e: ActivityEvent): string {
   if (e.type === "trade" && e.tokenAmount && e.solAmount) {
     return `${fmtTokens(e.tokenAmount)} for ${fmtLamports(e.solAmount)} SOL`;
   }
-  if (e.type === "launched" && e.tokenAmount) return `${fmtTokens(e.tokenAmount)} locked`;
+  if (e.type === "launched" && e.tokenAmount) return `${fmtTokens(e.tokenAmount)} to the vault`;
+  if ((e.type === "wound_down" || e.type === "vault_withdrawn") && e.tokenAmount && BigInt(e.tokenAmount) > 0n) {
+    return `${fmtLamports(e.solAmount ?? "0")} SOL + ${fmtTokens(e.tokenAmount)}`;
+  }
   return e.solAmount ? `${fmtLamports(e.solAmount)} SOL` : "—";
 }
 
