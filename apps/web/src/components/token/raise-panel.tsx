@@ -4,6 +4,7 @@ import { fmtPrice, lamportsToSol, previewBundle } from "@holdfast/sdk";
 import { useMemo, type ReactNode } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import type { Phase } from "@/lib/launch";
+import { usePlatform } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { Countdown } from "../ui/countdown";
 import { NumberTicker } from "../ui/number-ticker";
@@ -74,7 +75,11 @@ export function RaisePanel({ launch: l, phase }: { launch: LaunchSummary; phase:
   const min = lamportsToSol(l.raiseMin);
   const minMet = BigInt(l.raised) >= BigInt(l.raiseMin);
   const ended = phase === "failed" || phase === "refunding";
-  const cap = BigInt(l.maxPerWallet);
+  // Same rule as the program and the back panel: the stricter of the creator's cap and the platform beta cap (0 = none).
+  const platform = usePlatform();
+  const creatorCap = BigInt(l.maxPerWallet);
+  const betaCap = BigInt(platform.data?.params.maxWalletDepositLamports ?? "0");
+  const cap = creatorCap > 0n && betaCap > 0n ? (betaCap < creatorCap ? betaCap : creatorCap) : creatorCap > 0n ? creatorCap : betaCap;
 
   return (
     <section aria-label="Raise" className="min-w-0 rounded-md border border-line bg-surface">
@@ -132,7 +137,9 @@ export function RaisePanel({ launch: l, phase }: { launch: LaunchSummary; phase:
         <Cell label="Min" rule="The raise launches only if at least this much is deposited. Otherwise every backer can refund 100%.">
           {fmtSolValue(min)} SOL
         </Cell>
-        <Cell label="Per-wallet cap">{cap > 0n ? `${fmtLamports(cap)} SOL` : "None"}</Cell>
+        <Cell label="Per-wallet cap" rule={betaCap > 0n ? `Beta cap: no wallet may deposit more than ${fmtLamports(betaCap)} SOL per raise.` : undefined}>
+          {cap > 0n ? `${fmtLamports(cap)} SOL` : "None"}
+        </Cell>
         <Cell label="Access">{l.whitelisted ? `Whitelist · ${l.whitelist?.length ?? 0}` : "Open"}</Cell>
       </dl>
 

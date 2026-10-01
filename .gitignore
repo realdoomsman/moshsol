@@ -6,7 +6,7 @@ dist/
 test-ledger/
 *.log
 .env
-.env.local
+.env.*
 apps/indexer/data/
 apps/accounts/data/
 apps/agent/backtest/data/

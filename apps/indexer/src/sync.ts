@@ -42,7 +42,12 @@ export interface SyncHealth {
 
 const SIG_PAGE = 1_000;
 const HEALTH_RPC_TIMEOUT_MS = 3_000;
-const META_MAX_ATTEMPTS = 5;
+/**
+ * Metadata fetch retries: 5 s·2^n backoff capped at 30 min, 48 attempts ≈ 21 h. Fresh Arweave items can
+ * take minutes (sometimes longer) before gateways serve them, and a gateway 404 must never be final.
+ */
+const META_MAX_ATTEMPTS = 48;
+const META_BACKOFF_CAP_MS = 30 * 60_000;
 const NO_META: MetaUpdate = {
   status: "none",
   name: null,
@@ -720,7 +725,7 @@ export class ChainSync {
       } else {
         const attempt = row.meta_attempts + 1;
         this.log.warn({ address, uri: row.uri, attempt, err: String(err) }, "metadata fetch failed");
-        this.store.setMetaError(address, Date.now() + Math.min(300_000, 5_000 * 2 ** attempt));
+        this.store.setMetaError(address, Date.now() + Math.min(META_BACKOFF_CAP_MS, 5_000 * 2 ** attempt));
         if (attempt >= META_MAX_ATTEMPTS) this.log.warn({ address }, "giving up on metadata");
       }
     } finally {

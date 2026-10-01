@@ -9,6 +9,9 @@ programs
 .localnet
 .devnet
 .mainnet-beta
+.mainnet
+.secrets
+.x-session
 test-ledger
 apps/indexer/data
 apps/accounts/data

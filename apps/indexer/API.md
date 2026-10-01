@@ -1,6 +1,6 @@
 # Holdfast indexer API
 
-Base URL: `NEXT_PUBLIC_INDEXER_URL` (devnet: `https://indexer-production-454b.up.railway.app`). Everything is JSON
+Base URL: `NEXT_PUBLIC_INDEXER_URL` (mainnet: `https://indexer-mainnet-bd1f.up.railway.app`; devnet: `https://indexer-production-454b.up.railway.app`). Everything is JSON
 over HTTP plus one WebSocket (`/ws`). CORS is open (`*`; methods `GET POST PUT DELETE OPTIONS`).
 
 ## Conventions
@@ -158,9 +158,9 @@ Returned by the launch list/detail endpoints, `/api/trending` and the `launch` W
   "priceSol": 3.0099e-8, "emaSol": 3.0069e-8, "marketCapSol": 30.099, "vaultAvgCostSol": 3.0035e-8, "agentAvgSellSol": null,
 
   "name": "Volt Runner", "symbol": "VOLT",
-  "uri": "https://indexer-production-454b.up.railway.app/files/meta/ROfjdPInc5cs.json",
-  "image": "https://indexer-production-454b.up.railway.app/files/img/ROfjdPInc5cs.svg",
-  "description": "Live-site test launch on devnet.", "twitter": "https://x.com/moshsol", "telegram": null,
+  "uri": "https://arweave.net/hp8woHsE05aHWC2h2YbKfviXZqwHklBosmPrnu-_L8M",
+  "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g",
+  "description": "Live-site test launch.", "twitter": "https://x.com/moshsol", "telegram": null,
   "website": null, "whitelist": null,
   "change24h": 0.0998,
   "volume24hSol": 0.044708745,
@@ -476,22 +476,22 @@ Profile + stats, all from indexed data (no RPC call). Works for any valid wallet
   },
   "launches": [
     { "mint": "A824aq2CUztjDr1oDsCg8ZRWYrJ8jb5yeRdTkj2bcE5n", "name": "Lily Frog", "symbol": "FROG",
-      "image": "https://indexer-production-454b.up.railway.app/files/img/I9sdWZ9jbnLZ.svg", "status": "raising",
+      "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g", "status": "raising",
       "createdAt": 1790425994, "raised": "30000000", "raisedSol": 0.03, "raiseMin": "200000000", "raiseMax": "1000000000",
       "backerCount": 1, "priceSol": 2.9999e-8, "marketCapSol": 29.999, "volume24hSol": 0, "creatorFeesEarnedSol": 0 },
     { "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1", "name": "Moshpit", "symbol": "MOSH",
-      "image": "https://indexer-production-454b.up.railway.app/files/img/wTkvA0JJeQy9.svg", "status": "live",
+      "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g", "status": "live",
       "createdAt": 1790412385, "raised": "1000000000", "raisedSol": 1, "raiseMin": "1000000000", "raiseMax": "1000000000",
       "backerCount": 1, "priceSol": 3.1432e-8, "marketCapSol": 31.432, "volume24hSol": 0.044708593,
       "creatorFeesEarnedSol": 0.000134571 }
   ],
   "backed": [
     { "mint": "EJzhfMxfUFwZeSaa4ZBujqJ6PuBAtpQjFRyRN9cko4y1", "name": "Moshpit", "symbol": "MOSH",
-      "image": "https://indexer-production-454b.up.railway.app/files/img/wTkvA0JJeQy9.svg", "status": "live",
+      "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g", "status": "live",
       "depositedSol": 1, "shareBps": 10000, "feesEarnedSol": 0.000224285, "feesClaimableSol": 0.000224285,
       "firstDepositAt": 1790412386 },
     { "mint": "A824aq2CUztjDr1oDsCg8ZRWYrJ8jb5yeRdTkj2bcE5n", "name": "Lily Frog", "symbol": "FROG",
-      "image": "https://indexer-production-454b.up.railway.app/files/img/I9sdWZ9jbnLZ.svg", "status": "raising",
+      "image": "https://arweave.net/ps0oiQxryglEGw3f0LRnrfpDfSsC3FcldSSaCA7nO3g", "status": "raising",
       "depositedSol": 0.03, "shareBps": 10000, "feesEarnedSol": 0, "feesClaimableSol": 0, "firstDepositAt": 1790425997 }
   ]
 }

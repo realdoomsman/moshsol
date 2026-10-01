@@ -262,7 +262,11 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
         ];
       },
     });
-    if (!signature) return;
+    if (!signature) {
+      // `TermsChanged` (or anything else): reload the platform terms so the next attempt carries current ones.
+      void platform.refetch();
+      return;
+    }
     setAutosave(false);
     clearDraft();
     router.replace(`/create?launched=${mint.publicKey.toBase58()}&tx=${signature}`);

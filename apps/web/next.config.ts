@@ -14,6 +14,19 @@ const config: NextConfig = {
   poweredByHeader: false,
   // The old explainer lives in the docs now (brief §4.1); `permanent` answers 308.
   redirects: async () => [{ source: "/how-it-works", destination: "/docs/how-it-works", permanent: true }],
+  // Baseline hardening; no CSP yet (wallet extensions, inline Next scripts and Arweave images need an audited policy).
+  headers: async () => [
+    {
+      source: "/(.*)",
+      headers: [
+        { key: "Strict-Transport-Security", value: "max-age=31536000" },
+        { key: "X-Content-Type-Options", value: "nosniff" },
+        { key: "X-Frame-Options", value: "DENY" },
+        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
+      ],
+    },
+  ],
 };
 
 export default config;

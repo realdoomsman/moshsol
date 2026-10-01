@@ -382,6 +382,8 @@ Indexer (`apps/indexer`):
 | `RPC_PROXY` | off | `1`: `POST /rpc` (JSON-RPC, single + batch ≤20, 64 KB body, 15 s upstream timeout) → `RPC_URL` and `GET /rpc-ws` (PubSub) → `WS_URL`, so a keyed RPC never reaches browsers. Only the methods the web app uses are forwarded (account/balance reads, blockhash, send/simulate, signature status, `account`/`signature`/`slot` subscriptions); anything else (e.g. `getProgramAccounts`) gets JSON-RPC `-32601`. `/rpc-ws`: ≤10 connections per IP, ≤32 subscriptions per connection |
 | `RPC_PROXY_LIMIT_PER_MIN` | `600` | Per-IP JSON-RPC calls per minute through the proxy (each batch entry and WS request counts; `0` = off). The proxy is exempt from `RATE_LIMIT_PER_MIN` |
 | `LOG_LEVEL` | `info` | `debug` adds poller catch-ups and websocket retry attempts |
+| `POLL_MS`, `FULL_REFRESH_MS` | `4000`, `15000` | Signature poller cadence; full `getProgramAccounts` refresh (launch snapshots, platform, metadata retries, holder counts) |
+| `CHAIN_CHECK_MS`, `HOLDERS_TTL_MS` | `30000`, `30000` | Genesis/cursor verification cadence (also after every RPC outage); holder snapshot cache per launch |
 
 Every endpoint, the signed-message scheme for comments/profiles, rate limits and WebSocket messages are documented in
 [`apps/indexer/API.md`](apps/indexer/API.md). `GET /api/health` → `{ ok, slot, lastIndexedSlot, lagSlots, wsConnected,
@@ -392,7 +394,8 @@ Agent (`apps/agent`):
 | Variable | Default | |
 |---|---|---|
 | `RPC_URL` | `http://127.0.0.1:8899` | |
-| `AGENT_KEYPAIR` | `.localnet/agent.json` | Must be the platform's agent authority to trade |
+| `AGENT_KEYPAIR`, `AGENT_KEYPAIR_JSON` | `.localnet/agent.json`, unset | Must be the platform's agent authority to trade. `_JSON` (the secret key as a JSON byte array, for hosted secrets) wins over the file path |
+| `DRY_RUN` | off | `1`: plan and log decisions without sending transactions |
 | `STATUS_PORT`, `STATUS_HOST` | `8788`, `127.0.0.1` | `GET /status`: latest decision per live launch and the fee wallet's `balanceSol` (refreshed every tick; a `low_balance` line is logged each time it falls below 0.01 SOL) |
 | `POLL_MS` | `4000` | |
 | `MIN_TRADE_LAMPORTS` | `10000000` | 0.01 SOL: smaller buys/sells are skipped |
@@ -442,7 +445,8 @@ already set in the shell — under `pnpm dev` all services share it, so don't ex
 | `LOG_LEVEL` | `info` | |
 
 Scripts: `RPC_URL`, `KEYS_DIR` (default `.localnet`), `INDEXER_URL` (seed/simulate), `PROFILE=production`
-(setup: hourly agent windows), `SEED_TRADE_SECS` (seed, 150). Simulator: `SIM_INTERVAL_MS` (3000, mean pause
+(setup: hourly agent windows), `MIN_RAISE_SOL` (setup, 1), `CREATE_FEE_SOL` (setup, 0.02), `MAX_RAISE_SOL` / `MAX_WALLET_SOL`
+(setup beta caps, 0 = none), `SEED_TRADE_SECS` (seed, 150). Simulator: `SIM_INTERVAL_MS` (3000, mean pause
 between transactions), `SIM_TRADERS` (10), `SIM_BACKERS` (6), `SIM_MEDIAN_TRADE_SOL` (0.15), `SIM_WHALE_PROB`
 (0.04), `SIM_RAISE_EVERY_S` (300), `SIM_MAX_RAISING` (1), `SIM_CLAIM_EVERY_S` (90). Validator (`localnet.sh`):
 `LEDGER` (`~/.moshsol-ledger`), `LEDGER_LIMIT` (1,000,000 shreds), `UPGRADE_AUTHORITY` (`.localnet/admin.json`).
