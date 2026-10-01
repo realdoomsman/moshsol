@@ -7,6 +7,7 @@ import { ArrowUpRight, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { LaunchCard, Change } from "@/components/discover/launch-card";
+import { chipStatus } from "@/components/discover/model";
 import { CopyButton } from "@/components/ui/address";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { StatusChip } from "@/components/ui/chip";
@@ -156,6 +157,10 @@ function Created({ user, own }: { user: UserProfile; own: boolean }) {
 }
 
 function Backed({ user }: { user: UserProfile }) {
+  const now = useNow(15_000);
+  const launches = useLaunches({ status: "all", sort: "trending" });
+  // The profile only carries the on-chain status, which reads "raising" until a missed raise's first refund.
+  const byAddress = new Map((launches.data?.launches ?? []).map((l) => [l.address, l]));
   return (
     <section className="rounded-md border border-line bg-surface">
       <Table label="Backed launches">
@@ -175,7 +180,7 @@ function Backed({ user }: { user: UserProfile }) {
                 <TokenCell l={b} />
               </TD>
               <TD>
-                <StatusChip status={b.status} />
+                <StatusChip status={byAddress.has(b.address) ? chipStatus(byAddress.get(b.address)!, now) : b.status} />
               </TD>
               <TD align="right">{sol(b.depositedSol)}</TD>
               <TD align="right">{(b.shareBps / 100).toFixed(b.shareBps % 100 ? 2 : 0)}%</TD>

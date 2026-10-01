@@ -4,7 +4,7 @@ import type { LaunchDbRow, Store } from "./db";
 import type { SolPrice } from "./price";
 import { WINDOW_SECS, WINDOWS, intQuery, oneOf, type Query } from "./routes";
 import { ValidationError } from "./sanitize";
-import { allSummaries } from "./summaries";
+import type { LaunchSummaries } from "./summaries";
 import type { LaunchSummary } from "./types";
 
 const KINDS = ["backers", "creators", "traders", "launches"] as const;
@@ -166,7 +166,7 @@ function launchesBoard(store: Store, price: SolPrice, window: Window, since: num
 }
 
 /** Top live launches by 1h volume, then 1h trades, then 24h volume. */
-function rankTrending(list: LaunchSummary[]): LaunchSummary[] {
+function rankTrending(list: readonly LaunchSummary[]): LaunchSummary[] {
   return list
     .filter((l) => l.status === "live")
     .sort(
@@ -178,7 +178,10 @@ function rankTrending(list: LaunchSummary[]): LaunchSummary[] {
     );
 }
 
-export function registerDiscoveryRoutes(app: FastifyInstance, { store, price }: { store: Store; price: SolPrice }): void {
+export function registerDiscoveryRoutes(
+  app: FastifyInstance,
+  { store, price, summaries }: { store: Store; price: SolPrice; summaries: LaunchSummaries },
+): void {
   const boards = new Map<string, { at: number; entries: Entry[] }>();
   let king: { address: string; since: number } | null = null;
 
@@ -267,7 +270,7 @@ export function registerDiscoveryRoutes(app: FastifyInstance, { store, price }: 
   });
 
   app.get("/api/trending", async () => {
-    const ranked = rankTrending(allSummaries(store, price));
+    const ranked = rankTrending(summaries.all());
     const top = ranked[0];
     const nowSecs = Math.floor(Date.now() / 1000);
     if (top && top.trades1h > 0) {

@@ -1,7 +1,9 @@
 # Holdfast indexer API
 
 Base URL: `NEXT_PUBLIC_INDEXER_URL` (mainnet: `https://api.holdfast.fun`; devnet: `https://indexer-production-454b.up.railway.app`). Everything is JSON
-over HTTP plus one WebSocket (`/ws`). CORS is open (`*`; methods `GET POST PUT DELETE OPTIONS`).
+over HTTP plus one WebSocket (`/ws`). CORS is open (`*`; methods `GET POST PUT DELETE OPTIONS`). Every response also
+carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and
+`Strict-Transport-Security: max-age=31536000`.
 
 ## Conventions
 
@@ -26,6 +28,10 @@ over HTTP plus one WebSocket (`/ws`). CORS is open (`*`; methods `GET POST PUT D
 
 - **Pagination** uses `before` cursors (exclusive): a unix timestamp for chain data (trades, deposits, activity) and a
   comment id for comments. Responses that page return `nextBefore` (`null` on the last page).
+- **Freshness.** Launch summaries (list, detail, `/api/trending`, `/api/stats`, `/api/agents`, `/api/portfolio`) and
+  candles are computed once and shared between requests until the next indexed write (any sync, comment, profile or
+  price update) and for at most 1 s otherwise, so the rolling `1h`/`24h` figures lag the clock by ≤ 1 s and a write
+  shows up on the very next read. Leaderboards are cached 30 s (see `GET /api/leaderboard`).
 
 ### Rate limits
 
@@ -108,7 +114,8 @@ async function saveProfile(indexer: string, wallet: WalletContextState, p: { nam
 ## WebSocket `/ws`
 
 Connect to `ws(s)://<indexer>/ws`. The server only pushes (client messages are ignored) and pings every 30 s
-(standard ping/pong; browsers answer automatically). Messages are JSON:
+(standard ping/pong; browsers answer automatically). A client with more than 1 MiB of messages queued unread is
+disconnected (reconnect and refetch). Messages are JSON:
 
 | `type` | Shape | When |
 |---|---|---|
@@ -371,7 +378,9 @@ credited to backers (fee share + backer payouts + wind-down payouts + the histor
 `vaultSol` / `vaultTokensValueSol` are what the vaults hold now (tokens at spot / venue price); `vaultWithdrawnSol` is
 the SOL the platform admin has withdrawn from vaults with `admin_withdraw_vault`. `pumpLaunches` counts launches with
 `venue: "pump"`; `buybackPoolSol` (SOL waiting for `buyback_burn`), `burnedSol` (SOL already spent on buybacks) and
-`creatorFeesCollectedSol` (pump.fun / PumpSwap creator fees swept in) are sums over the launch snapshots.
+`creatorFeesCollectedSol` (pump.fun / PumpSwap creator fees swept in) are sums over the launch snapshots. A failed raise
+(deadline passed below its minimum, still `raising` on chain until the first refund) counts in neither
+`raisingLaunches` nor `totalRaisedSol`; a profile's `launchesByStatus` / `raisedSol` count it as `refunding`.
 
 ---
 
@@ -447,6 +456,18 @@ the previous close.
 ```json
 { "candles": [ { "time": 1790424000, "open": 3.0069e-8, "high": 3.0128e-8, "low": 3.0069e-8, "close": 3.0099e-8,
   "volumeSol": 0.0794 } ] }
+```
+
+### `GET /api/candles?ids=&tf=`
+
+Several launches' candles in one request (e.g. a page of sparklines): `ids` is a comma-separated list of 1–50 launch
+ids (address or mint, like `:id`), `tf` as above. The result is keyed by the ids as given and each entry equals that
+launch's `GET /api/launches/:id/candles?tf=` answer; unknown ids are left out. `400` for an empty or longer list or an
+invalid id.
+
+```json
+{ "candles": { "Yw9a3uqx…": [ { "time": 1790424000, "open": 3.0069e-8, "high": 3.0128e-8, "low": 3.0069e-8,
+  "close": 3.0099e-8, "volumeSol": 0.0794 } ] } }
 ```
 
 ### `GET /api/launches/:id/backers`
@@ -752,7 +773,8 @@ Vault-agent overview: totals, per-live-launch window budgets and EMA band, 50 la
 Launch metadata for `create_launch` / `create_launch_pump`. Fields: `image` (file, required), `name` (≤ 32 bytes,
 required), `symbol` (≤ 10 bytes, required), `launch` (the base58 launch address the metadata is for; the web wizard
 derives it from the create key before creating — the JSON's `extensions.website` becomes `SITE_URL/launch/<launch>`,
-a creator-supplied `website` is ignored), `description` (≤ 1000 chars), `twitter`, `telegram`, `whitelist` (JSON array
+a creator-supplied `website` is ignored), `description` (≤ 1000 chars), `twitter`, `telegram` (a handle or an http(s) link on
+x.com/twitter.com resp. t.me/telegram.me; the same rule drops off-platform links from third-party metadata), `whitelist` (JSON array
 of base58 keys, ≤ 50 000). Images: PNG, JPEG, GIF, WebP or SVG (no scripts), ≤ 4 MB, type sniffed from content.
 
 → `{ "uri": "https://…/files/meta/<id>.json", "image": "https://…/files/img/<id>.png" }` — put `uri` on chain. With

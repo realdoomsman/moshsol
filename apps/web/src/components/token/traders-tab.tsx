@@ -62,7 +62,9 @@ export function TradersTab({
             </RuleTooltip>
           </TH>
           <TH align="right" className="max-md:hidden">
-            Holding
+            <RuleTooltip rule="Tokens bought minus tokens sold in this window. Tokens received without a trade (a transfer) aren't counted, so it can go below zero.">
+              Net ${l.symbol}
+            </RuleTooltip>
           </TH>
           <TH align="right">Trades</TH>
         </THead>
@@ -83,6 +85,8 @@ export function TradersTab({
             rows.map((t, i) => {
               const share = roles.shares.get(t.wallet);
               const net = BigInt(t.netTokens);
+              // Round-trips leave a lamport or two of rounding: that reads as flat, not as a loss.
+              const netSol = Math.abs(t.netSol) < 1e-6 ? 0 : t.netSol;
               return (
                 <TR key={t.wallet}>
                   <TD className="text-ink-3">{i + 1}</TD>
@@ -95,9 +99,9 @@ export function TradersTab({
                   </TD>
                   <TD align="right">{fmtSolValue(t.buySol)} SOL</TD>
                   <TD align="right">{fmtSolValue(t.sellSol)} SOL</TD>
-                  <TD align="right" className={cn(t.netSol > 0 ? "text-up" : t.netSol < 0 ? "text-down" : "text-ink-2")}>
-                    {t.netSol > 0 ? "+" : ""}
-                    {fmtSolValue(t.netSol)}
+                  <TD align="right" className={cn(netSol > 0 ? "text-up" : netSol < 0 ? "text-down" : "text-ink-2")}>
+                    {netSol > 0 ? "+" : ""}
+                    {fmtSolValue(netSol)}
                   </TD>
                   <TD align="right" className="text-ink-2 max-md:hidden">
                     {net < 0n ? `−${fmtTokens(-net)}` : fmtTokens(net)}

@@ -6,11 +6,12 @@ import Link from "next/link";
 import { useSyncExternalStore } from "react";
 import { fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { usePlatform } from "@/lib/queries";
+import type { LaunchSummary } from "@/lib/types";
 import { Term } from "../glossary";
 import { Button, IconButton } from "../ui/button";
 import { cn } from "../ui/cn";
+import { NEW_HERE_DISMISSED_KEY as KEY } from "./new-here-boot";
 
-const KEY = "holdfast:new-here:dismissed";
 const listeners = new Set<() => void>();
 
 function subscribe(fn: () => void) {
@@ -32,19 +33,26 @@ function dismiss() {
 /**
  * The 60-second explainer for a first visit (Discover and launch pages): three sentences a
  * pump.fun user needs before the numbers make sense, a link to the 2-minute doc, and "Got it".
- * Shown to signed-out visitors only; the dismissal lives in localStorage. Renders nothing on the
- * server and until hydration so a returning visitor never sees it flash.
+ * On a launch page it follows that launch's venue and frozen terms (a legacy Holdfast-curve launch
+ * trades here and pays backers a trade-fee share, not pump.fun creator fees).
+ * Shown to signed-out visitors only; the dismissal lives in localStorage. Server-rendered so a
+ * first visit paints it in place (no layout shift when it would otherwise pop in after hydration);
+ * `NEW_HERE_BOOT_SCRIPT` hides it before first paint for returning visitors, then it unmounts.
  */
-export function NewHere({ className }: { className?: string }) {
-  // Server snapshot = dismissed, so SSR and the first client paint agree.
-  const dismissed = useSyncExternalStore(subscribe, isDismissed, () => true);
+export function NewHere({ className, launch }: { className?: string; launch?: Pick<LaunchSummary, "venue" | "terms"> }) {
+  // Server snapshot = shown: the server can't read localStorage; the boot script hides it pre-paint.
+  const dismissed = useSyncExternalStore(subscribe, isDismissed, () => false);
   const { publicKey, connecting } = useWallet();
   const platform = usePlatform();
   if (dismissed || publicKey || connecting) return null;
-  const s = pumpSplit(platform.data?.params);
+  const s = pumpSplit(launch?.terms ?? platform.data?.params);
+  const curve = launch?.venue === "holdfast";
 
   return (
-    <section aria-labelledby="new-here-title" className={cn("rounded-md border border-line bg-surface p-4 md:p-5", className)}>
+    <section
+      aria-labelledby="new-here-title"
+      className={cn("rounded-md border border-line bg-surface p-4 in-data-[new-here=off]:hidden md:p-5", className)}
+    >
       <div className="flex items-start justify-between gap-3">
         <h2 id="new-here-title" className="h3 text-ink">
           New here?
@@ -57,17 +65,26 @@ export function NewHere({ className }: { className?: string }) {
       </div>
       <ul className="body mt-2 grid max-w-[66ch] gap-1.5 text-ink-2">
         <li>
-          Launches here are pump.fun tokens. Backers put SOL in before launch; at launch that SOL makes the token&rsquo;s first buy, the{" "}
-          <Term k="bundle" split={s} />, before anyone else can trade.
+          {curve ? "This is a legacy launch on the Holdfast curve, not pump.fun." : "Launches here are pump.fun tokens."} Backers put SOL in
+          before launch; at launch that SOL makes the token&rsquo;s first buy, the <Term k="bundle" split={s} />, before anyone else can
+          trade.
         </li>
         <li>
           The bundle sits in a <Term k="vault" split={s} /> traded only by a rate-limited <Term k="vaultAgent" split={s} />. What it sells
-          stays in the vault; {s.backerPct}% of the token&rsquo;s creator fees go to backers, {s.vaultPct}% to the vault and {s.burnPct}%
-          buys and burns the Holdfast token.
+          stays in the vault;{" "}
+          {curve && launch ? (
+            <>backers earn {launch.terms.backerFeeShareBps / 100}% of every trading fee.</>
+          ) : (
+            <>
+              {s.backerPct}% of the token&rsquo;s creator fees go to backers, {s.vaultPct}% to the vault and {s.burnPct}% buys and burns
+              the Holdfast token.
+            </>
+          )}
         </li>
         <li>
           <Term k="payback" split={s}>Payback</Term>: when the vault is {fmtMult(s.payoutMult)} its start and the chart is strong, the agent
-          may pay backers back. Miss the minimum raise and backers get 100% back. Buying and selling the token itself happens on pump.fun.
+          may pay backers back. Miss the minimum raise and backers get 100% back.{" "}
+          {curve ? "Buying and selling happen right here, on the Holdfast curve." : "Buying and selling the token itself happens on pump.fun."}
         </li>
       </ul>
       <div className="mt-4 flex flex-wrap items-center gap-3">

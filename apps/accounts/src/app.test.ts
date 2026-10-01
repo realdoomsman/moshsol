@@ -97,3 +97,21 @@ test("a Google callback whose state isn't this browser's round trip starts no se
   assert.equal(forged.headers.location, `${SITE}/?auth_error=expired`);
   assert.ok(!forged.cookies.some((c) => c.name === "__Host-hf_session" && c.value !== ""));
 });
+
+test("sign-in only ever returns to this site: off-site, protocol-relative and dot-segment returns land on /", async () => {
+  /** Where the callback sends the browser for `return` (a cancelled consent still redirects to it). */
+  const landing = async (ret: string) => {
+    const start = await app.inject({ method: "GET", url: `/api/auth/google?return=${encodeURIComponent(ret)}` });
+    const state = new URL(start.headers.location!).searchParams.get("state")!;
+    const cb = await app.inject({
+      method: "GET",
+      url: `/api/auth/google/callback?error=access_denied&state=${state}`,
+      headers: { cookie: `__Host-hf_oauth=${state}` },
+    });
+    return cb.headers.location;
+  };
+  for (const ret of ["https://evil.test/", "//evil.test/", "/\\evil.test", "/\t/evil.test", "/..//evil.test", "/.//evil.test", "/%2e%2e//evil.test", "javascript:alert(1)"]) {
+    assert.equal(await landing(ret), `${SITE}/?auth_error=cancelled`, ret);
+  }
+  assert.equal(await landing("/launch/abc?tab=trades"), `${SITE}/launch/abc?tab=trades&auth_error=cancelled`);
+});

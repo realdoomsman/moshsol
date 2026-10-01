@@ -4,7 +4,7 @@ import { backerClaimable, lamportsToSol, seedKeyOf, TOTAL_SUPPLY, tokensToUi } f
 import { useWallet } from "@solana/wallet-adapter-react";
 import type { PublicKey, TransactionInstruction } from "@solana/web3.js";
 import type { ReactNode } from "react";
-import { useBackerAccount, useMoshClient, useTokenBalance } from "@/lib/chain";
+import { useBackerAccount, useLoadMoshClient, useTokenBalance } from "@/lib/chain";
 import { fmtLamports, fmtSolValue, fmtTokens, pctOf } from "@/lib/format";
 import { launchId } from "@/lib/launch";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
@@ -31,7 +31,7 @@ function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
  */
 export function PositionPanel({ launch: l, className }: { launch: LaunchSummary; className?: string }) {
   const { publicKey } = useWallet();
-  const client = useMoshClient();
+  const loadClient = useLoadMoshClient();
   const tx = useTx();
   const tokens = useTokenBalance(l, publicKey);
   const backer = useBackerAccount(l, publicKey);
@@ -104,7 +104,7 @@ export function PositionPanel({ launch: l, className }: { launch: LaunchSummary;
               className="justify-self-start"
               disabled={claimable === 0n}
               busy={busy("Claim backer earnings")}
-              onClick={() => claim("Claim backer earnings", claimable, (payer) => client.claimBackerFeesIx(payer, seedKey))}
+              onClick={() => claim("Claim backer earnings", claimable, async (payer) => (await loadClient()).claimBackerFeesIx(payer, seedKey))}
             >
               {busy("Claim backer earnings") && tx.stage
                 ? TX_STAGE_LABEL[tx.stage]
@@ -127,7 +127,7 @@ export function PositionPanel({ launch: l, className }: { launch: LaunchSummary;
               className="justify-self-start"
               disabled={creatorFees === 0n}
               busy={busy("Claim creator fees")}
-              onClick={() => claim("Claim creator fees", creatorFees, (payer) => client.claimCreatorFeesIx(payer, seedKey))}
+              onClick={() => claim("Claim creator fees", creatorFees, async (payer) => (await loadClient()).claimCreatorFeesIx(payer, seedKey))}
             >
               {busy("Claim creator fees") && tx.stage
                 ? TX_STAGE_LABEL[tx.stage]

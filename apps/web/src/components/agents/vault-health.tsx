@@ -131,14 +131,14 @@ export function VaultHealthList({ rows, now, loading }: { rows: VaultHealth[]; n
                       caption="Buy"
                       pct={h.buyUsedPct}
                       used={fmtLamports(h.buySpent)}
-                      cap={`${fmtLamports(h.row.windowBuyCap)} SOL`}
+                      cap={`${fmtLamports(h.buyCap)} SOL`}
                     />
                     <Budget
                       label="Sell budget used"
                       caption="Sell"
                       pct={h.sellUsedPct}
                       used={fmtTokens(h.sellSold)}
-                      cap={fmtTokens(h.row.windowSellCap)}
+                      cap={fmtTokens(h.sellCap)}
                     />
                   </div>
                 </li>
@@ -185,7 +185,7 @@ export function VaultHealthList({ rows, now, loading }: { rows: VaultHealth[]; n
                         label="Buy budget used"
                         pct={h.buyUsedPct}
                         used={fmtLamports(h.buySpent)}
-                        cap={`${fmtLamports(h.row.windowBuyCap)} SOL`}
+                        cap={`${fmtLamports(h.buyCap)} SOL`}
                       />
                     </TD>
                     <TD>
@@ -193,7 +193,7 @@ export function VaultHealthList({ rows, now, loading }: { rows: VaultHealth[]; n
                         label="Sell budget used"
                         pct={h.sellUsedPct}
                         used={fmtTokens(h.sellSold)}
-                        cap={fmtTokens(h.row.windowSellCap)}
+                        cap={fmtTokens(h.sellCap)}
                       />
                     </TD>
                     <TD>

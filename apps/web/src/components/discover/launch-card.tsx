@@ -15,7 +15,7 @@ import { Sparkline } from "@/components/ui/sparkline";
 import { TokenAvatar } from "@/components/ui/token-avatar";
 import { WalletLink } from "@/components/wallet-peek/wallet-peek";
 import { fmtSolValue, mcapTicker } from "@/lib/format";
-import { launchHref, launchId, phaseOf } from "@/lib/launch";
+import { launchHref, launchId, phaseOf, REFUND_STATE_LABEL, refundState, wasCancelled } from "@/lib/launch";
 import { candlesQuery } from "@/lib/query-options";
 import { SPARKLINE_MIN_POINTS } from "@/lib/thresholds";
 import type { LaunchSummary } from "@/lib/types";
@@ -123,7 +123,7 @@ function RaisingBody({ l, now }: { l: LaunchSummary; now: number }) {
             <Countdown to={l.raiseDeadline} prefix="Closes" />
           ) : phase === "ready" ? (
             BigInt(l.raised) >= BigInt(l.raiseMax) ? "Max reached" : "Raise closed"
-          ) : phase === "refunding" ? (
+          ) : wasCancelled(l, now) ? (
             "Raise cancelled"
           ) : (
             "Min not reached"
@@ -139,7 +139,7 @@ function RaisingBody({ l, now }: { l: LaunchSummary; now: number }) {
             </ButtonLink>
           </span>
         ) : (
-          <span className="small shrink-0 text-ink-2">{phase === "ready" ? "Ready to launch" : "Refunds open"}</span>
+          <span className="small shrink-0 text-ink-2">{phase === "ready" ? "Ready to launch" : REFUND_STATE_LABEL[refundState(l)]}</span>
         )}
       </div>
     </>
@@ -269,7 +269,7 @@ export function LaunchRow({ launch: l, now, flash, fresh }: { launch: LaunchSumm
             ) : phase === "ready" ? (
               "Ready to launch"
             ) : (
-              "Refunds open"
+              REFUND_STATE_LABEL[refundState(l)]
             )}
             {phase === "raising" ? " left" : ""}
           </div>

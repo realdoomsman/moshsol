@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "motion/react";
+import * as m from "motion/react-m";
 import { useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "./cn";
 
@@ -82,7 +82,7 @@ export function Tabs<T extends string>({
             {t.label}
             {t.count !== undefined ? <span className="num text-ink-3">{t.count}</span> : null}
             {active ? (
-              <motion.span
+              <m.span
                 layoutId={layoutId}
                 transition={INDICATOR}
                 className="absolute inset-x-0 -bottom-px h-0.5 bg-ink"
@@ -167,7 +167,7 @@ export function Segmented<T extends string>({
             )}
           >
             {active ? (
-              <motion.span
+              <m.span
                 layoutId={layoutId}
                 transition={INDICATOR}
                 aria-hidden

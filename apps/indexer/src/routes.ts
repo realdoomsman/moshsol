@@ -4,6 +4,7 @@ import {
   backerClaimable,
   lamportsToSol,
   platformPda,
+  raiseFailed,
   tokensToUi,
   type LaunchJson,
   type MoshClient,
@@ -16,7 +17,7 @@ import { DEFAULT_PUBKEY, type LaunchDbRow, type SnapshotLaunchDbRow, type Store,
 import type { SolPrice } from "./price";
 import { Limiter, sweepLimiters } from "./ratelimit";
 import { parsePubkey, ValidationError } from "./sanitize";
-import { allSummaries, summaryOf } from "./summaries";
+import type { LaunchSummaries } from "./summaries";
 import { holderTarget, type ChainSync, type SyncHealth } from "./sync";
 import { ACTIVITY_TYPES, type Candle, type LaunchSummary, type TradeRow } from "./types";
 
@@ -27,6 +28,7 @@ export interface RouteDeps {
   client: MoshClient;
   sync: ChainSync;
   price: SolPrice;
+  summaries: LaunchSummaries;
 }
 
 export type Query = Record<string, string | undefined>;
@@ -162,6 +164,8 @@ const HEALTH_TTL_MS = 2_000;
 const PORTFOLIO_LIMIT_PER_MIN = 60;
 /** How long a wallet's token balances are reused before the chain is asked again. */
 const PORTFOLIO_TTL_MS = 10_000;
+/** Launch ids one `GET /api/candles` may ask for (the web's discover page asks for its first 24 live cards). */
+const MAX_CANDLE_IDS = 50;
 
 /** Non-zero token balances by mint. Holdfast launches are Token-2022 mints, pump launches SPL Token mints. */
 async function fetchTokenBalances(connection: Connection, owner: PublicKey): Promise<Map<string, bigint>> {
@@ -181,9 +185,18 @@ async function fetchTokenBalances(connection: Connection, owner: PublicKey): Pro
   return balances;
 }
 
-export function registerRoutes(app: FastifyInstance, { store, client, sync, price }: RouteDeps): void {
+export function registerRoutes(app: FastifyInstance, { store, client, sync, price, summaries }: RouteDeps): void {
   const connection = client.connection;
   const launchRow = (idRaw: string) => requireLaunch(store, idRaw);
+  /** `requireLaunch` answered from the cached summaries (no query per request). */
+  const launchSummary = (idRaw: string): LaunchSummary => {
+    const launch = summaries.byId(pubkeyParam(idRaw, "launch id").toBase58());
+    if (!launch) throw new NotFoundError("launch not found");
+    return launch;
+  };
+  /** A launch's candles at `tf`; the whole trade history is replayed per build, so builds are shared until the next write. */
+  const candlesOf = (address: string, tf: number): Candle[] =>
+    summaries.cache.get(`candles:${address}:${tf}`, () => buildCandles(store.launch(address)!, store.candlePoints(address), tf));
 
   const healthCache = new TtlCache<SyncHealth>(HEALTH_TTL_MS);
   app.get("/api/health", async (_req, reply) => {
@@ -249,8 +262,8 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
     const limit = intQuery(q, "limit", 50, 200);
     const offset = intQuery(q, "offset", 0, Number.MAX_SAFE_INTEGER);
     const text = (q.q ?? "").trim().toLowerCase();
-    let list = allSummaries(store, price);
-    if (status !== "all") list = list.filter((s) => s.status === status);
+    // `filter` copies: the cached list is shared and `sortSummaries` sorts in place.
+    let list = summaries.all().filter((s) => status === "all" || s.status === status);
     if (text) {
       list = list.filter(
         (s) =>
@@ -264,7 +277,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
     return { launches: list.slice(offset, offset + limit), total: list.length };
   });
 
-  app.get<{ Params: { id: string } }>("/api/launches/:id", async (req) => summaryOf(store, price, launchRow(req.params.id)));
+  app.get<{ Params: { id: string } }>("/api/launches/:id", async (req) => launchSummary(req.params.id));
 
   app.get<{ Params: { id: string }; Querystring: Query }>("/api/launches/:id/trades", async (req) => {
     const row = launchRow(req.params.id);
@@ -316,9 +329,22 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
   });
 
   app.get<{ Params: { id: string }; Querystring: Query }>("/api/launches/:id/candles", async (req) => {
-    const row = launchRow(req.params.id);
+    const { address } = launchSummary(req.params.id);
     const tf = oneOf(TIMEFRAMES, req.query.tf, 60, "tf");
-    return { candles: buildCandles(row, store.candlePoints(row.address), tf) };
+    return { candles: candlesOf(address, tf) };
+  });
+
+  // Many launches' candles in one request (the discover page's sparklines), keyed by the ids as asked; unknown ids are left out.
+  app.get<{ Querystring: Query }>("/api/candles", async (req) => {
+    const tf = oneOf(TIMEFRAMES, req.query.tf, 60, "tf");
+    const ids = [...new Set((req.query.ids ?? "").split(",").filter((id) => id !== ""))];
+    if (ids.length === 0 || ids.length > MAX_CANDLE_IDS) throw new ValidationError(`ids must list 1-${MAX_CANDLE_IDS} launch ids`);
+    const candles: Record<string, Candle[]> = {};
+    for (const id of ids) {
+      const launch = summaries.byId(pubkeyParam(id, "launch id").toBase58());
+      if (launch) candles[id] = candlesOf(launch.address, tf);
+    }
+    return { candles };
   });
 
   // From the indexed deposit/refund/claim ledger (the users route does the same per wallet); no RPC scan per request.
@@ -399,7 +425,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
     const owner = pubkeyParam(req.params.wallet, "wallet");
     const wallet = owner.toBase58();
     const balances = await tokenBalances.get(wallet, () => fetchTokenBalances(connection, owner));
-    const all = allSummaries(store, price);
+    const all = summaries.all();
     const byAddress = new Map(all.map((s) => [s.address, s]));
     const byMint = new Map(all.filter((s) => s.mint !== DEFAULT_PUBKEY).map((s) => [s.mint, s]));
     const now = Math.floor(Date.now() / 1000);
@@ -420,7 +446,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
       const feesClaimed = claimedByLaunch.get(d.launch) ?? 0n;
       const raised = BigInt(launch.raised);
       const share = (v: string) => (raised > 0n ? (BigInt(v) * deposited) / raised : 0n);
-      const failedRaise = launch.status === "raising" && now >= launch.raiseDeadline && raised < BigInt(launch.raiseMin);
+      const failedRaise = raiseFailed(launch, now);
       backed.push({
         launch,
         deposited: deposited.toString(),
@@ -456,37 +482,42 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
     return { events: store.activity(limit).map(activityFromRow) };
   });
 
-  app.get("/api/stats", async () => {
-    const all = allSummaries(store, price);
-    const sum = (f: (l: LaunchSummary) => number) => all.reduce((acc, l) => acc + f(l), 0);
-    const solUsd = price.current;
-    return {
-      solUsd: solUsd?.usd ?? null,
-      solUsdAt: solUsd?.at ?? null,
-      totalLaunches: all.length,
-      liveLaunches: all.filter((l) => l.status === "live").length,
-      raisingLaunches: all.filter((l) => l.status === "raising").length,
-      woundDownLaunches: all.filter((l) => l.status === "woundDown").length,
-      pumpLaunches: all.filter((l) => l.venue === "pump").length,
-      totalRaisedSol: sum((l) => (l.status === "refunding" ? 0 : lamportsToSol(l.raised))),
-      totalVolumeSol: sum((l) => lamportsToSol(l.volumeSol)),
-      volume24hSol: store.volumeSince(Math.floor(Date.now() / 1000) - 86_400),
-      backerFeesAccruedSol: sum((l) => lamportsToSol(l.backerFeesAccrued)),
-      profitSharedSol: sum((l) => l.profitSharedSol),
-      backersRepaidSol: sum((l) => l.backersRepaidSol),
-      backerPayoutsSol: sum((l) => l.backerPayoutsSol),
-      agentTrades: sum((l) => l.agentBuys + l.agentSells),
-      vaultSol: sum((l) => lamportsToSol(l.vaultSol)),
-      vaultTokensValueSol: sum((l) => tokensToUi(l.vaultTokens) * l.priceSol),
-      vaultWithdrawnSol: sum((l) => l.vaultWithdrawnSol),
-      buybackPoolSol: sum((l) => lamportsToSol(l.buybackPoolSol)),
-      burnedSol: sum((l) => lamportsToSol(l.burnedSol)),
-      creatorFeesCollectedSol: sum((l) => lamportsToSol(l.creatorFeesCollected)),
-    };
-  });
+  app.get("/api/stats", async () =>
+    summaries.cache.get("stats", () => {
+      const all = summaries.all();
+      const now = Math.floor(Date.now() / 1000);
+      // A raise past its deadline below its minimum still reads `raising` on chain; it raised nothing that stays.
+      const failed = new Set(all.filter((l) => raiseFailed(l, now)));
+      const sum = (f: (l: LaunchSummary) => number) => all.reduce((acc, l) => acc + f(l), 0);
+      const solUsd = price.current;
+      return {
+        solUsd: solUsd?.usd ?? null,
+        solUsdAt: solUsd?.at ?? null,
+        totalLaunches: all.length,
+        liveLaunches: all.filter((l) => l.status === "live").length,
+        raisingLaunches: all.filter((l) => l.status === "raising" && !failed.has(l)).length,
+        woundDownLaunches: all.filter((l) => l.status === "woundDown").length,
+        pumpLaunches: all.filter((l) => l.venue === "pump").length,
+        totalRaisedSol: sum((l) => (l.status === "refunding" || failed.has(l) ? 0 : lamportsToSol(l.raised))),
+        totalVolumeSol: sum((l) => lamportsToSol(l.volumeSol)),
+        volume24hSol: store.volumeSince(now - 86_400),
+        backerFeesAccruedSol: sum((l) => lamportsToSol(l.backerFeesAccrued)),
+        profitSharedSol: sum((l) => l.profitSharedSol),
+        backersRepaidSol: sum((l) => l.backersRepaidSol),
+        backerPayoutsSol: sum((l) => l.backerPayoutsSol),
+        agentTrades: sum((l) => l.agentBuys + l.agentSells),
+        vaultSol: sum((l) => lamportsToSol(l.vaultSol)),
+        vaultTokensValueSol: sum((l) => tokensToUi(l.vaultTokens) * l.priceSol),
+        vaultWithdrawnSol: sum((l) => l.vaultWithdrawnSol),
+        buybackPoolSol: sum((l) => lamportsToSol(l.buybackPoolSol)),
+        burnedSol: sum((l) => lamportsToSol(l.burnedSol)),
+        creatorFeesCollectedSol: sum((l) => lamportsToSol(l.creatorFeesCollected)),
+      };
+    }),
+  );
 
   app.get("/api/agents", async () => {
-    const all = allSummaries(store, price);
+    const all = summaries.all();
     let spent = 0n;
     let received = 0n;
     for (const l of all) {

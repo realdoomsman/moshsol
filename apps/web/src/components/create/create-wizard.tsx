@@ -10,9 +10,10 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { useMoshClient, useSolBalance } from "@/lib/chain";
+import { useLoadMoshClient } from "@/lib/chain";
 import { fmtLamports } from "@/lib/format";
 import { usePlatform } from "@/lib/queries";
+import { useSolBalance } from "@/lib/sol-balance";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import { FaucetButton } from "../shell/faucet";
 import { Button } from "../ui/button";
@@ -53,7 +54,7 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
   const router = useRouter();
   const { publicKey } = useWallet();
   const { setVisible } = useWalletModal();
-  const client = useMoshClient();
+  const loadClient = useLoadMoshClient();
   const platform = usePlatform();
   const balance = useSolBalance(publicKey);
   const tx = useTx();
@@ -245,6 +246,7 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
       successMessage: `$${d.symbol} raise is open`,
       signers: [seed],
       build: async (payer) => {
+        const client = await loadClient();
         const onChain = await client.fetchPlatform();
         if (!onChain) throw new Error("Platform is not initialized on this cluster");
         if (!params) throw new Error("Platform terms are still loading");

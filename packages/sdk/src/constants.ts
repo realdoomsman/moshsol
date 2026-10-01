@@ -1,7 +1,14 @@
 import { PublicKey } from "@solana/web3.js";
-import idl from "./idl/moshsol.json";
+import type { Moshsol } from "./idl/moshsol";
 
-export const PROGRAM_ID = new PublicKey(idl.address);
+/**
+ * The program address, typed as the IDL's literal address so a re-synced IDL (`pnpm sync-idl`) for
+ * another deployment fails the typecheck until this is updated. A literal, not `idl.address`, so the
+ * constant doesn't pull the whole IDL JSON into every bundle that shows the address.
+ */
+const PROGRAM_ADDRESS: Moshsol["address"] = "EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ";
+
+export const PROGRAM_ID = new PublicKey(PROGRAM_ADDRESS);
 export { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 export const BPF_LOADER_UPGRADEABLE_PROGRAM_ID = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 

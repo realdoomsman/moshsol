@@ -6,11 +6,12 @@ import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey, type TransactionInstruction } from "@solana/web3.js";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState, type ReactNode } from "react";
-import { useMoshClient, useSolBalance } from "@/lib/chain";
+import { useLoadMoshClient } from "@/lib/chain";
 import { fmtLamports, fmtSolValue } from "@/lib/format";
 import { useMounted, useNow } from "@/lib/hooks";
 import { launchId } from "@/lib/launch";
 import { usePortfolio } from "@/lib/queries";
+import { useSolBalance } from "@/lib/sol-balance";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import type { PortfolioBacked, PortfolioCreated } from "@/lib/types";
 import { userActivityQuery, userQuery } from "@/lib/users";
@@ -121,7 +122,7 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
   const activity = useQuery(userActivityQuery(wallet));
   const owner = useMemo(() => new PublicKey(wallet), [wallet]);
   const balance = useSolBalance(owner);
-  const client = useMoshClient();
+  const loadClient = useLoadMoshClient();
   const tx = useTx();
   const now = useNow(10_000);
   const [tab, setTab] = useState<Tab | null>(null);
@@ -159,21 +160,21 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
       void tx.run({
         label: claimBackerLabel(b.launch),
         successMessage: `Claimed ${fmtLamports(b.claimable)} SOL`,
-        build: async (payer) => [await client.claimBackerFeesIx(payer, seedKeyOf(b.launch))],
+        build: async (payer) => [await (await loadClient()).claimBackerFeesIx(payer, seedKeyOf(b.launch))],
         invalidate: invalidate(launchId(b.launch)),
       }),
     claimCreator: (c: PortfolioCreated) =>
       void tx.run({
         label: claimCreatorLabel(c.launch),
         successMessage: `Claimed ${fmtLamports(c.creatorFeesUnclaimed)} SOL`,
-        build: async (payer) => [await client.claimCreatorFeesIx(payer, seedKeyOf(c.launch))],
+        build: async (payer) => [await (await loadClient()).claimCreatorFeesIx(payer, seedKeyOf(c.launch))],
         invalidate: invalidate(),
       }),
     refund: (b: PortfolioBacked) =>
       void tx.run({
         label: refundLabel(b.launch),
         successMessage: `Refunded ${fmtLamports(b.deposited)} SOL`,
-        build: async (payer) => [await client.refundIx(payer, seedKeyOf(b.launch))],
+        build: async (payer) => [await (await loadClient()).refundIx(payer, seedKeyOf(b.launch))],
         invalidate: invalidate(launchId(b.launch)),
       }),
   };
@@ -181,8 +182,8 @@ function WalletPortfolio({ wallet, own, lookup, connected }: { wallet: string; o
   const claimAll = async () => {
     if (!split) return;
     const jobs: ((payer: PublicKey) => Promise<TransactionInstruction>)[] = [
-      ...split.claimableBacker.map((b) => (payer: PublicKey) => client.claimBackerFeesIx(payer, seedKeyOf(b.launch))),
-      ...split.claimableCreator.map((c) => (payer: PublicKey) => client.claimCreatorFeesIx(payer, seedKeyOf(c.launch))),
+      ...split.claimableBacker.map((b) => async (payer: PublicKey) => (await loadClient()).claimBackerFeesIx(payer, seedKeyOf(b.launch))),
+      ...split.claimableCreator.map((c) => async (payer: PublicKey) => (await loadClient()).claimCreatorFeesIx(payer, seedKeyOf(c.launch))),
     ];
     const batches = Math.ceil(jobs.length / CLAIMS_PER_TX);
     const total = split.totalClaimable;

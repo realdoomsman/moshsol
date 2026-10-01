@@ -1,0 +1,61 @@
+1
+00:00:00,500 --> 00:00:04,118
+Back a token before it hits pump.fun.
+
+2
+00:00:05,268 --> 00:00:11,227
+Backers pool SOL before the token
+exists, at least 1 SOL. Miss the minimum
+
+3
+00:00:11,227 --> 00:00:14,284
+and everyone is refunded in full.
+
+4
+00:00:15,084 --> 00:00:20,679
+At launch, one instruction creates the
+token on pump.fun and makes the first buy
+
+5
+00:00:20,679 --> 00:00:24,016
+with the pool. Nothing can get in between.
+
+6
+00:00:24,840 --> 00:00:30,049
+That bundle sits in a program vault,
+worked by a rate-limited vault
+
+7
+00:00:30,049 --> 00:00:35,335
+agent. It sells small clips into
+strength, buys back dips, and every
+
+8
+00:00:35,335 --> 00:00:41,177
+trade passes the program's checks:
+2% band, 3% impact, hourly budgets.
+
+9
+00:00:41,977 --> 00:00:48,726
+Creator fees split three ways: 75% to the
+vault, 15% buys and burns the Holdfast
+
+10
+00:00:48,726 --> 00:00:55,201
+token, 10% goes to backers. What the
+agent sells for stays in the vault.
+
+11
+00:00:56,010 --> 00:01:02,441
+When the vault's liquid SOL is 5× what
+went in and the chart is strong, backers
+
+12
+00:01:02,441 --> 00:01:09,028
+are paid back: principal first, then 15%
+of the vault, at most once per 4 h.
+
+13
+00:01:09,828 --> 00:01:12,324
+holdfast.fun
+

@@ -1,0 +1,37 @@
+1
+00:00:00,500 --> 00:00:02,298
+The vault agent.
+
+2
+00:00:03,098 --> 00:00:08,382
+It never trades inside a 2% band
+around the moving average. Into
+
+3
+00:00:08,382 --> 00:00:14,975
+strength, it sells small clips: only
+above cost, never more than 3% impact.
+
+4
+00:00:15,775 --> 00:00:21,937
+Into a dip, it buys back: at or below
+cost, or under its own average sell.
+
+5
+00:00:23,275 --> 00:00:32,416
+Per hour: 10% of the vault's SOL, 5% of
+its tokens. A 0.1 SOL floor always stays.
+
+6
+00:00:33,216 --> 00:00:39,224
+At 5× what went in, with a strong
+chart, backers are paid back: principal
+
+7
+00:00:39,224 --> 00:00:42,011
+first, then 15% of the vault.
+
+8
+00:00:42,811 --> 00:00:45,123
+holdfast.fun
+

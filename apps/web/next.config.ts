@@ -14,7 +14,7 @@ const config: NextConfig = {
   poweredByHeader: false,
   // The old explainer lives in the docs now (brief §4.1); `permanent` answers 308.
   redirects: async () => [{ source: "/how-it-works", destination: "/docs/how-it-works", permanent: true }],
-  // Baseline hardening; no CSP yet (wallet extensions, inline Next scripts and Arweave images need an audited policy).
+  // Static hardening for every response; the per-request Content-Security-Policy (script nonce) is set in src/proxy.ts.
   headers: async () => [
     {
       source: "/(.*)",
@@ -26,6 +26,11 @@ const config: NextConfig = {
         { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
       ],
     },
+    // public/ media keeps its name across re-recordings (not content-hashed), so a day fresh then revalidated, not immutable.
+    ...["/videos/:path*", "/brand/:path*", "/icon-192.png", "/icon-512.png"].map((source) => ({
+      source,
+      headers: [{ key: "Cache-Control", value: "public, max-age=86400, stale-while-revalidate=604800" }],
+    })),
   ],
 };
 

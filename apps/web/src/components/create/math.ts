@@ -2,9 +2,11 @@
 
 import { previewBundle, previewPumpBundle, type BundlePreview } from "@holdfast/sdk";
 import { ACCOUNT_SIZE, ExtensionType, getMintLen } from "@solana/spl-token";
+import { useConnection } from "@solana/wallet-adapter-react";
 import { useMemo } from "react";
-import { useMoshClient } from "@/lib/chain";
 import { INDEXER_URL } from "@/lib/env";
+// Static on /create: the rent preview needs the launch account size from the IDL on first render.
+import { moshClient } from "@/lib/program";
 import type { PlatformInfo } from "@/lib/types";
 import { previewLamports, utf8Len, type CreateDraft } from "./validate";
 
@@ -61,7 +63,8 @@ export interface CreateCost {
  * public-RPC quota on getMinimumBalanceForRentExemption.
  */
 export function useCreateCost(name: string, symbol: string, params: PlatformInfo["params"] | undefined): CreateCost {
-  const client = useMoshClient();
+  const { connection } = useConnection();
+  const launchSize = moshClient(connection).program.account.launch.size;
   const nameLen = Math.max(utf8Len(name.trim()), 1);
   const symbolLen = Math.max(utf8Len(symbol.trim()), 1);
   const rent = useMemo(() => {
@@ -69,10 +72,10 @@ export function useCreateCost(name: string, symbol: string, params: PlatformInfo
     const uriLen = `${INDEXER_URL}/files/meta/`.length + 40;
     const metadataLen = 4 + 32 + 32 + 4 * 4 + nameLen + symbolLen + uriLen;
     const sizes = params?.holdfastCurveEnabled
-      ? [client.program.account.launch.size, getMintLen([ExtensionType.MetadataPointer]) + metadataLen, ACCOUNT_SIZE, ACCOUNT_SIZE]
-      : [client.program.account.launch.size];
+      ? [launchSize, getMintLen([ExtensionType.MetadataPointer]) + metadataLen, ACCOUNT_SIZE, ACCOUNT_SIZE]
+      : [launchSize];
     return sizes.reduce((sum, len) => sum + BigInt((len + 128) * 3480 * 2), 0n);
-  }, [client, nameLen, symbolLen, params?.holdfastCurveEnabled]);
+  }, [launchSize, nameLen, symbolLen, params?.holdfastCurveEnabled]);
   const createFee = params ? BigInt(params.createFeeLamports) : null;
   return { createFee, rent, network: TX_FEE_LAMPORTS, total: createFee !== null ? rent + createFee + TX_FEE_LAMPORTS : null };
 }

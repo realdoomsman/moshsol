@@ -4,9 +4,14 @@ import { CreateSuccess } from "@/components/create/success";
 import { CreateWizard } from "@/components/create/create-wizard";
 import { parsePrefill } from "@/components/create/validate";
 import { Hydrate, prefetch, serverQueryClient } from "@/lib/prefetch";
+import { DEFAULT_PUMP_SPLIT as S } from "@/lib/pump-terms";
 import { launchQuery, platformQuery } from "@/lib/query-options";
 
-export const metadata: Metadata = { title: "Create a launch" };
+export const metadata: Metadata = {
+  title: "Create a launch",
+  description: `Launch a pump.fun token whose first buy is made by your backers: set the raise, the bundle and the vault's SOL reserve. You earn 0% of fees; ${S.vaultPct}% of the creator fee goes to the vault, ${S.burnPct}% to the Holdfast buyback and ${S.backerPct}% to backers.`,
+  alternates: { canonical: "/create" },
+};
 
 function canonicalKey(v: string | string[] | undefined): string | null {
   if (typeof v !== "string") return null;

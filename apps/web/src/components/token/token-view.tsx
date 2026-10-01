@@ -2,7 +2,7 @@
 
 import { agentZones, type LaunchStatus } from "@holdfast/sdk";
 import { ArrowUpRight } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import { ApiError } from "@/lib/api";
 import { useMediaQuery, useNow } from "@/lib/hooks";
 import { launchId, phaseOf, pumpTradeUrl, type Phase } from "@/lib/launch";
@@ -106,9 +106,10 @@ function BottomBar({ children }: { children: ReactNode }) {
 /**
  * Live and wound-down launches: chart, activity and the trade rail (read-only once wound down).
  * Pump launches trade on pump.fun, so their rail links out instead of quoting the curve, and adds
- * the buyback-and-burn card.
+ * the buyback-and-burn card. Memoised (as is `RaiseLayout`): `TokenView` re-renders every second for
+ * the phase clock, while the layouts tick on their own 5s clock.
  */
-function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLaunched: boolean }) {
+const LiveLayout = memo(function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLaunched: boolean }) {
   const now = useNow(5_000);
   const zones = useMemo(() => agentZones(l, now), [l, now]);
   const roles = useLaunchRoles(l);
@@ -246,9 +247,9 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
       )}
     </div>
   );
-}
+});
 
-function RaiseLayout({ launch: l, phase }: { launch: LaunchSummary; phase: Phase }) {
+const RaiseLayout = memo(function RaiseLayout({ launch: l, phase }: { launch: LaunchSummary; phase: Phase }) {
   const now = useNow(5_000);
   const roles = useLaunchRoles(l);
   const [tab, setTab] = useState<ActivityTab>("deposits");
@@ -312,7 +313,7 @@ function RaiseLayout({ launch: l, phase }: { launch: LaunchSummary; phase: Phase
       )}
     </div>
   );
-}
+});
 
 function TokenSkeleton() {
   return (
@@ -379,7 +380,7 @@ export function TokenView({ id }: { id: string }) {
   return (
     <div className="grid gap-6 max-lg:pb-16">
       <TokenHeader launch={data} phase={phase} now={now} />
-      <NewHere />
+      <NewHere launch={data} />
       {phase === "live" || phase === "woundDown" ? (
         <LiveLayout key={launchId(data)} launch={data} justLaunched={firstStatus === "raising"} />
       ) : (

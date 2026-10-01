@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { AgentLive } from "@/components/landing/agent-live";
 import { loadChainFacts } from "@/components/landing/chain-facts";
@@ -19,6 +20,8 @@ import { Section, SectionHeader } from "@/components/landing/section";
 import { Hydrate, serverQueryClient } from "@/lib/prefetch";
 import { pumpSplit } from "@/lib/pump-terms";
 import { platformQuery } from "@/lib/query-options";
+
+export const metadata: Metadata = { alternates: { canonical: "/" } };
 
 /** Landing (§4.2): hero, three-step strip, launches row, rules, how it works, proof, splits, creators, agent, FAQ, CTA. */
 export default async function LandingPage() {

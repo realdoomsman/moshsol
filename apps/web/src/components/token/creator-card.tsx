@@ -27,15 +27,18 @@ export interface SocialLink {
   label: string;
 }
 
-/** A handle or URL from the metadata → a link; anything that isn't http(s) is dropped. */
-function toUrl(v: string | null, base: string): string | null {
+/**
+ * A handle or URL from the metadata → a link; anything that isn't http(s) is dropped, and so is an X / Telegram link
+ * off its platform's host (it would render with that platform's icon and label). Mirrors the indexer's `cleanSocial`.
+ */
+function toUrl(v: string | null, base: string, host?: RegExp): string | null {
   const s = v?.trim();
   if (!s) return null;
-  const url = /^https?:\/\//i.test(s) ? s : base ? `${base}${s.replace(/^@/, "")}` : null;
-  if (!url) return null;
+  const url = /^https?:\/\//i.test(s) ? s : `${base}${s.replace(/^@/, "")}`;
   try {
     const u = new URL(url);
-    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    return !host || host.test(u.hostname) ? u.toString() : null;
   } catch {
     return null;
   }
@@ -47,8 +50,8 @@ function toUrl(v: string | null, base: string): string | null {
  */
 export function socialLinks(l: LaunchSummary): SocialLink[] {
   const out: SocialLink[] = [];
-  const x = toUrl(l.twitter, "https://x.com/");
-  const tg = toUrl(l.telegram, "https://t.me/");
+  const x = toUrl(l.twitter, "https://x.com/", /^((www|mobile)\.)?(x|twitter)\.com$/i);
+  const tg = toUrl(l.telegram, "https://t.me/", /^(www\.)?(t\.me|telegram\.me)$/i);
   const web = toUrl(l.website, "https://");
   if (x) out.push({ kind: "x", href: x, label: "X" });
   if (tg) out.push({ kind: "telegram", href: tg, label: "Telegram" });

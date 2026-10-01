@@ -18,6 +18,7 @@ import { fmtPct } from "./shared";
 export interface HolderStats {
   rows: HolderRow[];
   vaultPct: number;
+  /** The venue's share: the Holdfast curve's reserve, or the pump.fun curve / PumpSwap pool rows of the snapshot. */
   curvePct: number;
   /** Top 10 wallets, curve and vault excluded. */
   top10Pct: number;
@@ -31,15 +32,17 @@ export function useHolderStats(l: LaunchSummary): HolderStats {
   return useMemo(() => {
     const rows = data?.holders ?? [];
     const wallets = rows.filter((h) => h.label === null);
+    // Pump launches keep no curve reserve on the launch (`tokenReserve` is 0): the venue's tokens are a holder row.
+    const venuePct = rows.filter((h) => h.label === "curve" || h.label === "pool").reduce((s, h) => s + h.pct, 0);
     return {
       rows,
       vaultPct: pctOf(l.vaultTokens, TOTAL_SUPPLY),
-      curvePct: pctOf(l.tokenReserve, TOTAL_SUPPLY),
+      curvePct: l.venue === "pump" ? venuePct : pctOf(l.tokenReserve, TOTAL_SUPPLY),
       top10Pct: wallets.slice(0, 10).reduce((s, h) => s + h.pct, 0),
       creatorPct: wallets.find((h) => h.owner === l.creator)?.pct ?? 0,
       loaded: data !== undefined,
     };
-  }, [data, l.vaultTokens, l.tokenReserve, l.creator]);
+  }, [data, l.vaultTokens, l.tokenReserve, l.venue, l.creator]);
 }
 
 /** Vault-agent trades in the last 24 h (the indexer's agent filter; counted from the newest 500). */

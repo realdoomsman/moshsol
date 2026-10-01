@@ -2,6 +2,11 @@ import type { WebSocket } from "ws";
 import type { WsMessage } from "./types";
 
 const HEARTBEAT_MS = 30_000;
+/**
+ * Unsent bytes a client may have queued before it is dropped (it reconnects and refetches). Without a cap a client
+ * that stops reading makes the server buffer every broadcast for it until the heartbeat notices (up to 2 × HEARTBEAT_MS).
+ */
+export const MAX_BUFFERED_BYTES = 1 << 20;
 
 /** Fan-out of indexer updates to `/ws` clients, with ping/pong liveness checks. */
 export class Hub {
@@ -37,7 +42,13 @@ export class Hub {
     if (this.clients.size === 0) return;
     const data = JSON.stringify(msg);
     for (const socket of this.clients.keys()) {
-      if (socket.readyState === socket.OPEN) socket.send(data);
+      if (socket.readyState !== socket.OPEN) continue;
+      if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+        socket.terminate();
+        this.clients.delete(socket);
+        continue;
+      }
+      socket.send(data);
     }
   }
 

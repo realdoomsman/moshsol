@@ -115,7 +115,8 @@ export interface HolderRow {
   owner: string;
   amount: string;
   pct: number;
-  label: "curve" | "vault" | null;
+  /** Venue and protocol accounts: the bonding curve (Holdfast or pump.fun), the PumpSwap pool once graduated, the vault. */
+  label: "curve" | "pool" | "vault" | null;
 }
 
 /** A thread comment (`/api/launches/:id/comments`, WS `comment`); `body` is plain text. Threads are keyed by the launch address. */

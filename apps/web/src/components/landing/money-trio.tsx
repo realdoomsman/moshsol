@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { fmtLamports } from "@/lib/format";
-import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
+import { BUYBACK_MINT_UNSET, fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import type { PlatformInfo } from "@/lib/types";
 import { Term } from "../glossary";
 
@@ -17,8 +17,11 @@ export function MoneyTrio({ params }: { params: PlatformInfo["params"] | null })
       title: "For backers",
       lines: [
         <>
-          {s.backerPct}% of pump.fun&rsquo;s creator fee on the launch, split by deposit (<Term k="backerEarnings" split={s} />). Claim any
-          time.
+          {s.backerPct}% of pump.fun&rsquo;s creator fee on the launch, split by deposit{" "}
+          <span className="whitespace-nowrap">
+            (<Term k="backerEarnings" split={s} />).
+          </span>{" "}
+          Claim any time.
         </>,
         <>
           <Term k="payback" split={s}>Payback</Term> when the vault is {fmtMult(s.payoutMult)} its start and the chart is strong: your
@@ -43,7 +46,7 @@ export function MoneyTrio({ params }: { params: PlatformInfo["params"] | null })
           {s.burnPct}% to the <Term k="buybackPool" split={s} /> and {s.backerPct}% to your backers.
         </>,
         <>
-          You pay the {s.launchFeePct}% launch fee and the {createFee}create fee. Nothing else.
+          You pay the {createFee}create fee; the {s.launchFeePct}% launch fee comes out of the raise. Nothing else.
         </>,
       ],
       href: "/docs/for-creators",
@@ -56,6 +59,7 @@ export function MoneyTrio({ params }: { params: PlatformInfo["params"] | null })
         <>
           {s.burnPct}% of every pump.fun creator fee lands in the <Term k="buybackPool" split={s} />, which buys the Holdfast token and
           burns it.
+          {params?.buybackMint === BUYBACK_MINT_UNSET ? " The token isn’t live yet; the pools keep accruing until it is." : null}
         </>,
         <>Holdfast itself earns only the {s.launchFeePct}% launch fee and the create fee.</>,
         <>No price promises: what the token does is up to the market.</>,

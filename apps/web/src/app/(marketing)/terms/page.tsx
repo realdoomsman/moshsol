@@ -5,6 +5,7 @@ import { LEGAL_CONTACT, LegalPage } from "@/components/legal/legal-page";
 export const metadata: Metadata = {
   title: "Terms",
   description: "Terms of use for Holdfast: custodial Google wallets and their risks, the platform multisig's power over vault funds, no warranty.",
+  alternates: { canonical: "/terms" },
 };
 
 export default function TermsPage() {

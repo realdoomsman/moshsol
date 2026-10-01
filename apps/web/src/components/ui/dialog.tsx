@@ -1,7 +1,8 @@
 "use client";
 
 import { X } from "lucide-react";
-import { AnimatePresence, motion, useDragControls } from "motion/react";
+import { AnimatePresence, useDragControls } from "motion/react";
+import * as m from "motion/react-m";
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useMediaQuery, useMounted } from "@/lib/hooks";
@@ -109,7 +110,7 @@ function Overlay({ presentation, ...p }: OverlayProps & { presentation: Presenta
 
   return (
     <div className="fixed inset-0 z-[70]">
-      <motion.div
+      <m.div
         aria-hidden
         className="absolute inset-0 bg-scrim"
         initial={{ opacity: 0 }}
@@ -124,7 +125,7 @@ function Overlay({ presentation, ...p }: OverlayProps & { presentation: Presenta
         )}
         style={!sheet && !full && p.top ? { paddingTop: p.top } : undefined}
       >
-        <motion.div
+        <m.div
           ref={panel}
           role="dialog"
           aria-modal="true"
@@ -165,7 +166,7 @@ function Overlay({ presentation, ...p }: OverlayProps & { presentation: Presenta
           {titleRow}
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{p.children}</div>
           {p.footer ? <div className="shrink-0 border-t border-line px-5 py-4">{p.footer}</div> : null}
-        </motion.div>
+        </m.div>
       </div>
     </div>
   );

@@ -4,20 +4,25 @@ import { lamportsToSol, shortAddr } from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { ArrowUpRight, Briefcase, ChevronDown, Copy, Droplets, KeyRound, LogOut, Repeat, Send, UserRound } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { useSolBalance } from "@/lib/chain";
 import { explorerAddress } from "@/lib/explorer";
 import { fmtSolValue } from "@/lib/format";
 import { EXPORT_AFTER_REAUTH_KEY, GoogleWalletAdapter } from "@/lib/google-wallet";
 import { useMounted } from "@/lib/hooks";
+import { useSolBalance } from "@/lib/sol-balance";
 import { Button } from "../ui/button";
 import { cn } from "../ui/cn";
 import { Identicon } from "../ui/identicon";
 import { MenuItem, MenuSeparator, Popover } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
-import { ExportKeyDialog, WithdrawDialog } from "./account-dialogs";
 import { AIRDROP_SOL, useAirdrop } from "./faucet";
+
+// The Google wallet's withdraw/export dialogs (SPL Token instructions, the transaction pipeline) load
+// once a Google wallet is connected, not with every page's header.
+const ExportKeyDialog = dynamic(() => import("./account-dialogs").then((mod) => mod.ExportKeyDialog));
+const WithdrawDialog = dynamic(() => import("./account-dialogs").then((mod) => mod.WithdrawDialog));
 
 const ICON = { className: "size-4", strokeWidth: 1.5, "aria-hidden": true } as const;
 
@@ -26,7 +31,8 @@ const ICON = { className: "size-4", strokeWidth: 1.5, "aria-hidden": true } as c
  * Connected: identicon, SOL balance, short address, chevron → menu with balance, profile,
  * portfolio, copy, explorer, test SOL (devnet/localnet), change wallet, disconnect. A Google
  * (custodial) wallet also shows its account email, "Withdraw" and "Export private key", and
- * disconnecting signs out. Below 768px the connected button shows only the identicon.
+ * disconnecting signs out. The connected button grows with the header: identicon + chevron from
+ * 768px (identicon only below), the SOL balance from 1024px, the short address from 1280px.
  */
 export function WalletButton() {
   const mounted = useMounted();
@@ -74,8 +80,8 @@ export function WalletButton() {
             )}
           >
             <Identicon address={address} size={20} />
-            <span className="num hidden whitespace-nowrap md:inline">{sol ?? <Spinner className="text-ink-3" />}</span>
-            <span className="mono hidden text-ink-2 lg:inline">{shortAddr(address)}</span>
+            <span className="num hidden whitespace-nowrap lg:inline">{sol ?? <Spinner className="text-ink-3" />}</span>
+            <span className="mono hidden text-ink-2 xl:inline">{shortAddr(address)}</span>
             <ChevronDown
               className={cn(
                 "hidden size-4 text-ink-3 transition-transform duration-(--dur-2) md:block",

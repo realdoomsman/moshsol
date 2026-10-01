@@ -5,6 +5,7 @@ import { LEGAL_CONTACT, LegalPage } from "@/components/legal/legal-page";
 export const metadata: Metadata = {
   title: "Privacy",
   description: "What Holdfast stores about you: your Google account id and email if you sign in with Google, your custodial wallet's encrypted key, sessions and an audit log.",
+  alternates: { canonical: "/privacy" },
 };
 
 export default function PrivacyPage() {

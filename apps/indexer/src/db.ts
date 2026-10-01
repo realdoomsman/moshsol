@@ -141,6 +141,12 @@ export type TradeAggDbRow = {
   pump_lamports: number;
 };
 
+/** The rolling-window part of `TradeAggDbRow`. */
+type TradeWindowAggDbRow = Pick<TradeAggDbRow, "launch" | "v24" | "v1" | "t1" | "buyers24" | "sellers24">;
+/** A `trade_totals` row: the all-time part of `TradeAggDbRow`, kept up to date by `insertTrade`. */
+type TradeTotalsDbRow = Pick<TradeAggDbRow, "launch" | "last_ts" | "pump_n" | "pump_lamports">;
+const NO_TRADES: Omit<TradeWindowAggDbRow, "launch"> = { v24: 0, v1: 0, t1: 0, buyers24: 0, sellers24: 0 };
+
 /** Per-launch vault payouts/withdrawals from events (lamports and base units as decimal strings). */
 export type VaultEventAggDbRow = {
   launch: string;
@@ -367,6 +373,13 @@ CREATE TABLE IF NOT EXISTS trades (${TRADES_COLUMNS});
 CREATE INDEX IF NOT EXISTS trades_launch ON trades(launch, slot);
 CREATE INDEX IF NOT EXISTS trades_time ON trades(timestamp);
 CREATE INDEX IF NOT EXISTS trades_agent ON trades(is_agent, slot);
+CREATE INDEX IF NOT EXISTS trades_launch_time ON trades(launch, timestamp);
+CREATE TABLE IF NOT EXISTS trade_totals (
+  launch TEXT PRIMARY KEY,
+  last_ts INTEGER NOT NULL,
+  pump_n INTEGER NOT NULL,
+  pump_lamports INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS deposits (
   signature TEXT NOT NULL,
   event_index INTEGER NOT NULL,
@@ -382,7 +395,8 @@ CREATE INDEX IF NOT EXISTS deposits_launch ON deposits(launch, slot);
 CREATE INDEX IF NOT EXISTS deposits_backer ON deposits(backer, launch);
 CREATE INDEX IF NOT EXISTS trades_trader ON trades(trader, timestamp);
 CREATE INDEX IF NOT EXISTS events_actor ON events(actor, timestamp);
-CREATE INDEX IF NOT EXISTS events_launch ON events(launch);
+CREATE INDEX IF NOT EXISTS events_launch_slot ON events(launch, slot);
+CREATE INDEX IF NOT EXISTS events_launch_type ON events(launch, type, slot);
 CREATE INDEX IF NOT EXISTS events_type ON events(type, launch);
 CREATE TABLE IF NOT EXISTS comments (${COMMENTS_COLUMNS});
 CREATE INDEX IF NOT EXISTS comments_launch ON comments(launch, id);
@@ -416,9 +430,10 @@ CREATE TABLE IF NOT EXISTS uploaded_images (
  * Schema version (`PRAGMA user_version`). 0 = the first deployment (`launches.mint` UNIQUE, comments keyed by
  * mint, no `events.ref`); 1 = pump launches (several raising launches share the default mint, so the mint
  * index is partial, comments are keyed by launch address and launches carry a venue); 2 = public pump.fun trades
- * (`trades.source`; the program-only columns `ema_sol`, `vault_sol`, `vault_tokens` are nullable).
+ * (`trades.source`; the program-only columns `ema_sol`, `vault_sol`, `vault_tokens` are nullable); 3 = read-path
+ * indexes and `trade_totals` (per-launch all-time trade totals kept on insert, so summaries never scan all trades).
  */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 /**
  * v0 → v1. SQLite can't drop an inline UNIQUE, so `launches` and `comments` are rebuilt (copy, drop,
@@ -458,11 +473,26 @@ function migrateToV2(db: DatabaseSync): void {
 }
 
 /**
+ * v2 → v3 (after `SCHEMA` created the new indexes and `trade_totals`): `events(launch)` is covered by
+ * `events_launch_slot`, and `trade_totals` is filled from the trades so far (`insertTrade` keeps it from now on).
+ */
+function migrateToV3(db: DatabaseSync): void {
+  db.exec(`
+    DROP INDEX IF EXISTS events_launch;
+    DELETE FROM trade_totals;
+    INSERT INTO trade_totals (launch, last_ts, pump_n, pump_lamports)
+      SELECT launch, MAX(timestamp), COUNT(CASE WHEN source = 'pump' THEN 1 END),
+        COALESCE(SUM(CASE WHEN source = 'pump' THEN CAST(sol_amount AS INTEGER) END), 0)
+      FROM trades GROUP BY launch;
+  `);
+}
+
+/**
  * Wiped on a chain reset: everything keyed by chain state, including comments (their launches are gone).
  * `profiles` (wallet-keyed), `signed_messages` (replay guard, pruned by age) and the Arweave upload
  * ledger (`upload_spend`, `uploaded_images`) survive.
  */
-const DATA_TABLES = ["txs", "launches", "events", "trades", "deposits", "sync_state", "comments"] as const;
+const DATA_TABLES = ["txs", "launches", "events", "trades", "trade_totals", "deposits", "sync_state", "comments"] as const;
 
 const LAUNCH_NAME = "COALESCE(l.meta_name, l.onchain_name)";
 const LAUNCH_SYMBOL = "COALESCE(l.meta_symbol, l.onchain_symbol)";
@@ -475,16 +505,14 @@ const ACTIVITY_SELECT = `
     e.sol_amount, e.token_amount, e.ref, l.address AS launch, l.venue AS venue, l.mint AS mint,
     ${LAUNCH_NAME} AS name, ${LAUNCH_SYMBOL} AS symbol, l.image AS image
   FROM events e JOIN launches l ON l.address = e.launch`;
-const TRADE_AGG = `
+/** Rolling 1h/24h trade aggregates; callers bound the scan with `timestamp >= :day` (the all-time part is `trade_totals`). */
+const TRADE_WINDOW_AGG = `
   SELECT launch,
-    COALESCE(SUM(CASE WHEN timestamp >= :day THEN sol END), 0) AS v24,
+    COALESCE(SUM(sol), 0) AS v24,
     COALESCE(SUM(CASE WHEN timestamp >= :hour THEN sol END), 0) AS v1,
     COUNT(CASE WHEN timestamp >= :hour THEN 1 END) AS t1,
-    COUNT(DISTINCT CASE WHEN timestamp >= :day AND is_agent = 0 AND is_buy = 1 THEN trader END) AS buyers24,
-    COUNT(DISTINCT CASE WHEN timestamp >= :day AND is_agent = 0 AND is_buy = 0 THEN trader END) AS sellers24,
-    MAX(timestamp) AS last_ts,
-    COUNT(CASE WHEN source = 'pump' THEN 1 END) AS pump_n,
-    COALESCE(SUM(CASE WHEN source = 'pump' THEN CAST(sol_amount AS INTEGER) END), 0) AS pump_lamports
+    COUNT(DISTINCT CASE WHEN is_agent = 0 AND is_buy = 1 THEN trader END) AS buyers24,
+    COUNT(DISTINCT CASE WHEN is_agent = 0 AND is_buy = 0 THEN trader END) AS sellers24
   FROM trades`;
 const VAULT_EVENT_AGG = `
   SELECT launch,
@@ -549,6 +577,10 @@ const SQL = {
       token_amount, fee, price_sol, ema_sol, vault_sol, vault_tokens, real_sol, token_reserve, sol)
     VALUES (:signature, :event_index, :slot, :timestamp, :launch, :trader, :is_buy, :is_agent, :source, :sol_amount,
       :token_amount, :fee, :price_sol, :ema_sol, :vault_sol, :vault_tokens, :real_sol, :token_reserve, :sol)`,
+  addTradeTotal: `
+    INSERT INTO trade_totals (launch, last_ts, pump_n, pump_lamports) VALUES (:launch, :ts, :pump_n, CAST(:lamports AS INTEGER))
+    ON CONFLICT(launch) DO UPDATE SET last_ts = MAX(last_ts, excluded.last_ts), pump_n = pump_n + excluded.pump_n,
+      pump_lamports = pump_lamports + excluded.pump_lamports`,
   insertDeposit: `
     INSERT OR IGNORE INTO deposits (signature, event_index, slot, timestamp, launch, backer, amount, raised)
     VALUES (:signature, :event_index, :slot, :timestamp, :launch, :backer, :amount, :raised)`,
@@ -571,16 +603,20 @@ const SQL = {
   setMetaError:
     "UPDATE launches SET meta_status = 'error', meta_attempts = meta_attempts + 1, meta_next_at = ? WHERE address = ?",
   setHolders: "UPDATE launches SET holders = ?, top_holder_pct = ?, holders_at = ? WHERE address = ?",
-  tradeAggAll: `${TRADE_AGG} GROUP BY launch`,
-  tradeAggOne: `${TRADE_AGG} WHERE launch = :launch`,
+  // Without ANALYZE statistics SQLite would walk every trade through `trades_launch` to group by launch.
+  tradeWindowAggAll: `${TRADE_WINDOW_AGG} INDEXED BY trades_time WHERE timestamp >= :day GROUP BY launch`,
+  tradeWindowAggOne: `${TRADE_WINDOW_AGG} WHERE launch = :launch AND timestamp >= :day`,
+  tradeTotalsAll: "SELECT launch, last_ts, pump_n, pump_lamports FROM trade_totals",
+  tradeTotalsOne: "SELECT launch, last_ts, pump_n, pump_lamports FROM trade_totals WHERE launch = ?",
   vaultEventAggAll: `${VAULT_EVENT_AGG} GROUP BY launch`,
   vaultEventAggOne: `${VAULT_EVENT_AGG} AND launch = ? GROUP BY launch`,
   pumpEventAggAll: `${PUMP_EVENT_AGG} GROUP BY launch`,
   pumpEventAggOne: `${PUMP_EVENT_AGG} AND launch = ? GROUP BY launch`,
-  priceAt: "SELECT price_sol FROM trades WHERE launch = ? AND timestamp <= ? ORDER BY slot DESC, rowid DESC LIMIT 1",
+  // By time (`trades_launch_time` seek); block times never decrease with the slot, so this is the last trade by slot too.
+  priceAt: "SELECT price_sol FROM trades WHERE launch = ? AND timestamp <= ? ORDER BY timestamp DESC, slot DESC, rowid DESC LIMIT 1",
   firstPrice: "SELECT price_sol FROM trades WHERE launch = ? ORDER BY slot ASC, rowid ASC LIMIT 1",
   trades: `
-    SELECT * FROM trades
+    SELECT * FROM trades INDEXED BY trades_launch
     WHERE launch = :launch AND timestamp < :before AND (:agent = 0 OR is_agent = 1)
       AND (:is_buy IS NULL OR is_buy = :is_buy) AND (:min_sol IS NULL OR sol >= :min_sol)
       AND (:trader IS NULL OR trader = :trader)
@@ -595,12 +631,14 @@ const SQL = {
   activity: `${ACTIVITY_SELECT} ORDER BY e.slot DESC, e.rowid DESC LIMIT ?`,
   activityOne: `${ACTIVITY_SELECT} WHERE e.signature = ? AND e.event_index = ?`,
   launchActivity: `${ACTIVITY_SELECT}
-    WHERE e.launch = :launch AND e.timestamp < :before AND (:type IS NULL OR e.type = :type)
-    ORDER BY e.slot DESC, e.rowid DESC LIMIT :limit`,
+    WHERE e.launch = :launch AND e.timestamp < :before ORDER BY e.slot DESC, e.rowid DESC LIMIT :limit`,
+  launchActivityOfType: `${ACTIVITY_SELECT}
+    WHERE e.launch = :launch AND e.type = :type AND e.timestamp < :before ORDER BY e.slot DESC, e.rowid DESC LIMIT :limit`,
   counts: `
     SELECT (SELECT COUNT(*) FROM txs) AS txs, (SELECT COUNT(*) FROM events) AS events,
       (SELECT COUNT(*) FROM trades) AS trades, (SELECT COUNT(*) FROM deposits) AS deposits,
       (SELECT COUNT(*) FROM launches) AS launches`,
+  totalChanges: "SELECT total_changes() AS n",
 
   // ---------------- social ----------------
   insertComment: `
@@ -671,7 +709,7 @@ const SQL = {
   launchWindowAgg: `
     SELECT launch, COALESCE(SUM(CAST(fee AS INTEGER)), 0) AS fees, COALESCE(SUM(sol), 0) AS volume, COUNT(*) AS trades,
       COUNT(DISTINCT CASE WHEN is_agent = 0 THEN trader END) AS traders
-    FROM trades WHERE timestamp >= ? GROUP BY launch`,
+    FROM trades INDEXED BY trades_time WHERE timestamp >= ? GROUP BY launch`,
   depositsByBacker: "SELECT backer, launch, SUM(CAST(amount AS INTEGER)) AS amount FROM deposits GROUP BY backer, launch",
   launchBackers: "SELECT backer, SUM(CAST(amount AS INTEGER)) AS amount FROM deposits WHERE launch = ? GROUP BY backer",
   launchBackerEvents: `
@@ -736,6 +774,7 @@ export class Store {
       if (version < 1 && hasTable("launches")) migrateToV1(this.db);
       if (version < 2 && hasTable("trades")) migrateToV2(this.db);
       this.db.exec(SCHEMA);
+      if (version < 3) migrateToV3(this.db);
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
   }
@@ -794,6 +833,14 @@ export class Store {
     return row<TableCounts>(this.stmts.counts)!;
   }
 
+  /**
+   * Rows inserted, updated or deleted through this connection since it opened (SQLite `total_changes()`). Every
+   * write in the process goes through this store, so the number moves on each one: derived read caches key on it.
+   */
+  dataVersion(): number {
+    return row<{ n: number }>(this.stmts.totalChanges)!.n;
+  }
+
   // ---------------- event writes ----------------
 
   /** Insert-or-refresh from a `launchCreated` event (keeps any existing snapshot/metadata). */
@@ -811,8 +858,11 @@ export class Store {
     return this.stmts.insertEvent.run(e).changes > 0;
   }
 
+  /** Idempotent on signature + event index; only a new row moves the launch's `trade_totals`. */
   insertTrade(t: TradeDbRow): void {
-    this.stmts.insertTrade.run(t);
+    if (this.stmts.insertTrade.run(t).changes === 0) return;
+    const pump = t.source === "pump";
+    this.stmts.addTradeTotal.run({ launch: t.launch, ts: t.timestamp, pump_n: pump ? 1 : 0, lamports: pump ? t.sol_amount : "0" });
   }
 
   insertDeposit(d: DepositDbRow): void {
@@ -894,18 +944,23 @@ export class Store {
 
   // ---------------- derived reads ----------------
 
+  /** Every launch with trades: all-time totals plus its rolling windows (zero when it didn't trade in the last 24 h). */
   tradeAggregates(nowSecs: number): Map<string, TradeAggDbRow> {
-    const out = new Map<string, TradeAggDbRow>();
-    for (const r of rows<TradeAggDbRow>(this.stmts.tradeAggAll, { day: nowSecs - 86_400, hour: nowSecs - 3_600 })) {
-      out.set(r.launch, r);
+    const windows = new Map<string, TradeWindowAggDbRow>();
+    for (const w of rows<TradeWindowAggDbRow>(this.stmts.tradeWindowAggAll, { day: nowSecs - 86_400, hour: nowSecs - 3_600 })) {
+      windows.set(w.launch, w);
     }
+    const out = new Map<string, TradeAggDbRow>();
+    for (const t of rows<TradeTotalsDbRow>(this.stmts.tradeTotalsAll)) out.set(t.launch, { ...NO_TRADES, ...windows.get(t.launch), ...t });
     return out;
   }
 
   tradeAggregate(launch: string, nowSecs: number): TradeAggDbRow | undefined {
-    const r = row<TradeAggDbRow>(this.stmts.tradeAggOne, { launch, day: nowSecs - 86_400, hour: nowSecs - 3_600 });
-    // Aggregates without GROUP BY always yield one row; launch is null when there are no trades.
-    return r && r.launch !== null ? r : undefined;
+    const totals = row<TradeTotalsDbRow>(this.stmts.tradeTotalsOne, [launch]);
+    if (!totals) return undefined;
+    // Aggregates without GROUP BY always yield one row (zeros, launch null, when nothing traded in the window).
+    const w = row<TradeWindowAggDbRow>(this.stmts.tradeWindowAggOne, { launch, day: nowSecs - 86_400, hour: nowSecs - 3_600 })!;
+    return { ...w, ...totals };
   }
 
   vaultEventAggregates(): Map<string, VaultEventAggDbRow> {
@@ -969,9 +1024,11 @@ export class Store {
     return row<ActivityDbRow>(this.stmts.activityOne, [signature, eventIndex]);
   }
 
-  /** One launch's activity, newest first; `type` narrows to one event type. */
+  /** One launch's activity, newest first; `type` narrows to one event type (its own statement, so each gets its index). */
   launchActivity(launch: string, type: ActivityType | null, beforeTs: number, limit: number): ActivityDbRow[] {
-    return rows<ActivityDbRow>(this.stmts.launchActivity, { launch, type, before: beforeTs, limit });
+    return type === null
+      ? rows<ActivityDbRow>(this.stmts.launchActivity, { launch, before: beforeTs, limit })
+      : rows<ActivityDbRow>(this.stmts.launchActivityOfType, { launch, type, before: beforeTs, limit });
   }
 
   // ---------------- comments ----------------

@@ -33,7 +33,7 @@ function DistributionBar({ launch: l }: { launch: LaunchSummary }) {
     { label: "Vault", pct: h.vaultPct, className: "bg-accent", known: true },
     { label: "Top 10", pct: h.top10Pct, className: "bg-ink-2", known: h.loaded },
     { label: "Others", pct: others, className: "bg-ink-3", known: h.loaded },
-    { label: "Curve", pct: h.curvePct, className: "bg-line-2", known: true },
+    { label: l.pump.graduated ? "Pool" : "Curve", pct: h.curvePct, className: "bg-line-2", known: l.venue !== "pump" || h.loaded },
   ];
   return (
     <div className="grid gap-2">
@@ -123,12 +123,13 @@ export function HoldersTab({
                   <TD>
                     <span className="inline-flex items-center gap-2">
                       {h.label ? (
-                        <Address address={h.owner} label={h.label === "vault" ? "Holdfast vault" : "Bonding curve"} />
+                        <Address address={h.owner} label={h.label === "vault" ? "Holdfast vault" : h.label === "pool" ? "PumpSwap pool" : "Bonding curve"} />
                       ) : (
                         <WalletLink wallet={h.owner} onFilter={() => onFilterMaker(h.owner)} />
                       )}
                       {h.label === "vault" ? <Chip tone="accent">Vault</Chip> : null}
                       {h.label === "curve" ? <Chip tone="muted">Curve</Chip> : null}
+                      {h.label === "pool" ? <Chip tone="muted">Pool</Chip> : null}
                       {h.owner === roles.creator ? <RoleChip role="creator" /> : null}
                       {share !== undefined ? <RoleChip role="backer" detail={shareDetail(share)} /> : null}
                       {h.owner === me ? <Chip tone="ink">You</Chip> : null}

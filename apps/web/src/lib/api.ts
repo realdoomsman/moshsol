@@ -37,8 +37,22 @@ export class ApiError extends Error {
  * falls back to loading that data in the browser.
  */
 const SERVER_TIMEOUT_MS = 1_500;
+/**
+ * Server renders share identical plain GETs (public data: no headers, body or credentials) for this
+ * long from the moment one is sent, in flight included: concurrent and back-to-back renders cost the
+ * indexer/agent one request per URL per window, not one per render (and the indexer's per-IP budget
+ * counts all SSR as one client). Live data stays fresh: browsers then follow the websocket.
+ */
+const SERVER_SHARE_MS = 1_000;
+/** URLs remembered at once; expired entries go first, then the oldest. */
+const SERVER_SHARE_MAX = 500;
 
-export async function request<T>(base: string, path: string, init?: RequestInit): Promise<T> {
+/** A finished response, read whole so it can be shared; every caller parses its own copy of `text`. */
+type RawResponse = { ok: boolean; status: number; statusText: string; text: string };
+
+const shared = new Map<string, { at: number; res: Promise<RawResponse> }>();
+
+async function fetchRaw(base: string, path: string, init?: RequestInit): Promise<RawResponse> {
   let res: Response;
   try {
     res = await fetch(`${base}${path}`, {
@@ -49,11 +63,42 @@ export async function request<T>(base: string, path: string, init?: RequestInit)
   } catch {
     throw new ApiError(0, `Can't reach ${base}`);
   }
+  const text = await res.text().catch(() => "");
+  return { ok: res.ok, status: res.status, statusText: res.statusText, text };
+}
+
+/** `fetchRaw`, shared between server renders for `SERVER_SHARE_MS` when the request is a plain GET. */
+function load(base: string, path: string, init?: RequestInit): Promise<RawResponse> {
+  if (typeof window !== "undefined" || init !== undefined) return fetchRaw(base, path, init);
+  const key = `${base}${path}`;
+  const now = Date.now();
+  const hit = shared.get(key);
+  if (hit && now - hit.at < SERVER_SHARE_MS) return hit.res;
+  if (shared.size >= SERVER_SHARE_MAX) {
+    for (const [k, v] of shared) if (now - v.at >= SERVER_SHARE_MS) shared.delete(k);
+    if (shared.size >= SERVER_SHARE_MAX) shared.delete(shared.keys().next().value!);
+  }
+  const res = fetchRaw(base, path);
+  shared.delete(key);
+  shared.set(key, { at: now, res });
+  return res;
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+export async function request<T>(base: string, path: string, init?: RequestInit): Promise<T> {
+  const res = await load(base, path, init);
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    const body = parseJson(res.text) as { error?: string } | null;
     throw new ApiError(res.status, body?.error ?? `${res.status} ${res.statusText}`);
   }
-  return (await res.json()) as T;
+  return JSON.parse(res.text) as T;
 }
 
 export type LaunchFilter = "raising" | "live" | "refunding" | "woundDown" | "all";
@@ -77,16 +122,8 @@ export interface UploadInput {
  * finished); an unreachable indexer or a non-health body (429 `{ error }`, a proxy page) throws.
  */
 async function health(): Promise<IndexerHealth> {
-  let res: Response;
-  try {
-    res = await fetch(`${INDEXER_URL}/api/health`, {
-      cache: "no-store",
-      signal: typeof window === "undefined" ? AbortSignal.timeout(SERVER_TIMEOUT_MS) : undefined,
-    });
-  } catch {
-    throw new ApiError(0, `Can't reach ${INDEXER_URL}`);
-  }
-  const body = (await res.json().catch(() => null)) as (Partial<IndexerHealth> & { error?: string }) | null;
+  const res = await load(INDEXER_URL, "/api/health");
+  const body = parseJson(res.text) as (Partial<IndexerHealth> & { error?: string }) | null;
   if (!body || typeof body.ok !== "boolean" || !("slot" in body)) {
     throw new ApiError(res.status, body?.error ?? `${res.status} ${res.statusText}`);
   }
@@ -147,6 +184,9 @@ export const api = {
     }),
   candles: (id: string, tf: Timeframe) =>
     request<{ candles: Candle[] }>(INDEXER_URL, `/api/launches/${id}/candles?tf=${tf}`),
+  /** Several launches' candles in one request (≤ 50 ids), keyed by the ids as given; unknown ids are left out. */
+  candlesBatch: (ids: readonly string[], tf: Timeframe) =>
+    request<{ candles: Record<string, Candle[]> }>(INDEXER_URL, `/api/candles?tf=${tf}&ids=${ids.join(",")}`),
   backers: (id: string) => request<{ backers: BackerRow[] }>(INDEXER_URL, `/api/launches/${id}/backers`),
   /** Newest first; `before` = unix seconds (exclusive). */
   deposits: (id: string, p: { limit: number; before?: number }) => {

@@ -39,3 +39,29 @@ export class TtlCache<V> {
     this.hits.set(key, { value, at: this.now() });
   }
 }
+
+/**
+ * Synchronous values derived from the database, one slot per key: a value is reused while `version()` is unchanged
+ * and it is younger than `ttlMs`, else recomputed. `version` moves on every write (`Store.dataVersion`), so readers
+ * see a write at once; `ttlMs` only bounds the drift of values that also depend on the clock (rolling 1h/24h windows).
+ * Keys must come from a bounded set (fixed names, known launches × timeframes): slots are never evicted.
+ */
+export class ReadCache {
+  private readonly slots = new Map<string, { version: number; at: number; value: unknown }>();
+
+  constructor(
+    private readonly version: () => number,
+    private readonly ttlMs: number,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  get<V>(key: string, compute: () => V): V {
+    const version = this.version();
+    const at = this.now();
+    const hit = this.slots.get(key);
+    if (hit && hit.version === version && at - hit.at < this.ttlMs) return hit.value as V;
+    const value = compute();
+    this.slots.set(key, { version, at, value });
+    return value;
+  }
+}

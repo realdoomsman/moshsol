@@ -1,29 +1,22 @@
 "use client";
 
-import { fmtPrice, type AgentZones } from "@holdfast/sdk";
-import {
-  AreaSeries,
-  CandlestickSeries,
-  ColorType,
-  CrosshairMode,
-  HistogramSeries,
-  LineSeries,
-  LineStyle,
+import { compact, fmtPrice, type AgentZones } from "@holdfast/sdk";
+import type {
+  AutoscaleInfo,
+  IChartApi,
+  IPriceLine,
+  IPrimitivePaneRenderer,
+  IPrimitivePaneView,
+  ISeriesApi,
+  ISeriesPrimitive,
+  LineWidth,
+  PrimitivePaneViewZOrder,
+  SeriesAttachedParameter,
   TickMarkType,
-  createChart,
-  type AutoscaleInfo,
-  type IChartApi,
-  type IPriceLine,
-  type IPrimitivePaneRenderer,
-  type IPrimitivePaneView,
-  type ISeriesApi,
-  type ISeriesPrimitive,
-  type LineWidth,
-  type PrimitivePaneViewZOrder,
-  type SeriesAttachedParameter,
-  type Time,
-  type UTCTimestamp,
+  Time,
+  UTCTimestamp,
 } from "lightweight-charts";
+import type * as Charts from "lightweight-charts";
 import { ChartCandlestick, ChartLine, Maximize2, Minimize2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Timeframe } from "@/lib/api";
@@ -60,6 +53,27 @@ const SUPPLY = 1_000_000_000;
 /** What the y-axis measures: market cap in USD (default while a SOL price exists), market cap in SOL, or token price in SOL. */
 type Unit = "usd" | "mcap" | "price";
 const fmtSolMcap = (v: number) => `${fmtSolValue(v)} SOL`;
+
+/**
+ * Price-axis labels: the unit's own format, with more decimals while it would print neighbouring ticks
+ * alike (a narrow range read "$3.4K" four times). Token prices already keep three significant digits.
+ */
+function distinctTicks(unit: Unit, fmt: (v: number) => string) {
+  return (values: number[]): string[] => {
+    const labels = values.map(fmt);
+    if (unit === "price" || new Set(labels).size === labels.length) return labels;
+    for (let digits = 1; digits <= 6; digits++) {
+      const finer = values.map((v) => {
+        const n = Math.abs(v) >= 1_000 ? compact(Math.abs(v), digits) : Math.abs(v).toFixed(digits);
+        const sign = v < 0 ? "-" : "";
+        return unit === "usd" ? `${sign}$${n}` : `${sign}${n} SOL`;
+      });
+      if (new Set(finer).size === finer.length) return finer;
+    }
+    return labels;
+  };
+}
+
 type ChartType = "auto" | "line" | "candles";
 interface Overlays {
   band: boolean;
@@ -265,6 +279,8 @@ class AgentDiamonds extends CanvasOverlay {
 }
 
 interface ChartRefs {
+  /** The library module, loaded with the chart. */
+  lib: typeof Charts;
   chart: IChartApi;
   palette: Palette;
   candles: ISeriesApi<"Candlestick">;
@@ -291,11 +307,11 @@ const dayMonth = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeri
 const monthOnly = new Intl.DateTimeFormat("en-US", { month: "short" });
 
 /** Axis ticks in the viewer's local time (the library would otherwise print UTC). */
-function tickLabel(time: Time, type: TickMarkType): string {
+function tickLabel(time: Time, type: TickMarkType, marks: typeof TickMarkType): string {
   const d = new Date((time as number) * 1000);
-  if (type === TickMarkType.Year) return String(d.getFullYear());
-  if (type === TickMarkType.Month) return monthOnly.format(d);
-  if (type === TickMarkType.DayOfMonth) return dayMonth.format(d);
+  if (type === marks.Year) return String(d.getFullYear());
+  if (type === marks.Month) return monthOnly.format(d);
+  if (type === marks.DayOfMonth) return dayMonth.format(d);
   return clock.format(d);
 }
 
@@ -403,101 +419,109 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
   const type: Exclude<ChartType, "auto"> = typeChoice === "auto" ? (barCount < LINE_BELOW ? "line" : "candles") : typeChoice;
   const band = l.terms.agentBandBps / 10_000;
 
-  // Create the chart once.
+  // Create the chart once the library has loaded: a dynamic import on purpose, so its ~50 KB (gzip) stays
+  // out of the launch page's entry chunks; the panel, legend and controls render without it.
   useEffect(() => {
-    if (!host.current) return;
-    const p = readPalette();
-    const chart = createChart(host.current, {
-      autoSize: true,
-      layout: {
-        background: { type: ColorType.Solid, color: "transparent" },
-        textColor: p.ink3,
-        fontFamily: p.mono,
-        fontSize: 11,
-        attributionLogo: false,
-      },
-      localization: { timeFormatter: (t: Time) => dateTime.format(new Date((t as number) * 1000)) },
-      // §3.4 rule 6: horizontal grid only, in `line`.
-      grid: { vertLines: { visible: false }, horzLines: { color: p.line } },
-      // `entireTextOnly` drops a tick label rather than clip it at the pane's top or bottom edge.
-      rightPriceScale: { borderColor: p.line, minimumWidth: 72, entireTextOnly: true, scaleMargins: { top: 0.18, bottom: 0.18 } },
-      timeScale: {
-        borderColor: p.line,
-        timeVisible: true,
-        secondsVisible: false,
-        rightOffset: 6,
-        minBarSpacing: 3,
-        maxBarSpacing: 22,
-        tickMarkFormatter: tickLabel,
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: { color: p.ink3, width: 1, style: LineStyle.Dashed, labelBackgroundColor: p.raised },
-        horzLine: { color: p.ink3, width: 1, style: LineStyle.Dashed, labelBackgroundColor: p.raised },
-      },
-      handleScale: { axisPressedMouseMove: true },
+    let disposed = false;
+    let created: IChartApi | null = null;
+    void import("lightweight-charts").then((lib) => {
+      if (disposed || !host.current) return;
+      const p = readPalette();
+      const chart = lib.createChart(host.current, {
+        autoSize: true,
+        layout: {
+          background: { type: lib.ColorType.Solid, color: "transparent" },
+          textColor: p.ink3,
+          fontFamily: p.mono,
+          fontSize: 11,
+          attributionLogo: false,
+        },
+        localization: { timeFormatter: (t: Time) => dateTime.format(new Date((t as number) * 1000)) },
+        // §3.4 rule 6: horizontal grid only, in `line`.
+        grid: { vertLines: { visible: false }, horzLines: { color: p.line } },
+        // `entireTextOnly` drops a tick label rather than clip it at the pane's top or bottom edge.
+        rightPriceScale: { borderColor: p.line, minimumWidth: 72, entireTextOnly: true, scaleMargins: { top: 0.18, bottom: 0.18 } },
+        timeScale: {
+          borderColor: p.line,
+          timeVisible: true,
+          secondsVisible: false,
+          rightOffset: 6,
+          minBarSpacing: 3,
+          maxBarSpacing: 22,
+          tickMarkFormatter: (time: Time, type: TickMarkType) => tickLabel(time, type, lib.TickMarkType),
+        },
+        crosshair: {
+          mode: lib.CrosshairMode.Normal,
+          vertLine: { color: p.ink3, width: 1, style: lib.LineStyle.Dashed, labelBackgroundColor: p.raised },
+          horzLine: { color: p.ink3, width: 1, style: lib.LineStyle.Dashed, labelBackgroundColor: p.raised },
+        },
+        handleScale: { axisPressedMouseMove: true },
+      });
+      const candleSeries = chart.addSeries(lib.CandlestickSeries, {
+        upColor: p.up,
+        downColor: p.down,
+        wickUpColor: p.up,
+        wickDownColor: p.down,
+        borderVisible: false,
+        priceLineStyle: lib.LineStyle.Dotted,
+        // Keep at least ±6% of vertical range so flat markets (one candle, bundle-only) stay legible.
+        autoscaleInfoProvider: minSpan(0.12),
+      });
+      const area = chart.addSeries(lib.AreaSeries, {
+        // Line mode is `ink` at 1.75px (§3.4 rule 6); the canvas takes fractional widths.
+        lineColor: p.ink,
+        lineWidth: 1.75 as LineWidth,
+        // The fill fades from the line's highest point to the bottom of the pane, not across the whole pane.
+        relativeGradient: true,
+        priceLineStyle: lib.LineStyle.Dotted,
+        crosshairMarkerRadius: 4,
+        crosshairMarkerBorderWidth: 2,
+        crosshairMarkerBorderColor: p.surface,
+        crosshairMarkerBackgroundColor: p.ink,
+        visible: false,
+        autoscaleInfoProvider: minSpan(0.04),
+      });
+      const quiet = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false } as const;
+      const ema = chart.addSeries(lib.LineSeries, { ...quiet, color: p.ink3, lineWidth: 1, lineStyle: lib.LineStyle.SparseDotted });
+      // The band's edges are drawn by `BandOverlay`; these hidden lines keep it inside the autoscale.
+      const bandEdge = { ...quiet, lineVisible: false } as const;
+      const bandLow = chart.addSeries(lib.LineSeries, bandEdge);
+      const bandHigh = chart.addSeries(lib.LineSeries, bandEdge);
+      const volume = chart.addSeries(lib.HistogramSeries, {
+        priceScaleId: "vol",
+        priceFormat: { type: "volume" },
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.86, bottom: 0 } });
+      chart.subscribeCrosshairMove((e) => setHover(e.time === undefined ? null : (e.time as number)));
+      const bandOverlay = new BandOverlay();
+      bandHigh.attachPrimitive(bandOverlay);
+      const candleAgents = new AgentDiamonds();
+      candleSeries.attachPrimitive(candleAgents);
+      const areaAgents = new AgentDiamonds();
+      area.attachPrimitive(areaAgents);
+      refs.current = {
+        lib,
+        chart,
+        palette: p,
+        candles: candleSeries,
+        area,
+        ema,
+        bandLow,
+        bandHigh,
+        volume,
+        band: bandOverlay,
+        candleAgents,
+        areaAgents,
+        costLine: null,
+      };
+      created = chart;
+      setReady(true);
     });
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: p.up,
-      downColor: p.down,
-      wickUpColor: p.up,
-      wickDownColor: p.down,
-      borderVisible: false,
-      priceLineStyle: LineStyle.Dotted,
-      // Keep at least ±6% of vertical range so flat markets (one candle, bundle-only) stay legible.
-      autoscaleInfoProvider: minSpan(0.12),
-    });
-    const area = chart.addSeries(AreaSeries, {
-      // Line mode is `ink` at 1.75px (§3.4 rule 6); the canvas takes fractional widths.
-      lineColor: p.ink,
-      lineWidth: 1.75 as LineWidth,
-      // The fill fades from the line's highest point to the bottom of the pane, not across the whole pane.
-      relativeGradient: true,
-      priceLineStyle: LineStyle.Dotted,
-      crosshairMarkerRadius: 4,
-      crosshairMarkerBorderWidth: 2,
-      crosshairMarkerBorderColor: p.surface,
-      crosshairMarkerBackgroundColor: p.ink,
-      visible: false,
-      autoscaleInfoProvider: minSpan(0.04),
-    });
-    const quiet = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false } as const;
-    const ema = chart.addSeries(LineSeries, { ...quiet, color: p.ink3, lineWidth: 1, lineStyle: LineStyle.SparseDotted });
-    // The band's edges are drawn by `BandOverlay`; these hidden lines keep it inside the autoscale.
-    const bandEdge = { ...quiet, lineVisible: false } as const;
-    const bandLow = chart.addSeries(LineSeries, bandEdge);
-    const bandHigh = chart.addSeries(LineSeries, bandEdge);
-    const volume = chart.addSeries(HistogramSeries, {
-      priceScaleId: "vol",
-      priceFormat: { type: "volume" },
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.86, bottom: 0 } });
-    chart.subscribeCrosshairMove((e) => setHover(e.time === undefined ? null : (e.time as number)));
-    const bandOverlay = new BandOverlay();
-    bandHigh.attachPrimitive(bandOverlay);
-    const candleAgents = new AgentDiamonds();
-    candleSeries.attachPrimitive(candleAgents);
-    const areaAgents = new AgentDiamonds();
-    area.attachPrimitive(areaAgents);
-    refs.current = {
-      chart,
-      palette: p,
-      candles: candleSeries,
-      area,
-      ema,
-      bandLow,
-      bandHigh,
-      volume,
-      band: bandOverlay,
-      candleAgents,
-      areaAgents,
-      costLine: null,
-    };
-    setReady(true);
     return () => {
-      chart.remove();
+      disposed = true;
+      created?.remove();
       refs.current = null;
     };
   }, []);
@@ -506,7 +530,12 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
   useEffect(() => {
     const r = refs.current;
     if (!r) return;
-    const priceFormat = { type: "custom" as const, formatter: fmt, minMove: unit === "price" ? 1e-12 : unit === "usd" ? 0.01 : 0.0001 };
+    const priceFormat = {
+      type: "custom" as const,
+      formatter: fmt,
+      tickmarksFormatter: distinctTicks(unit, fmt),
+      minMove: unit === "price" ? 1e-12 : unit === "usd" ? 0.01 : 0.0001,
+    };
     for (const s of [r.candles, r.area, r.ema, r.bandLow, r.bandHigh]) s.applyOptions({ priceFormat });
   }, [unit, fmt, ready]);
 
@@ -577,7 +606,7 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
     });
     // Volume bars would be slabs at line-mode spacing; the legend still reports each bucket's volume.
     r.volume.applyOptions({ visible: !line });
-    r.chart.applyOptions({ crosshair: { mode: line ? CrosshairMode.Magnet : CrosshairMode.Normal } });
+    r.chart.applyOptions({ crosshair: { mode: line ? r.lib.CrosshairMode.Magnet : r.lib.CrosshairMode.Normal } });
     r.candles.setData(series.candles);
     r.area.setData(series.line);
     r.volume.setData(
@@ -667,7 +696,7 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
     const line = target.createPriceLine({
       price: avgCost * mult,
       color: r.palette.accentInk,
-      lineStyle: LineStyle.Solid,
+      lineStyle: r.lib.LineStyle.Solid,
       lineWidth: 1,
       axisLabelVisible: true,
       axisLabelColor: r.palette.accentInk,

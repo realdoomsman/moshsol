@@ -7,6 +7,7 @@ import { leaderboardQuery, type LeaderboardKind, type LeaderboardWindow } from "
 export const metadata: Metadata = {
   title: "Leaderboard",
   description: "Top backers, creators, traders and launches on Holdfast by fees, volume and raises.",
+  alternates: { canonical: "/leaderboard" },
 };
 
 const KINDS: readonly LeaderboardKind[] = ["backers", "creators", "traders", "launches"];

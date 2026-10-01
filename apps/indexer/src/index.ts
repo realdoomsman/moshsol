@@ -8,6 +8,7 @@ import { Hub } from "./hub";
 import { SolPrice } from "./price";
 import { registerRpcProxy } from "./rpc-proxy";
 import { createServer, registerApi } from "./server";
+import { LaunchSummaries } from "./summaries";
 import { ChainSync } from "./sync";
 
 /** Hard stop if a hung RPC call keeps the sync queue from draining. */
@@ -41,7 +42,8 @@ const sync = new ChainSync(store, client, hub, holders, price, app.log.child({ m
   ...files,
 });
 const arweave = config.arweave ? new ArweaveStore(config.arweave, store, app.log.child({ module: "arweave" })) : null;
-registerApi(app, { store, client, sync, hub, holders, price }, {
+const summaries = new LaunchSummaries(store, price);
+registerApi(app, { store, client, sync, hub, holders, price, summaries }, {
   ...files,
   siteUrl: config.siteUrl,
   adminToken: config.adminToken,

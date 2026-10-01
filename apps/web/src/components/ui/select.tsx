@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "./cn";
 import { Popover } from "./popover";
 
@@ -58,7 +58,6 @@ export function Select<T extends string>({
       open={open}
       onOpenChange={setOpen}
       placement={align === "end" ? "bottom-end" : "bottom-start"}
-      focusOnOpen={false}
       trigger={(p) => (
         <button
           type="button"
@@ -87,7 +86,7 @@ export function Select<T extends string>({
       )}
     >
       {(close) => (
-        <FocusSelected className="py-1" onKeyDown={onListKey}>
+        <div className="py-1" onKeyDown={onListKey}>
           {options.map((o) => {
             const selected = o.value === value;
             return (
@@ -123,32 +122,8 @@ export function Select<T extends string>({
             );
           })}
           {enabled.length === 0 ? <p className="small px-3 py-2 text-ink-3">No options</p> : null}
-        </FocusSelected>
+        </div>
       )}
     </Popover>
-  );
-}
-
-/** Focuses the selected option once, when the list opens. */
-function FocusSelected({
-  className,
-  onKeyDown,
-  children,
-}: {
-  className: string;
-  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
-  children: ReactNode;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const root = ref.current;
-    (root?.querySelector<HTMLElement>('[aria-selected="true"]') ?? root?.querySelector<HTMLElement>('[role="option"]'))?.focus({
-      preventScroll: true,
-    });
-  }, []);
-  return (
-    <div ref={ref} className={className} onKeyDown={onKeyDown}>
-      {children}
-    </div>
   );
 }

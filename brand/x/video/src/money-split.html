@@ -1,0 +1,85 @@
+<!doctype html>
+<!--
+  "Where the money goes" beat of brand/x/video/final/holdfast-explainer.mp4 (1920×1080): the pump.fun
+  creator-fee split (75% vault / 15% buys and burns the Holdfast token / 10% backers) animates in, then the
+  two lines that make the point: nothing the agent sells for leaves the vault; creator 0%, Holdfast 1% +
+  0.02 SOL once. Same frame-stepped contract as vault-agent.html: `ready()`, `configure({ total })`, `render(t)`.
+-->
+<html><head><meta charset="utf-8"><style>
+/*FONTS*/
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:#0F100E;overflow:hidden;position:relative;color:#F2F1EC}
+.disp{font-family:MonaDisplay,Mona,sans-serif;font-stretch:112.5%;font-weight:640;letter-spacing:-0.04em;line-height:0.95}
+.ui{font-family:Mona,sans-serif}.mono{font-family:JBM,monospace}
+.label{font-family:Mona,sans-serif;font-weight:600;font-size:32px;letter-spacing:0.08em;text-transform:uppercase;color:#85857C}
+.abs{position:absolute}
+#logo{left:96px;top:72px;display:flex;align-items:center;gap:14px}
+#site{right:96px;top:84px;display:flex;align-items:center;gap:14px}
+#site i{width:12px;height:12px;border-radius:12px;background:#FF5B1A}
+#head{left:120px;top:214px}
+#head .k{color:#FF5B1A;margin-bottom:18px}
+#head .t{font-size:72px}
+#rows{left:120px;top:392px;width:1680px}
+.r{display:flex;align-items:center;height:104px;margin-bottom:14px}
+.r .pct{font-family:JBM,monospace;font-size:72px;width:230px;letter-spacing:-0.03em}
+.r .bar{height:44px;border-radius:6px;background:#FF5B1A;margin-right:28px;transform-origin:left center}
+.r .who{font-family:Mona,sans-serif;font-size:40px;color:#A9A89F;white-space:nowrap}
+.r .who b{color:#F2F1EC;font-weight:600}
+#lines{left:120px;top:800px;width:1680px}
+#lines .l{font-family:Mona,sans-serif;font-size:40px;color:#A9A89F;line-height:1.35;margin-bottom:14px;display:flex;align-items:center;gap:22px}
+#lines .l i{width:14px;height:14px;border-radius:14px;background:#FF5B1A;flex:none}
+#lines .l b{color:#F2F1EC;font-weight:600}
+#foot{left:120px;right:120px;bottom:72px;border-top:1px solid #2A2B27;padding-top:22px;display:flex;justify-content:space-between;font-size:32px;color:#85857C}
+</style></head><body>
+<div id="logo" class="abs"><!--LOGO--></div>
+<div id="site" class="abs label"><i></i>holdfast.fun</div>
+<div id="head" class="abs">
+  <div class="label k">Every trade on pump.fun pays a creator fee. On Holdfast it goes:</div>
+</div>
+<div id="rows" class="abs">
+  <div class="r" id="r0"><div class="pct">75%</div><div class="bar"></div><div class="who"><b>vault SOL</b> · the agent's working capital</div></div>
+  <div class="r" id="r1"><div class="pct">15%</div><div class="bar"></div><div class="who"><b>buys and burns</b> the Holdfast token</div></div>
+  <div class="r" id="r2"><div class="pct">10%</div><div class="bar"></div><div class="who"><b>backers</b> · claimable any time</div></div>
+</div>
+<div id="lines" class="abs">
+  <div class="l" id="l0"><i></i><span><b>What the vault agent sells for: 100% stays in the vault.</b> No profit split.</span></div>
+  <div class="l" id="l1"><i></i><span>Creator: <b>0%</b> of fees. Holdfast: <b>1%</b> of the raise + <b>0.02 SOL</b>, once.</span></div>
+</div>
+<div id="foot" class="abs"><span class="mono">holdfast.fun/docs/how-it-works</span><span class="ui">Fee split set in the program · every vault move is on-chain</span></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const ease = (a) => 1 - Math.pow(1 - clamp01(a), 3);
+const PCT = [75, 15, 10];
+const BAR_MAX = 880;
+let TOTAL = 7;
+window.configure = ({ total }) => { if (total) TOTAL = total; };
+window.total = () => TOTAL;
+window.render = function render(t) {
+  const out = clamp01((TOTAL - t) / 0.4);
+  const l0 = Math.max(3.0, TOTAL * 0.48), l1 = Math.max(4.0, TOTAL * 0.66);
+  $("head").style.opacity = clamp01(t / 0.4) * out;
+  PCT.forEach((p, i) => {
+    const a = ease((t - 0.5 - i * 0.35) / 1.1);
+    const row = $(`r${i}`);
+    row.style.opacity = clamp01((t - 0.4 - i * 0.35) / 0.3) * out;
+    row.querySelector(".bar").style.width = `${Math.max(8, (BAR_MAX * p) / 100 * a)}px`;
+    row.querySelector(".pct").textContent = `${Math.round(p * a)}%`;
+    row.querySelector(".who").style.opacity = clamp01((t - 1.0 - i * 0.35) / 0.4);
+  });
+  $("l0").style.opacity = clamp01((t - l0) / 0.5) * out;
+  $("l1").style.opacity = clamp01((t - l1) / 0.5) * out;
+  $("foot").style.opacity = clamp01((t - 0.6) / 0.5) * out;
+  $("logo").style.opacity = out;
+  $("site").style.opacity = out;
+};
+window.ready = async () => {
+  await document.fonts.load("640 100px MonaDisplay");
+  await document.fonts.load("600 32px Mona");
+  await document.fonts.load("32px JBM");
+  await document.fonts.ready;
+  render(0);
+  return TOTAL;
+};
+</script>
+</body></html>

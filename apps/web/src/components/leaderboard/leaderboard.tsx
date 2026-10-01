@@ -141,7 +141,10 @@ function tradersBoard(now: number): Board<TraderEntry> {
         align: "right",
         cell: (e) => (
           <>
-            {e.trades} <span className="text-ink-3">({e.buys} buys · {e.sells} sells)</span>
+            {e.trades}{" "}
+            <span className="text-ink-3">
+              ({e.buys} {e.buys === 1 ? "buy" : "buys"} · {e.sells} {e.sells === 1 ? "sell" : "sells"})
+            </span>
           </>
         ),
       },

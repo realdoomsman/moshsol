@@ -81,3 +81,32 @@ test("a v1 database migrates to v2: program trades keep their columns, pump trad
   assert.equal(agg.buyers24, 1);
   assert.equal(agg.last_ts, 2500);
 });
+
+test("trade totals count each trade once (the poller and the websocket deliver the same ones) and clear with a wipe", (t) => {
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  store.insertTrade(pumpTrade("sigB", 2000, 1_500_000_000n));
+  store.insertTrade(pumpTrade("sigB", 2000, 1_500_000_000n));
+  store.insertTrade({ ...pumpTrade("sigC", 100, 700_000_000n), source: "holdfast", is_agent: 1 });
+
+  // A day later: nothing left in the rolling windows, the all-time totals stay.
+  const later = 2000 + 90_000;
+  assert.deepEqual(store.tradeAggregate("L", later), {
+    launch: "L",
+    v24: 0,
+    v1: 0,
+    t1: 0,
+    buyers24: 0,
+    sellers24: 0,
+    last_ts: 2000,
+    pump_n: 1,
+    pump_lamports: 1_500_000_000,
+  });
+  assert.deepEqual(store.tradeAggregates(later).get("L"), store.tradeAggregate("L", later));
+  assert.equal(store.tradeAggregates(2001).get("L")?.v24, 2.2);
+
+  store.wipe();
+  assert.equal(store.tradeAggregate("L", later), undefined);
+  store.insertTrade(pumpTrade("sigB", 2000, 1_500_000_000n));
+  assert.equal(store.tradeAggregate("L", later)?.pump_n, 1);
+});

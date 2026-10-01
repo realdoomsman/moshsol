@@ -68,7 +68,7 @@ export function launchSteps(p: Params): HowStep[] {
     },
     {
       title: "The bundle buys first",
-      description: `At launch the token is created on pump.fun and the pool, minus the ${s.launchFeePct}% launch fee and the create fee, makes the first buy in the same instruction, before any public trade can exist. The tokens and the SOL reserve go into the vault. Only the vault agent trades them; the platform admin can withdraw, and every withdrawal is public.`,
+      description: `At launch the token is created on pump.fun and the pool, minus the ${s.launchFeePct}% launch fee and pump.fun's create rent, makes the first buy in the same instruction, before any public trade can exist. The tokens and the SOL reserve go into the vault. Only the vault agent trades them; the platform admin can withdraw, and every withdrawal is public.`,
       rule: p ? `Bundle: ≤ ${pctFromBps(p.maxBundleSupplyBps)} of supply` : null,
       frame: DEMO.theBundle,
     },
@@ -77,8 +77,8 @@ export function launchSteps(p: Params): HowStep[] {
       description: (
         <>
           It sells slowly when the chart is strong, sized so it doesn&rsquo;t hurt the chart, and buys back dips at least{" "}
-          {p ? pctFromBps(p.agentBandBps) : "the band"} under the <EmaTerm p={p} /> with what it sold. Every sale stays in the vault as
-          SOL. Rate-limited, on-chain.
+          {p ? pctFromBps(p.agentBandBps) : "the band"} under the <EmaTerm p={p} /> with vault SOL. Every sale stays in the vault as SOL.
+          Rate-limited, on-chain.
         </>
       ),
       rule: p ? `Per window: ≤ ${pctFromBps(p.agentBuyBpsPerWindow)} of vault SOL` : null,

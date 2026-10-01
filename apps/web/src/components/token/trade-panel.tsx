@@ -16,9 +16,10 @@ import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { PublicKey } from "@solana/web3.js";
 import { Settings2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
-import { useMoshClient, useSolBalance, useTokenBalance } from "@/lib/chain";
+import { useLoadMoshClient, useTokenBalance } from "@/lib/chain";
 import { fmtLamports, fmtTokens } from "@/lib/format";
 import { usePlatform } from "@/lib/queries";
+import { useSolBalance } from "@/lib/sol-balance";
 import { IMPACT_DANGER_PCT, IMPACT_WARN_PCT } from "@/lib/thresholds";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
@@ -79,7 +80,7 @@ export function TradePanel({
 }) {
   const { publicKey } = useWallet();
   const { setVisible } = useWalletModal();
-  const client = useMoshClient();
+  const loadClient = useLoadMoshClient();
   const platform = usePlatform();
   const sol = useSolBalance(publicKey);
   const tokens = useTokenBalance(l, publicKey);
@@ -159,13 +160,13 @@ export function TradePanel({
         ? {
             label: `Buy $${l.symbol}`,
             successMessage: `Bought ${fmtTokens(quote.q.tokensOut)} $${l.symbol}`,
-            build: async (payer) => [await client.buyIx(payer, mint, quote.solIn, quote.min)],
+            build: async (payer) => [await (await loadClient()).buyIx(payer, mint, quote.solIn, quote.min)],
             invalidate: [["token-balance", l.mint]],
           }
         : {
             label: `Sell $${l.symbol}`,
             successMessage: `Sold for ${fmtLamports(quote.q.solOut)} SOL`,
-            build: async (payer) => [await client.sellIx(payer, mint, quote.q.tokensIn, quote.min)],
+            build: async (payer) => [await (await loadClient()).sellIx(payer, mint, quote.q.tokensIn, quote.min)],
             invalidate: [["token-balance", l.mint]],
           },
     );

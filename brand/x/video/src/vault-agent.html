@@ -1,0 +1,432 @@
+<!doctype html>
+<!--
+  Motion-graphics explainer for brand/x/video/final/vault-agent.mp4 (1920×1080). The page is a pure
+  function of time: `render(t)` draws the state at `t` seconds, and scripts/src/record-demos-final.mjs
+  steps it frame by frame in headless Chrome. Fonts are injected at the FONTS marker in the style block from
+  brand/x/src/announce-night.html (open the file directly and you get fallbacks).
+
+  Scenes (durations are defaults; the renderer stretches them to the voiceover with `configure`):
+    intro → sell (rally, 3 sells) → buy (dip, 3 buy-backs) → budget (hourly caps + floor) → payout (5×) → outro
+
+  The chart is illustrative; every number on screen is a program rule (2% band, ≤ 3% impact, 10% SOL /
+  5% tokens per hour, 0.1 SOL floor, 5× then principal first then 15%) or derived from the drawn series.
+-->
+<html><head><meta charset="utf-8"><style>
+/*FONTS*/
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;background:#0F100E;overflow:hidden;position:relative;color:#F2F1EC}
+.disp{font-family:MonaDisplay,Mona,sans-serif;font-stretch:112.5%;font-weight:640;letter-spacing:-0.04em;line-height:0.95}
+.ui{font-family:Mona,sans-serif}.mono{font-family:JBM,monospace}
+.label{font-family:Mona,sans-serif;font-weight:600;font-size:32px;letter-spacing:0.08em;text-transform:uppercase;color:#85857C}
+.abs{position:absolute}
+#logo{left:96px;top:72px;display:flex;align-items:center;gap:14px}
+#site{right:96px;top:84px;display:flex;align-items:center;gap:14px}
+#site i{width:12px;height:12px;border-radius:12px;background:#FF5B1A}
+#canvas{left:0;top:0}
+#third{left:96px;bottom:84px;max-width:1240px}
+#third .t{font-size:52px;color:#F2F1EC;line-height:1.05}
+#third .s{font-family:Mona,sans-serif;font-size:34px;color:#A9A89F;margin-top:14px;line-height:1.3}
+#third .bar{position:absolute;left:-28px;top:4px;bottom:4px;width:6px;background:#FF5B1A}
+#bubble{left:0;top:0;padding:18px 24px;background:rgba(15,16,14,0.92);border:1px solid #2A2B27;border-radius:10px;white-space:nowrap}
+#bubble .h{font-family:Mona,sans-serif;font-weight:600;font-size:32px;letter-spacing:0.06em;text-transform:uppercase}
+#bubble .d{font-family:JBM,monospace;font-size:32px;color:#A9A89F;margin-top:8px}
+#bubble .k{font-family:Mona,sans-serif;font-size:32px;color:#85857C;margin-top:8px}
+#bubble .k b{color:#F2F1EC;font-weight:500}
+.panel{left:1360px;top:196px;width:470px}
+.panel .label{margin-bottom:10px}
+.readout{font-family:JBM,monospace;font-size:112px;line-height:1;letter-spacing:-0.03em}
+.row{display:flex;justify-content:space-between;font-family:Mona,sans-serif;font-size:32px;color:#A9A89F;padding:11px 0;border-top:1px solid #2A2B27;white-space:nowrap}
+.row b{font-family:JBM,monospace;font-weight:400;color:#F2F1EC}
+.full{left:0;top:0;width:1920px;height:1080px;background:#0F100E}
+#intro .mark{left:96px;top:72px;display:flex;align-items:center;gap:14px}
+#intro .big{left:120px;top:380px;font-size:112px;max-width:1680px}
+#intro .sub{left:120px;top:520px;font-size:40px;color:#A9A89F;max-width:1400px;line-height:1.4}
+#outro .big{left:120px;top:400px;font-size:128px}
+#outro .sub{left:120px;top:548px;font-family:JBM,monospace;font-size:32px;color:#85857C;max-width:1680px;line-height:1.5}
+#outro .foot{left:120px;right:120px;bottom:120px;border-top:1px solid #2A2B27;padding-top:26px;display:flex;justify-content:space-between;font-size:32px;color:#85857C}
+#pay{left:1360px;top:776px;width:470px}
+#pay .box{border:1px solid #2A2B27;border-radius:10px;padding:18px 22px;margin-top:12px;font-family:Mona,sans-serif;font-size:34px;color:#A9A89F;display:flex;justify-content:space-between}
+#pay .box b{font-family:JBM,monospace;font-weight:400;color:#F2F1EC}
+#pay .box.on{border-color:#FF5B1A}
+</style></head><body>
+<canvas id="canvas" class="abs" width="1920" height="1080"></canvas>
+<div id="logo" class="abs"><!--LOGO--></div>
+<div id="site" class="abs label"><i></i>holdfast.fun</div>
+
+<div id="panel" class="abs panel">
+  <div class="label">Vault liquid SOL<br>× what went in</div>
+  <div class="readout"><span id="mult">0.3×</span></div>
+  <div style="margin-top:22px">
+    <div class="row"><span>Liquid SOL</span><b id="liq">2.96</b></div>
+    <div class="row"><span>Went in at launch</span><b id="in">9.88</b></div>
+    <div class="row"><span>Tokens held</span><b id="tok">20.00% supply</b></div>
+  </div>
+</div>
+
+<div id="pay" class="abs">
+  <div class="label">Backers</div>
+  <div class="box" id="pay1"><span>Principal</span><b id="pay1v">9.88 SOL</b></div>
+  <div class="box" id="pay2"><span>Then 15%</span><b id="pay2v">5.93 SOL</b></div>
+</div>
+
+<div id="bubble" class="abs"><div class="h"></div><div class="d"></div><div class="k"></div></div>
+
+<div id="third" class="abs"><div class="bar"></div><div class="t disp"></div><div class="s"></div></div>
+
+<div id="intro" class="abs full">
+  <div class="abs mark"><!--LOGO--></div>
+  <div class="abs label" style="left:120px;top:300px;color:#FF5B1A">The vault agent</div>
+  <div class="abs disp big">Rule-checked on every trade.</div>
+  <div class="abs ui sub">A program vault holds the bundle. The vault agent trades it only inside limits the program enforces on every trade.</div>
+</div>
+
+<div id="outro" class="abs full">
+  <div class="abs mark" style="left:96px;top:72px;display:flex;align-items:center;gap:14px"><!--LOGO--></div>
+  <div class="abs label" style="left:120px;top:320px;color:#FF5B1A">holdfast.fun</div>
+  <div class="abs disp big">Hold fast.</div>
+  <div class="abs sub">Every agent decision is narrated on the launch page · every rule is checked on-chain · holdfast.fun/agents</div>
+  <div class="abs foot"><span class="mono">holdfast.fun</span><span class="ui">Backers buy first. The vault agent works the chart.</span></div>
+</div>
+
+<script>
+const INK = "#0F100E", PAPER = "#F2F1EC", MUTED = "#85857C", ORANGE = "#FF5B1A", LINE = "#2A2B27", GREEN = "#2FBF71";
+const $ = (id) => document.getElementById(id);
+const ctx = $("canvas").getContext("2d");
+
+// ---------------------------------------------------------------- series (× start price)
+const N = 720;
+const KEYS = [[0, 1.0], [0.05, 1.0], [0.1, 1.12], [0.18, 1.45], [0.26, 1.7], [0.33, 1.92], [0.37, 1.8], [0.42, 1.48], [0.48, 1.3], [0.54, 1.36], [0.6, 1.4], [0.66, 1.75], [0.73, 2.25], [0.79, 2.55], [0.83, 2.5], [0.88, 2.7], [0.94, 3.05], [1, 3.2]];
+const smooth = (a) => a * a * (3 - 2 * a);
+function base(x) {
+  for (let i = 1; i < KEYS.length; i++) {
+    if (x <= KEYS[i][0]) {
+      const [x0, y0] = KEYS[i - 1], [x1, y1] = KEYS[i];
+      return y0 + (y1 - y0) * smooth((x - x0) / (x1 - x0));
+    }
+  }
+  return KEYS.at(-1)[1];
+}
+const price = [], ema = [];
+for (let i = 0; i < N; i++) {
+  const x = i / (N - 1);
+  const wobble = 1 + 0.012 * Math.sin(x * 97) + 0.009 * Math.sin(x * 233 + 1.3) + 0.006 * Math.sin(x * 541 + 0.4);
+  price.push(base(x) * wobble);
+  ema.push(i === 0 ? price[0] : ema[i - 1] + (price[i] - ema[i - 1]) * (2 / 41));
+}
+
+// ---------------------------------------------------------------- trades (found on the series so every label is true to the rules)
+// The vault is the docs' 10 SOL example: 9.88 SOL went in at launch (6.92 SOL bundle buy, 2.96 SOL kept
+// as vault SOL), so payouts start at 49.4 SOL liquid: 9.88 principal, then 15% of the rest = 5.93 SOL.
+const BAND = 0.02, WENT_IN = 9.88, BUNDLE_SOL = 6.92, LIQ0 = WENT_IN - BUNDLE_SOL, TOK0 = 20.0;
+const vault = { cost: 1.0, avgSell: Infinity, sold: 0 };
+const TRADES = [];
+/** Sells are sized in % of the tokens held (the 5%/hour budget), buys in SOL (the 10%/hour budget); the other side follows the drawn price. */
+function findTrade(xFrom, kind, size, impact) {
+  for (let i = Math.round(xFrom * (N - 1)); i < N; i++) {
+    const p = price[i], e = ema[i];
+    const ok = kind === "sell" ? p >= e * (1 + BAND) && p >= vault.cost * (1 + BAND) : p <= e * (1 - BAND) && (p <= vault.cost || p < vault.avgSell);
+    if (!ok) continue;
+    const vsEma = (p / e - 1) * 100;
+    const solPerSupplyPct = (BUNDLE_SOL / TOK0) * p;
+    const tokens = kind === "sell" ? (size / 100) * TOK0 : size / solPerSupplyPct;
+    const sol = kind === "sell" ? tokens * solPerSupplyPct : size;
+    const t = { i, x: i / (N - 1), kind, p, vsEma, sol, tokens, heldPct: kind === "sell" ? size : (tokens / TOK0) * 100, impact, reason: kind === "sell" ? "above cost" : p <= vault.cost ? "at or below cost" : "under avg sell" };
+    if (kind === "sell") {
+      vault.avgSell = vault.sold === 0 ? p : (vault.avgSell * vault.sold + p * sol) / (vault.sold + sol);
+      vault.sold += sol;
+    }
+    TRADES.push(t);
+    return t;
+  }
+  throw new Error(`no ${kind} after ${xFrom}`);
+}
+findTrade(0.14, "sell", 1.2, 0.4);
+findTrade(0.22, "sell", 1.6, 0.6);
+findTrade(0.3, "sell", 2.0, 0.9);
+findTrade(0.39, "buy", 0.12, 0.5);
+findTrade(0.44, "buy", 0.1, 0.4);
+findTrade(0.49, "buy", 0.08, 0.3);
+findTrade(0.67, "sell", 2.2, 1.1);
+findTrade(0.74, "sell", 2.8, 1.4);
+findTrade(0.9, "sell", 2.0, 1.2);
+const vaultAt = (x) => {
+  let liq = LIQ0, tok = TOK0;
+  for (const t of TRADES) {
+    if (t.x > x) break;
+    liq += t.kind === "sell" ? t.sol : -t.sol;
+    tok += t.kind === "sell" ? -t.tokens : t.tokens;
+  }
+  return { liq, tok };
+};
+
+// ---------------------------------------------------------------- scenes
+const SCENES = [
+  { id: "intro", dur: 3.0 },
+  { id: "sell", dur: 9.5, x0: 0, x1: 0.37 },
+  { id: "buy", dur: 7.5, x0: 0.37, x1: 0.6 },
+  { id: "budget", dur: 8.5, x0: 0.6, x1: 0.82 },
+  { id: "payout", dur: 10, x0: 0.82, x1: 1 },
+  { id: "outro", dur: 3.5 },
+];
+window.configure = (durations) => {
+  for (const s of SCENES) if (durations[s.id]) s.dur = durations[s.id];
+};
+window.total = () => SCENES.reduce((a, s) => a + s.dur, 0);
+function sceneAt(t) {
+  let start = 0;
+  for (const s of SCENES) {
+    if (t < start + s.dur || s === SCENES.at(-1)) return { ...s, start, local: t - start, p: Math.min(1, Math.max(0, (t - start) / s.dur)) };
+    start += s.dur;
+  }
+}
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const fadeIO = (local, dur, fin = 0.4, fout = 0.4) => Math.min(clamp01(local / fin), clamp01((dur - local) / fout));
+
+// ---------------------------------------------------------------- chart geometry
+const CH = { x: 120, y: 236, w: 1180, h: 600 };
+const YMIN = 0.8, YMAX = 3.4;
+const px = (x) => CH.x + x * CH.w;
+const py = (m) => CH.y + CH.h - ((m - YMIN) / (YMAX - YMIN)) * CH.h;
+const BAR = { x: 1360, y: 690, w: 470, h: 20 };
+
+function drawChart(xProg, dim, t) {
+  const g = ctx;
+  g.save();
+  g.globalAlpha = dim;
+  g.strokeStyle = LINE;
+  g.lineWidth = 1;
+  g.font = "32px JBM";
+  g.fillStyle = MUTED;
+  g.textAlign = "right";
+  for (const m of [1, 2, 3]) {
+    g.beginPath();
+    g.moveTo(CH.x, py(m) + 0.5);
+    g.lineTo(CH.x + CH.w, py(m) + 0.5);
+    g.stroke();
+    g.fillText(`${m}×`, CH.x + CH.w - 8, py(m) - 10);
+  }
+  g.textAlign = "left";
+  g.fillText("price · × start", CH.x, CH.y - 16);
+  const n = Math.max(2, Math.round(xProg * (N - 1)) + 1);
+  // EMA band (±2%)
+  g.beginPath();
+  for (let i = 0; i < n; i++) g.lineTo(px(i / (N - 1)), py(ema[i] * (1 + BAND)));
+  for (let i = n - 1; i >= 0; i--) g.lineTo(px(i / (N - 1)), py(ema[i] * (1 - BAND)));
+  g.closePath();
+  g.fillStyle = "rgba(255,91,26,0.10)";
+  g.fill();
+  g.setLineDash([10, 10]);
+  g.strokeStyle = "rgba(255,91,26,0.8)";
+  g.lineWidth = 2;
+  for (const s of [1 + BAND, 1 - BAND]) {
+    g.beginPath();
+    for (let i = 0; i < n; i++) g.lineTo(px(i / (N - 1)), py(ema[i] * s));
+    g.stroke();
+  }
+  g.setLineDash([]);
+  // vault cost
+  g.strokeStyle = "rgba(242,241,236,0.35)";
+  g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(CH.x, py(1));
+  g.lineTo(px((n - 1) / (N - 1)), py(1));
+  g.stroke();
+  // price
+  g.strokeStyle = PAPER;
+  g.lineWidth = 3;
+  g.lineJoin = "round";
+  g.beginPath();
+  for (let i = 0; i < n; i++) g.lineTo(px(i / (N - 1)), py(price[i]));
+  g.stroke();
+  // trades
+  for (const tr of TRADES) {
+    if (tr.i >= n) continue;
+    const age = clamp01((n - tr.i) / 12);
+    const r = 11 + (1 - age) * 10;
+    g.save();
+    g.translate(px(tr.x), py(tr.p));
+    g.rotate(Math.PI / 4);
+    g.lineWidth = 3;
+    g.strokeStyle = ORANGE;
+    g.fillStyle = tr.kind === "buy" ? ORANGE : INK;
+    g.fillRect(-r, -r, 2 * r, 2 * r);
+    g.strokeRect(-r, -r, 2 * r, 2 * r);
+    g.restore();
+  }
+  // band legend
+  g.fillStyle = MUTED;
+  g.font = "32px JBM";
+  g.textAlign = "left";
+  g.fillText("- - EMA ± 2% band", CH.x + 340, CH.y - 16);
+  g.fillText("— vault cost", CH.x + 760, CH.y - 16);
+  g.restore();
+}
+
+function drawVaultBar(liq, dim, extras) {
+  const g = ctx;
+  g.save();
+  g.globalAlpha = dim;
+  const max = WENT_IN * 5.4;
+  const frac = (v) => clamp01(v / max);
+  g.font = "32px JBM";
+  g.fillStyle = MUTED;
+  g.textAlign = "left";
+  g.fillText("0", BAR.x, BAR.y + BAR.h + 40);
+  g.textAlign = "right";
+  g.fillStyle = PAPER;
+  g.fillText("5× payback line", BAR.x + BAR.w * frac(WENT_IN * 5), BAR.y - 16);
+  g.fillStyle = "#1A1B18";
+  g.fillRect(BAR.x, BAR.y, BAR.w, BAR.h);
+  g.fillStyle = ORANGE;
+  g.fillRect(BAR.x, BAR.y, BAR.w * frac(liq), BAR.h);
+  g.fillStyle = PAPER;
+  g.fillRect(BAR.x + BAR.w * frac(WENT_IN * 5) - 2, BAR.y - 10, 3, BAR.h + 20);
+  g.fillStyle = MUTED;
+  g.textAlign = "center";
+  g.fillText("1×", BAR.x + BAR.w * frac(WENT_IN), BAR.y + BAR.h + 40);
+  if (extras?.floor) {
+    g.fillStyle = PAPER;
+    g.globalAlpha = dim * extras.floor;
+    g.fillRect(BAR.x + 6, BAR.y - 10, 3, BAR.h + 20);
+    g.textAlign = "left";
+    g.fillText("0.1 SOL floor", BAR.x, BAR.y + BAR.h + 84);
+  }
+  g.restore();
+}
+
+function drawBudget(solUsed, tokUsed, alpha) {
+  const g = ctx;
+  g.save();
+  g.globalAlpha = alpha;
+  const rows = [["SOL / hour", solUsed, 10], ["Tokens / hour", tokUsed, 5]];
+  let y = 856;
+  for (const [label, used, cap] of rows) {
+    g.font = "600 32px Mona";
+    g.fillStyle = MUTED;
+    g.textAlign = "left";
+    g.fillText(label.toUpperCase(), BAR.x, y);
+    g.font = "32px JBM";
+    g.fillStyle = PAPER;
+    g.textAlign = "right";
+    g.fillText(`${used.toFixed(1)}% of ${cap}%`, BAR.x + BAR.w, y);
+    g.fillStyle = "#1A1B18";
+    g.fillRect(BAR.x, y + 16, BAR.w, 12);
+    g.fillStyle = used >= cap - 0.05 ? PAPER : ORANGE;
+    g.fillRect(BAR.x, y + 16, BAR.w * clamp01(used / cap), 12);
+    y += 90;
+  }
+  g.restore();
+}
+
+// ---------------------------------------------------------------- DOM helpers
+const setThird = (title, sub, alpha) => {
+  $("third").style.opacity = alpha;
+  $("third").querySelector(".t").textContent = title;
+  $("third").querySelector(".s").textContent = sub;
+};
+function setBubble(tr, alpha, k2) {
+  const b = $("bubble");
+  b.style.opacity = alpha;
+  if (!tr) return;
+  const sell = tr.kind === "sell";
+  b.querySelector(".h").textContent = sell ? "Vault sold" : "Vault bought back";
+  b.querySelector(".h").style.color = ORANGE;
+  b.querySelector(".d").textContent = `${tr.sol.toFixed(2)} SOL · ${sell ? "+" : ""}${tr.vsEma.toFixed(1)}% vs EMA · impact ${tr.impact.toFixed(1)}%`;
+  b.querySelector(".k").innerHTML = k2 ?? `<b>${sell ? "≥ 2% over EMA" : "≥ 2% under EMA"}</b> ✓ · <b>${tr.reason}</b> ✓ · <b>impact ≤ 3%</b> ✓`;
+  const bx = px(tr.x), by = py(tr.p);
+  const w = b.offsetWidth, h = b.offsetHeight;
+  const left = Math.min(CH.x + CH.w - w, Math.max(CH.x, bx - w / 2));
+  const top = sell ? by - h - 36 : by + 36;
+  b.style.left = `${left}px`;
+  b.style.top = `${Math.max(CH.y, Math.min(CH.y + CH.h - h, top))}px`;
+}
+function setVault(liq, tok, mult) {
+  $("mult").textContent = `${mult.toFixed(1)}×`;
+  $("liq").textContent = liq.toFixed(2);
+  $("tok").textContent = `${tok.toFixed(2)}% supply`;
+}
+const show = (id, alpha) => ($(id).style.opacity = alpha);
+
+// ---------------------------------------------------------------- render
+window.render = function render(t) {
+  const s = sceneAt(t);
+  ctx.clearRect(0, 0, 1920, 1080);
+  ctx.fillStyle = INK;
+  ctx.fillRect(0, 0, 1920, 1080);
+  const intro = s.id === "intro", outro = s.id === "outro";
+  show("intro", intro ? fadeIO(s.local, s.dur, 0.3, 0.5) : 0);
+  show("outro", outro ? clamp01(s.local / 0.5) : 0);
+  const main = intro || outro ? 0 : 1;
+  show("logo", main);
+  show("site", main);
+  show("panel", main);
+  show("pay", 0);
+  if (!main) {
+    setThird("", "", 0);
+    setBubble(null, 0);
+    return;
+  }
+  const x = s.x0 + (s.x1 - s.x0) * s.p;
+  const { liq, tok } = vaultAt(x);
+  let liqShown = liq;
+  const lastTrade = TRADES.filter((tr) => tr.x <= x).at(-1);
+  const sinceTrade = lastTrade ? (x - lastTrade.x) / (s.x1 - s.x0) * s.dur : 99;
+  const bubbleAlpha = lastTrade && lastTrade.x >= s.x0 ? Math.min(clamp01(sinceTrade / 0.25), 1) : 0;
+  let extras = {};
+  if (s.id === "sell") {
+    setThird("Sells small clips into strength", "Only ≥ 2% over the EMA, only above cost, never more than 3% impact.", fadeIO(s.local, s.dur, 0.5, 0.3));
+    setBubble(lastTrade, bubbleAlpha);
+  } else if (s.id === "buy") {
+    setThird("Buys back the dip with what it sold", "Only ≥ 2% under the EMA, at or below cost, or under its own average sell.", fadeIO(s.local, s.dur, 0.5, 0.3));
+    setBubble(lastTrade, bubbleAlpha);
+  } else if (s.id === "budget") {
+    setThird("Hourly budgets, enforced by the program", "≤ 10% of vault SOL and ≤ 5% of its tokens per hour. 0.1 SOL always stays.", fadeIO(s.local, s.dur, 0.5, 0.3));
+    extras.floor = clamp01((s.local - 0.5) / 0.6);
+    const sells = TRADES.filter((tr) => tr.kind === "sell" && tr.x >= s.x0 && tr.x <= x);
+    const tokUsed = Math.min(5, sells.reduce((a, tr) => a + tr.heldPct, 0));
+    const exhausted = tokUsed >= 4.95;
+    drawBudget(0, tokUsed, clamp01((s.local - 0.3) / 0.5));
+    if (exhausted && lastTrade?.kind === "sell") setBubble(lastTrade, 1, `<b>Holding</b> · window budget exhausted, resets in 23 min`);
+    else setBubble(lastTrade, bubbleAlpha);
+  } else if (s.id === "payout") {
+    // Time passes: the bar climbs to 5× on later sells and the 75% creator-fee stream, then the two payouts.
+    const climb = clamp01(s.local / (s.dur * 0.45));
+    const target = WENT_IN * 5;
+    liqShown = liq + (target - liq) * smooth(climb);
+    const p1 = clamp01((s.local - s.dur * 0.55) / 0.6);
+    const p2 = clamp01((s.local - s.dur * 0.75) / 0.6);
+    const second = (target - WENT_IN) * 0.15;
+    $("pay1v").textContent = `${WENT_IN.toFixed(2)} SOL`;
+    $("pay2v").textContent = `${second.toFixed(2)} SOL`;
+    liqShown -= WENT_IN * p1 + second * p2;
+    show("pay", clamp01((s.local - s.dur * 0.45) / 0.4));
+    $("pay1").className = `box${p1 > 0.5 ? " on" : ""}`;
+    $("pay2").className = `box${p2 > 0.5 ? " on" : ""}`;
+    const strong = climb >= 1;
+    setThird(strong ? "5× liquid and a strong chart: paid back" : "Later: sells and creator fees fill the vault", strong ? "Principal first, then 15% of the vault, at most once per 4 h. A dip always comes first." : "75% of every creator fee is vault SOL. Nothing the agent sells for leaves it.", fadeIO(s.local, s.dur, 0.5, 0.3));
+    if (lastTrade && lastTrade.x >= s.x0 && !strong) setBubble(lastTrade, bubbleAlpha);
+    else setBubble(null, 0);
+    if (strong) {
+      ctx.save();
+      ctx.globalAlpha = clamp01((s.local - s.dur * 0.45) / 0.4);
+      ctx.font = "32px JBM";
+      ctx.fillStyle = GREEN;
+      ctx.textAlign = "left";
+      ctx.fillText("chart strong ✓", CH.x + CH.w - 280, CH.y + CH.h - 24);
+      ctx.restore();
+    }
+  }
+  drawChart(x, 1, t);
+  drawVaultBar(liqShown, 1, extras);
+  setVault(liqShown, tok, liqShown / WENT_IN);
+};
+window.ready = async () => {
+  await document.fonts.load("640 100px MonaDisplay");
+  await document.fonts.load("600 32px Mona");
+  await document.fonts.load("32px JBM");
+  await document.fonts.ready;
+  render(0);
+  return window.total();
+};
+</script>
+</body></html>

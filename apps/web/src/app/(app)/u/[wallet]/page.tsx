@@ -24,12 +24,14 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   if (!wallet) return { title: "Profile not found" };
   const user = await loadUser(wallet);
   const name = user?.name ?? shortAddr(wallet);
+  const created = user?.stats.launchesCreated ?? 0;
   const description =
     user?.bio ??
     (user
-      ? `${user.stats.launchesCreated} launches created · ${user.stats.backedLaunches} backed on Holdfast.`
+      ? `${created} launch${created === 1 ? "" : "es"} created · ${user.stats.backedLaunches} backed on Holdfast.`
       : `Wallet ${wallet} on Holdfast.`);
-  return { title: name, description, openGraph: { title: `${name} on Holdfast`, description } };
+  // No `openGraph` here: the share card inherits this title/description plus the root's site name.
+  return { title: name, description, alternates: { canonical: `/u/${wallet}` } };
 }
 
 export default async function ProfilePage({ params, searchParams }: Params & { searchParams: Promise<Record<string, string | string[] | undefined>> }) {

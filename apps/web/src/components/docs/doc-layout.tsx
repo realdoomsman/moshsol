@@ -37,11 +37,12 @@ export function DocLayout({
   return (
     <div className="frame-marketing pb-24 pt-10 lg:pt-14">
       <div className="lg:grid lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-14 xl:grid-cols-[220px_minmax(0,1fr)_200px]">
-        <aside className="hidden lg:block">
+        {/* Plain wrappers: the nav and TOC inside are the labelled landmarks. */}
+        <div className="hidden lg:block">
           <div className="no-scrollbar sticky top-[96px] max-h-[calc(100dvh-136px)] overflow-y-auto pb-8">
             <DocsNavList groups={groups} current={href(page)} />
           </div>
-        </aside>
+        </div>
 
         <article className="min-w-0 max-w-[720px]">
           <div className="mb-6 flex items-center justify-between gap-4">
@@ -87,11 +88,11 @@ export function DocLayout({
           </footer>
         </article>
 
-        <aside className="hidden xl:block">
+        <div className="hidden xl:block">
           <div className="sticky top-[96px]">
             <DocsToc items={sections.map((s) => ({ id: s.id, title: s.title }))} />
           </div>
-        </aside>
+        </div>
       </div>
     </div>
   );

@@ -12,6 +12,7 @@ import { launchHref, launchId, phaseExplainer, type Phase } from "@/lib/launch";
 import { fmtMult, pumpSplit } from "@/lib/pump-terms";
 import type { LaunchSummary } from "@/lib/types";
 import { useWatchlist } from "@/lib/watchlist";
+import { chipStatus } from "../discover/model";
 import { Address } from "../ui/address";
 import { Button, buttonClass, IconButton } from "../ui/button";
 import { StatusChip } from "../ui/chip";
@@ -24,14 +25,6 @@ import { TokenAvatar } from "../ui/token-avatar";
 import { displayName } from "../wallet-peek/wallet-peek";
 import { SocialIcon, socialLinks, XLogo } from "./creator-card";
 import { VenueChip } from "./venue-panel";
-
-function PhaseChips({ launch: l, phase }: { launch: LaunchSummary; phase: Phase }) {
-  if (phase === "live") return <StatusChip status="live" />;
-  if (phase === "woundDown") return <StatusChip status="woundDown" />;
-  if (phase === "failed" || phase === "refunding") return <StatusChip status="refunding" />;
-  const minMet = BigInt(l.raised) >= BigInt(l.raiseMin);
-  return <StatusChip status={minMet ? "min-reached" : "raising"} />;
-}
 
 function shareText(l: LaunchSummary): string {
   const split = pumpSplit(l.terms);
@@ -182,7 +175,7 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
           <h1 className="h1 min-w-0 truncate text-ink">{l.name}</h1>
           <span className="ui text-ink-2">${l.symbol}</span>
           <span className="flex items-center gap-1.5">
-            <PhaseChips launch={l} phase={phase} />
+            <StatusChip status={chipStatus(l, now)} />
             <VenueChip launch={l} />
           </span>
         </div>

@@ -7,7 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { CLUSTER, IS_TEST_CLUSTER } from "@/lib/env";
-import { ExplorerLink, humanError } from "@/lib/tx";
+import { ExplorerLink } from "@/lib/tx";
 import { Button } from "../ui/button";
 
 /** The public devnet faucet rate-limits aggressively; ask for less there. */
@@ -91,6 +91,8 @@ export function useAirdrop() {
           ),
         });
       } else {
+        // Dynamic on purpose: program-error text needs the IDL, which stays out of the page chunks.
+        const { humanError } = await import("@/lib/program");
         toast.error("Airdrop failed", { id, duration: Infinity, description: humanError(err) });
       }
     } finally {

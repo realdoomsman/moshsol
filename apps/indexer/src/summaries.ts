@@ -1,5 +1,6 @@
 import { lamportsToSol, type LaunchJson } from "@holdfast/sdk";
-import type { LaunchDbRow, PumpEventAggDbRow, Store, TradeAggDbRow, VaultEventAggDbRow } from "./db";
+import { ReadCache } from "./cache";
+import { DEFAULT_PUBKEY, type LaunchDbRow, type PumpEventAggDbRow, type Store, type TradeAggDbRow, type VaultEventAggDbRow } from "./db";
 import type { SolPrice, SolUsd } from "./price";
 import type { LaunchSummary } from "./types";
 
@@ -140,16 +141,55 @@ export function summaryOf(store: Store, price: SolPrice, row: LaunchDbRow | unde
   );
 }
 
-/** Every launch with a snapshot, newest first. */
-export function allSummaries(store: Store, price: SolPrice): LaunchSummary[] {
-  const now = Math.floor(Date.now() / 1000);
-  const aggs = store.tradeAggregates(now);
-  const vault = store.vaultEventAggregates();
-  const pump = store.pumpEventAggregates();
-  const solUsd = price.current;
-  return store
-    .launches()
-    .map((row) => toSummary(store, row, aggs.get(row.address), vault.get(row.address), pump.get(row.address), solUsd, now));
+/** How long derived reads are reused when nothing was written: only the rolling 1h/24h windows drift meanwhile. */
+export const READ_CACHE_TTL_MS = 1_000;
+
+/**
+ * Every launch summary, computed once and shared by the list, detail, stats, agents, trending and portfolio routes
+ * (each summary costs several aggregate queries). `cache` keeps it, and anything else routes derive from indexed
+ * data, until the store is written (sync, comments, profiles, the SOL/USD price) or `READ_CACHE_TTL_MS` passes.
+ */
+export class LaunchSummaries {
+  readonly cache: ReadCache;
+
+  constructor(
+    private readonly store: Store,
+    private readonly price: SolPrice,
+    ttlMs = READ_CACHE_TTL_MS,
+    private readonly now: () => number = Date.now,
+  ) {
+    this.cache = new ReadCache(() => store.dataVersion(), ttlMs, now);
+  }
+
+  /** Every launch with a snapshot, newest first. Shared between requests: never mutate it. */
+  all(): readonly LaunchSummary[] {
+    return this.index().list;
+  }
+
+  /** A launch with a snapshot by address or mint (an address wins over another launch's mint, as in `Store.launchById`). */
+  byId(id: string): LaunchSummary | undefined {
+    return this.index().byId.get(id);
+  }
+
+  private index(): { list: LaunchSummary[]; byId: Map<string, LaunchSummary> } {
+    return this.cache.get("summaries", () => {
+      const now = Math.floor(this.now() / 1000);
+      const aggs = this.store.tradeAggregates(now);
+      const vault = this.store.vaultEventAggregates();
+      const pump = this.store.pumpEventAggregates();
+      const solUsd = this.price.current;
+      const rows = this.store.launches();
+      const list = rows.map((row) =>
+        toSummary(this.store, row, aggs.get(row.address), vault.get(row.address), pump.get(row.address), solUsd, now),
+      );
+      // Keyed by the row's columns, not the snapshot's: a pump launch's mint lands with its `launched` event,
+      // before the next snapshot refresh. Addresses go in last so they win over a colliding mint.
+      const byId = new Map<string, LaunchSummary>();
+      for (const [i, row] of rows.entries()) if (row.mint !== DEFAULT_PUBKEY) byId.set(row.mint, list[i]);
+      for (const [i, row] of rows.entries()) byId.set(row.address, list[i]);
+      return { list, byId };
+    });
+  }
 }
 
 /** Summaries for a subset of launch rows (rows without a snapshot are skipped). */

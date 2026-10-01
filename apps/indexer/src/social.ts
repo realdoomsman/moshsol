@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { backerClaimable, lamportsToSol, type LaunchJson } from "@holdfast/sdk";
+import { backerClaimable, lamportsToSol, raiseFailed, type LaunchJson } from "@holdfast/sdk";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { activityFromRow } from "./activity";
 import { SIGNATURE_MAX_SKEW_SECS, safeEqual, sha256Hex, verifySignedMessage } from "./auth";
@@ -293,11 +293,14 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
     const profile = store.profile(wallet);
 
     const created = summariesOf(store, price, store.walletLaunches(wallet));
+    const nowSecs = Math.floor(Date.now() / 1000);
+    // A raise past its deadline below its minimum reads `raising` on chain but can only refund: count it as refunding.
+    const statusOf = (l: LaunchJson) => (raiseFailed(l, nowSecs) ? "refunding" : l.status);
     let raised = 0n;
     let creatorClaimed = 0n;
     let creatorUnclaimed = 0n;
     for (const l of created) {
-      if (l.status !== "refunding") raised += BigInt(l.raised);
+      if (statusOf(l) !== "refunding") raised += BigInt(l.raised);
       creatorClaimed += BigInt(l.creatorFeesClaimed);
       creatorUnclaimed += BigInt(l.creatorFeesUnclaimed);
     }
@@ -350,9 +353,9 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
       stats: {
         launchesCreated: created.length,
         launchesByStatus: {
-          raising: created.filter((l) => l.status === "raising").length,
+          raising: created.filter((l) => statusOf(l) === "raising").length,
           live: created.filter((l) => l.status === "live").length,
-          refunding: created.filter((l) => l.status === "refunding").length,
+          refunding: created.filter((l) => statusOf(l) === "refunding").length,
           woundDown: created.filter((l) => l.status === "woundDown").length,
         },
         raisedSol: lamportsToSol(raised),

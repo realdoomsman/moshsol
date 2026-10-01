@@ -1,7 +1,7 @@
 import { lamportsToSol, TOTAL_SUPPLY } from "@holdfast/sdk";
 import type { LaunchChipStatus } from "@/components/ui/chip";
 import { pctOf } from "@/lib/format";
-import { phaseOf } from "@/lib/launch";
+import { phaseOf, refundState } from "@/lib/launch";
 import type { LaunchSummary } from "@/lib/types";
 
 /** Board lanes (§4.4): open raises, raises past their minimum (launchable), trading launches. */
@@ -22,12 +22,13 @@ export function laneOf(l: LaunchSummary, now: number): Lane | null {
   return null;
 }
 
+/** The one chip every surface shows for a launch (cards, tables, token header): a missed raise is "Refunding" while it holds deposits. */
 export function chipStatus(l: LaunchSummary, now: number): LaunchChipStatus {
   const phase = phaseOf(l, now);
   if (phase === "live") return "live";
   if (phase === "refunding") return "refunding";
   if (phase === "woundDown") return "woundDown";
-  if (phase === "failed") return "ended";
+  if (phase === "failed") return refundState(l) === "none" ? "ended" : "refunding";
   return BigInt(l.raised) >= BigInt(l.raiseMin) ? "min-reached" : "raising";
 }
 

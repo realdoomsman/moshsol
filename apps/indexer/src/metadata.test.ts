@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import http from "node:http";
 import { test } from "node:test";
-import { UnfetchableUriError, loadMetadata } from "./metadata";
+import { UnfetchableUriError, loadMetadata, parseMetadata } from "./metadata";
 
 const PUBLIC_URL = "https://indexer.example";
 const FILES_DIR = "/nonexistent";
@@ -38,4 +38,37 @@ test("a hostname resolving to a private address is rejected at connect time (pin
 
 test("non-http schemes are unfetchable", async () => {
   await assert.rejects(loadMetadata("ftp://example.com/meta.json", PUBLIC_URL, FILES_DIR), UnfetchableUriError);
+});
+
+test("hostile metadata links are dropped: non-http schemes anywhere, X/Telegram links off their platform", () => {
+  const m = parseMetadata({
+    name: "Evil\u202eToken",
+    symbol: "EVL",
+    image: "javascript:alert(1)",
+    extensions: {
+      twitter: "https://x.com.evil.example/login",
+      telegram: "javascript:alert(document.cookie)",
+      website: "data:text/html,<script>alert(1)</script>",
+    },
+  });
+  assert.equal(m.name, "EvilToken");
+  assert.equal(m.image, null);
+  assert.equal(m.twitter, null);
+  assert.equal(m.telegram, null);
+  assert.equal(m.website, null);
+});
+
+test("X/Telegram handles and on-platform links are kept; the website may be any http(s) URL", () => {
+  const m = parseMetadata({
+    name: "Fine",
+    symbol: "OK",
+    twitter: "https://twitter.com/holdfast",
+    telegram: "@holdfast_chat",
+    website: "https://example.org/about",
+  });
+  assert.equal(m.twitter, "https://twitter.com/holdfast");
+  assert.equal(m.telegram, "@holdfast_chat");
+  assert.equal(m.website, "https://example.org/about");
+  assert.equal(parseMetadata({ twitter: "https://evil.example/x.com" }).twitter, null);
+  assert.equal(parseMetadata({ telegram: "https://t.me.evil.example/chat" }).telegram, null);
 });

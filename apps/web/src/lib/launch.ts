@@ -58,6 +58,29 @@ export const PHASE_LABEL: Record<Phase, string> = {
   woundDown: "Wound down",
 };
 
+/**
+ * A refunding raise the creator cancelled (still before its deadline, or past its minimum) rather than one
+ * that missed its minimum. The program keeps no reason; this reads it off the numbers.
+ */
+export function wasCancelled(l: Pick<LaunchJson, "status" | "raised" | "raiseMin" | "raiseDeadline">, nowSec: number): boolean {
+  return l.status === "refunding" && (l.raiseDeadline > nowSec || BigInt(l.raised) >= BigInt(l.raiseMin));
+}
+
+/** What a closed raise still owes its backers: nothing was deposited, every deposit is back, or refunds are open. */
+export type RefundState = "none" | "done" | "open";
+
+export function refundState(l: Pick<LaunchJson, "raised" | "refunded">): RefundState {
+  const raised = BigInt(l.raised);
+  if (raised === 0n) return "none";
+  return BigInt(l.refunded) >= raised ? "done" : "open";
+}
+
+export const REFUND_STATE_LABEL: Record<RefundState, string> = {
+  none: "No deposits",
+  done: "All refunded",
+  open: "Refunds open",
+};
+
 /** One line under the status chip: what a visitor can do on this launch right now. */
 export function phaseExplainer(phase: Phase, venue: LaunchVenue): string {
   const where = venue === "pump" ? "on pump.fun" : "here, on the Holdfast curve";

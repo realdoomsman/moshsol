@@ -12,12 +12,12 @@ import {
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import type { ReactNode } from "react";
-import { useMoshClient, useWindDownBlocker } from "@/lib/chain";
+import { useLoadMoshClient, useWindDownBlocker } from "@/lib/chain";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import { launchId, VENUE_LABEL, venueKindOf } from "@/lib/launch";
 import { pumpSplit } from "@/lib/pump-terms";
 import { useVaultWithdrawals } from "@/lib/queries";
-import { humanError, TX_STAGE_LABEL, useTx } from "@/lib/tx";
+import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
 import { Address } from "../ui/address";
 import { Button } from "../ui/button";
@@ -63,7 +63,7 @@ function blockerText(blocker: WindDownBlocker, l: LaunchSummary, now: number): s
 export function WindDownCard({ launch: l, now, className }: { launch: LaunchSummary; now: number; className?: string }) {
   const { publicKey } = useWallet();
   const { setVisible } = useWalletModal();
-  const client = useMoshClient();
+  const loadClient = useLoadMoshClient();
   const tx = useTx();
   const timing = windDownTimingBlocker(l, now);
   // Balances are only worth reading once the clock rules pass (the SDK checks those first anyway).
@@ -109,7 +109,7 @@ export function WindDownCard({ launch: l, now, className }: { launch: LaunchSumm
   const label = `Wind down $${l.symbol}`;
   let status: ReactNode;
   if (blocker) status = <p className="small text-ink-3">{blockerText(blocker, l, now)}</p>;
-  else if (chain.isError) status = <p className="small text-warn">Couldn&apos;t check the token balances. {humanError(chain.error)}</p>;
+  else if (chain.isError) status = <p className="small text-warn">Couldn&apos;t check the token balances. {chain.error.message}</p>;
   else if (blocker === undefined) status = <p className="small text-ink-3">Checking token balances…</p>;
   else if (!publicKey) {
     status = (
@@ -129,7 +129,10 @@ export function WindDownCard({ launch: l, now, className }: { launch: LaunchSumm
           void tx.run({
             label,
             successMessage: `$${l.symbol} wound down. ${pump ? "The vault sold what it held and all vault SOL is" : "The curve and vault SOL are"} credited to backers.`,
-            build: async (payer) => [pump ? await client.windDownPumpIx(payer, pumpRefOf(l)) : await client.windDownIx(payer, seedKeyOf(l))],
+            build: async (payer) => {
+              const client = await loadClient();
+              return [pump ? await client.windDownPumpIx(payer, pumpRefOf(l)) : await client.windDownIx(payer, seedKeyOf(l))];
+            },
             invalidate: [["backer", launchId(l)], ["wind-down", launchId(l)]],
           })
         }
@@ -143,7 +146,7 @@ export function WindDownCard({ launch: l, now, className }: { launch: LaunchSumm
     <Panel title="Wind-down" className={className}>
       <div className="grid gap-3 px-4 pb-4">
         <p className="small text-ink-2">
-          Once this launch is {MIN_AGE_DAYS} days old, the vault has gone {IDLE_HOURS} h without a trade and wallets outside the vault and{" "}
+          Once this launch is {MIN_AGE_DAYS}&nbsp;days old, the vault has gone {IDLE_HOURS}&nbsp;h without a trade and wallets outside the vault and{" "}
           {pump ? VENUE_LABEL[venueKindOf(l)] : "the curve"} hold {pumpSplit(l.terms).deadHoldersPct}% of ${l.symbol} or less, any wallet can wind it down:{" "}
           {pump
             ? "the vault sells what it holds and all vault SOL goes to backers, pro-rata. That can be less than they put in; it's the worst case."

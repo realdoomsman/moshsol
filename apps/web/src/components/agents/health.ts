@@ -2,7 +2,7 @@ import { agentZones, timeAgo } from "@holdfast/sdk";
 import { formatCountdown } from "@/components/ui/countdown";
 import { AGENT_STALE_SECS } from "@/lib/status";
 import type { AgentDecision, AgentLaunchRow, LaunchSummary } from "@/lib/types";
-import { decisionLabel } from "../band/model";
+import { decisionLabel, windowBudgets } from "../band/model";
 
 export type HealthTone = "ok" | "warn";
 
@@ -18,6 +18,9 @@ export interface VaultHealth {
   sellUsedPct: number;
   buySpent: bigint;
   sellSold: bigint;
+  /** This window's caps; a rolled window shows the caps the next agent trade will open with. */
+  buyCap: bigint;
+  sellCap: bigint;
   resetsInSecs: number | null;
   /** Thresholds for the band meter (spot, EMA, effective buy/sell lines, vault cost). */
   meter: { price: number; ema: number; buyBelow: number; sellAbove: number; avgCost?: number };
@@ -57,8 +60,10 @@ export function vaultHealth(p: {
   const rolled = windowSecs > 0 && now >= row.windowStart + windowSecs;
   const buySpent = rolled ? 0n : BigInt(row.windowSolSpent);
   const sellSold = rolled ? 0n : BigInt(row.windowTokensSold);
-  const buyCap = BigInt(row.windowBuyCap);
-  const sellCap = BigInt(row.windowSellCap);
+  // A rolled window reopens on the next agent trade with caps from the vault as it is now (as the token page shows).
+  const next = rolled && launch ? windowBudgets(launch, now) : null;
+  const buyCap = next ? next.buySol : BigInt(row.windowBuyCap);
+  const sellCap = next ? next.sellTokens : BigInt(row.windowSellCap);
   const resetsInSecs = rolled || windowSecs <= 0 ? null : row.windowStart + windowSecs - now;
 
   const zones = launch ? agentZones(launch, now) : null;
@@ -106,6 +111,8 @@ export function vaultHealth(p: {
     sellUsedPct: usedPct(sellSold, sellCap),
     buySpent,
     sellSold,
+    buyCap,
+    sellCap,
     resetsInSecs,
     meter,
   };

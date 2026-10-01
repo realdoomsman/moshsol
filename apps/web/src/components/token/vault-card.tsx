@@ -226,7 +226,7 @@ export function VaultCard({
                 </RuleTooltip>
               }
             >
-              {pb.nextAt === undefined ? "—" : pb.nextAt > now ? `${formatCountdown(pb.nextAt - now)} left` : `over · pays once ${fmtMult(split.payoutMult)} and strong`}
+              {pb.nextAt === undefined ? "—" : pb.nextAt > now ? `${formatCountdown(pb.nextAt - now)} left` : `elapsed · pays once ${fmtMult(split.payoutMult)} and strong`}
             </Row>
             <Row
               label={

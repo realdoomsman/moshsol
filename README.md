@@ -815,6 +815,13 @@ Web (`apps/web`, read at build time):
 `ACCOUNTS_URL` (default `http://127.0.0.1:8789`) is the exception: read by the web server at runtime, never sent
 to browsers — where `/api/auth/*` and `/api/wallet/*` are proxied (Railway: `http://accounts.railway.internal:8789`).
 
+Every page is served with a nonce-based Content-Security-Policy (`src/proxy.ts`, built in `src/lib/csp.ts`):
+`connect-src` is derived from the origins of the `NEXT_PUBLIC_*` URLs above (plus `ws://localhost:*` for Mobile Wallet
+Adapter), `img-src` from the indexer origin and the Arweave/IPFS gateways in `IMAGE_GATEWAY_HOSTS`
+(`src/lib/og-image.ts`), `frame-ancestors 'none'`. A new client origin or image host must be added there, and a new
+hand-written inline `<script>` must be a constant listed in `INLINE_SCRIPT_HASHES`; nonces need per-request HTML, so
+making a page static/ISR needs a hash-based policy for it.
+
 Accounts (`apps/accounts`; `pnpm dev`/`start` also read `apps/accounts/.env`, which never overrides variables
 already set in the shell — under `pnpm dev` all services share it, so don't export `DB_PATH` or `HOST` there):
 
@@ -991,7 +998,7 @@ failure, and watch paths so a push only rebuilds what it touched (`apps/<service
 | `indexer` | `RPC_URL`, `WS_URL`, `PUBLIC_URL` (its own Railway domain), `PORT=8787`, `POLL_MS`, `FULL_REFRESH_MS`, `HOLDERS_TTL_MS`, `CHAIN_CHECK_MS`, `ADMIN_TOKEN` (secret, comment moderation), `TRUST_PROXY=true` (Railway's edge rewrites `X-Forwarded-For`; per-IP limits then key on the real client). Mainnet adds `STORAGE=arweave`, `ARWEAVE_KEYPAIR_JSON` (secret), `ARWEAVE_DAILY_BUDGET_SOL=0.25`, `RPC_PROXY=1`, `RPC_PROXY_LIMIT_PER_MIN=600` | `/api/health` | Volume at `/data` (SQLite DB with comments/profiles, plus uploads when `STORAGE=local`). |
 | `agent` | `RPC_URL`, `AGENT_KEYPAIR_JSON` (secret), `PORT=8788`, `POLL_MS`; optionally `PRIORITY_MICROLAMPORTS` / `MAX_PRIORITY_MICROLAMPORTS` | `/status` | Keep ~0.1+ SOL on the agent key for fees (a trade costs ≈0.0000083 SOL at the priority floor, ≤0.00007 SOL at the cap); `/status` → `balanceSol` shows what is left. |
 | `accounts` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `WALLET_MASTER_KEY`, `SESSION_SECRET` (secrets), `SITE_URL` (the web's public origin, e.g. `https://holdfast.fun`), `PORT=8789`, `TRUST_PROXY=true` | `/health` | No public domain: only the web reaches it, over the private network at `http://accounts.railway.internal:8789` (the Dockerfile binds `::`). Volume at `/data` (`DB_PATH=/data/accounts.db`) **with backups enabled** — the DB plus `WALLET_MASTER_KEY` are the only copy of every Google wallet (see [Accounts](#accounts-sign-in-with-google)). |
-| `web` | `NEXT_PUBLIC_CLUSTER` (`devnet` / `mainnet-beta`), `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_WS_URL` (mainnet: the indexer's `/rpc`, `/rpc-ws`), `NEXT_PUBLIC_INDEXER_URL`, `NEXT_PUBLIC_AGENT_URL`, `NEXT_PUBLIC_SITE_URL`, `PORT=3000`, `ACCOUNTS_URL=http://accounts.railway.internal:8789` (runtime) | `/` | Pages are server-rendered with live indexer data. `NEXT_PUBLIC_*` are baked in at build time — redeploy after changing them. |
+| `web` | `NEXT_PUBLIC_CLUSTER` (`devnet` / `mainnet-beta`), `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_WS_URL` (mainnet: the indexer's `/rpc`, `/rpc-ws`), `NEXT_PUBLIC_INDEXER_URL`, `NEXT_PUBLIC_AGENT_URL`, `NEXT_PUBLIC_SITE_URL`, `PORT=3000`, `ACCOUNTS_URL=http://accounts.railway.internal:8789` (runtime) | `/` | Pages are server-rendered with live indexer data: identical indexer/agent GETs are shared between renders for 1 s (in flight included), so concurrent page views cost one upstream request per URL, and a render waits ≤ 1.5 s per request before leaving that data to the browser. All of it comes from the web service's IP, so it shares one indexer `RATE_LIMIT_PER_MIN` budget. `NEXT_PUBLIC_*` are baked in at build time — redeploy after changing them. |
 
 **Deploying:** push to `master` (mainnet environment; devnet follows the `devnet` branch until it is moved back, see above). Manual deploy of local changes: `railway up --service indexer|agent|accounts|web --environment <env> --ci`.
 **CI** (GitHub Actions): `CI` typechecks everything, runs the agent's and the accounts service's tests (`pnpm --filter @holdfast/agent test`,

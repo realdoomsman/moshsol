@@ -16,16 +16,17 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "../..");
-const FADE = 0.35;
-const FPS = 30;
+export const FADE = 0.35;
+export const FPS = 30;
 
 /**
  * Segment plans per scene: `[from, to, crop?]`, times as "mark±seconds" (past the last frame holds it).
  * Crops are CSS px boxes, or `rect` (a box the capture remembered) padded and fitted on the page colour.
  */
-const PLANS = {
+export const PLANS = {
   "back-a-raise": {
     desktop: [["start+0.4", "landed+3.2"]],
     mobile: [["start+0.4", "landed+3.2"]],
@@ -65,11 +66,11 @@ const PLANS = {
   },
 };
 
-const run = (args, opts = {}) => execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args], { stdio: ["ignore", "inherit", "inherit"], ...opts });
-const probe = (file, what) => execFileSync("ffprobe", ["-v", "error", "-show_entries", what, "-of", "csv=p=0", file]).toString().trim();
-const duration = (file) => Number(probe(file, "format=duration"));
+export const run = (args, opts = {}) => execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args], { stdio: ["ignore", "inherit", "inherit"], ...opts });
+export const probe = (file, what) => execFileSync("ffprobe", ["-v", "error", "-show_entries", what, "-of", "csv=p=0", file]).toString().trim();
+export const duration = (file) => Number(probe(file, "format=duration"));
 
-function timeOf(expr, marks) {
+export function timeOf(expr, marks) {
   const m = /^(\w+)([+-][\d.]+)?$/.exec(expr);
   if (!m || marks[m[1]] === undefined) throw new Error(`bad time ${expr}`);
   return marks[m[1]] + Number(m[2] ?? 0);
@@ -108,7 +109,7 @@ function cropBox(spec, t) {
 }
 
 /** Renders one segment to an intermediate MP4 at `out` size (lanczos, 30 fps, visually lossless). */
-function renderSegment(capDir, t, seg, size, file) {
+export function renderSegment(capDir, t, seg, size, file) {
   const [fromExpr, toExpr, crop] = seg;
   const from = typeof fromExpr === "number" ? fromExpr : timeOf(fromExpr, t.marks);
   const to = typeof toExpr === "number" ? toExpr : timeOf(toExpr, t.marks);
@@ -124,6 +125,8 @@ function renderSegment(capDir, t, seg, size, file) {
     const d = Math.max(0.001, next - start);
     lines.push(`file '${path.resolve(capDir, frames[i].file).replace(/\\/g, "/").replace(/'/g, "'\\''")}'`, `duration ${d.toFixed(4)}`);
   }
+  // The concat demuxer only honours a `duration` when another entry follows, and gives that trailing entry
+  // the previous duration again, so the trailing line is cut off with `-t`.
   const last = frames.findLast((f) => f.ts < to) ?? frames.at(-1);
   lines.push(`file '${path.resolve(capDir, last.file).replace(/\\/g, "/")}'`);
   const list = `${file}.ffconcat`;
@@ -134,12 +137,12 @@ function renderSegment(capDir, t, seg, size, file) {
     ? `scale=${size.w}:${size.h}:force_original_aspect_ratio=decrease:flags=lanczos:out_range=tv,pad=${size.w}:${size.h}:(ow-iw)/2:(oh-ih)/2:color=0x0F0F0D`
     : `scale=${size.w}:${size.h}:flags=lanczos:out_range=tv`;
   const vf = `crop=${box.w}:${box.h}:${box.x}:${box.y},${fit},fps=${FPS},format=yuv420p`;
-  run(["-f", "concat", "-safe", "0", "-i", list, "-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", "10", "-an", file]);
+  run(["-f", "concat", "-safe", "0", "-i", list, "-vf", vf, "-t", (to - from).toFixed(4), "-c:v", "libx264", "-preset", "medium", "-crf", "10", "-an", file]);
   return file;
 }
 
 /** Joins segment files with cross-fades into `out`. */
-function joinSegments(files, out) {
+export function joinSegments(files, out) {
   if (files.length === 1) {
     fs.copyFileSync(files[0], out);
     return;
@@ -276,22 +279,24 @@ function report(files) {
   }
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
-switch (cmd) {
-  case "site": {
-    const secs = encodeSite(path.resolve(rest[0]), rest[1]);
-    console.log(`duration ${secs.toFixed(2)} s`);
-    break;
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  const [cmd, ...rest] = process.argv.slice(2);
+  switch (cmd) {
+    case "site": {
+      const secs = encodeSite(path.resolve(rest[0]), rest[1]);
+      console.log(`duration ${secs.toFixed(2)} s`);
+      break;
+    }
+    case "x":
+      encodeX(path.resolve(rest[0]), rest[1]);
+      break;
+    case "hero":
+      encodeHero(path.resolve(rest[0]), rest.slice(1));
+      break;
+    case "manifest":
+      updateManifest(rest);
+      break;
+    default:
+      throw new Error("usage: record-demos-encode.mjs site|x|hero|manifest …");
   }
-  case "x":
-    encodeX(path.resolve(rest[0]), rest[1]);
-    break;
-  case "hero":
-    encodeHero(path.resolve(rest[0]), rest.slice(1));
-    break;
-  case "manifest":
-    updateManifest(rest);
-    break;
-  default:
-    throw new Error("usage: record-demos-encode.mjs site|x|hero|manifest …");
 }

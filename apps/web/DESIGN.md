@@ -46,6 +46,8 @@ ground (the name is historical), `surface` panels, `raised` popovers/hover, `sun
   (row wash, 800 ms), `animate-outline-up|down` (card outline), `animate-expand-in` (insert; set `--expand-to`),
   `animate-roll-up|down`, `animate-appear` (after 300 ms), `animate-pop-in`, `animate-live` (the one idle pulse per
   page — the header network dot already uses it; don't add another). Reduced motion is handled globally.
+  JS animation uses `m.*` from `motion/react-m` (never `motion.*`): `Providers` wraps the app in
+  `<LazyMotion strict>`, which loads the features (`lib/motion-features.ts`) after hydration.
 
 ## Type (utility classes, desktop values from 768px)
 

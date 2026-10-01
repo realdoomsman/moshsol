@@ -41,6 +41,9 @@ export const DEFAULT_PUMP_SPLIT: PumpSplit = {
   launchFeePct: 1,
 };
 
+/** `platform.buyback_mint` until the Holdfast token exists (the default pubkey): buyback pools accrue, nothing burns yet. */
+export const BUYBACK_MINT_UNSET = "11111111111111111111111111111111";
+
 export type PumpTermsLike = {
   burnShareBps: number;
   launchFeeBps: number;

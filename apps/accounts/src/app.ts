@@ -143,11 +143,15 @@ export async function buildApp(opts: AppOptions, deps: AppDeps): Promise<Fastify
     return { idHash, user };
   };
 
-  /** Site-relative path to land on after sign-in; anything else (absolute, protocol-relative, overlong) → `/`. */
+  /**
+   * Site-relative path to land on after sign-in; anything else (absolute, protocol-relative, overlong) → `/`. Checked
+   * after normalization too: `/..//evil.example` resolves to the path `//evil.example`, which is protocol-relative.
+   */
   const safeReturn = (raw: unknown): string => {
     if (typeof raw !== "string" || !/^\/(?![/\\])/.test(raw) || raw.length > RETURN_MAX_LENGTH) return "/";
     const url = new URL(raw, opts.siteOrigin);
-    return url.origin === opts.siteOrigin ? `${url.pathname}${url.search}` : "/";
+    const path = `${url.pathname}${url.search}`;
+    return url.origin === opts.siteOrigin && !path.startsWith("//") ? path : "/";
   };
 
   const backToSite = (reply: FastifyReply, returnTo: string, error?: "cancelled" | "expired" | "failed") => {

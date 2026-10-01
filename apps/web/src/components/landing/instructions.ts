@@ -113,14 +113,14 @@ function known(s: PumpSplit): Record<string, Known> {
       group: "Vault agent",
       caller: "Agent authority",
       moves: "Vault SOL → pump.fun; tokens → vault",
-      description: `Buys back dips on pump.fun with the vault's SOL: only at least the band under the EMA, within the window budget and impact limit, and never below the vault's ${s.minVaultSol} SOL floor.`,
+      description: `Buys back dips on pump.fun with the vault's SOL: only at least the band under the EMA, at or below the vault's average cost (or a buy-back below the average sell), within the window budget and impact limit, and never below the vault's ${s.minVaultSol} SOL floor.`,
     },
     agent_sell_pump: {
       group: "Vault agent",
       caller: "Agent authority",
       moves: "Vault tokens → pump.fun; all SOL → vault",
       description:
-        "Sells slowly into strength on pump.fun: only at least the band over the EMA, within the window budget and impact limit. Every lamport it receives stays in the vault as liquid SOL.",
+        "Sells slowly into strength on pump.fun: only at least the band over the EMA, at a fill of at least the vault's average cost plus the band, within the window budget and impact limit. Every lamport it receives stays in the vault as liquid SOL.",
     },
     agent_buy: {
       group: "Vault agent",

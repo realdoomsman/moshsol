@@ -13,6 +13,7 @@ import {
   candlesQuery,
   commentsQuery,
   depositFeed,
+  FEED_PAGE,
   feedHeadQuery,
   holdersQuery,
   launchQuery,
@@ -56,6 +57,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   return {
     title,
     description,
+    alternates: { canonical: `/launch/${id}` },
     openGraph: { title: `${title} · Holdfast`, description, type: "website", siteName: "Holdfast" },
     twitter: { card: "summary_large_image", title: `${title} · Holdfast`, description },
   };
@@ -71,8 +73,13 @@ export default async function LaunchPage({ params }: Params) {
     prefetch(client, platformQuery()),
     // The chart counts 1m candles to pick its timeframe; the trades tab is the first one below it.
     prefetch(client, candlesQuery(id, 60)),
-    prefetch(client, recentTradesQuery(id, CHART_TRADES)),
-    prefetch(client, feedHeadQuery(tradeFeed(id))),
+    // The trades tab's first page is the newest FEED_PAGE of the chart's trades: one request fills both.
+    (async () => {
+      const recent = recentTradesQuery(id, CHART_TRADES);
+      await prefetch(client, recent);
+      const trades = client.getQueryData(recent.queryKey)?.trades;
+      if (trades) client.setQueryData(feedHeadQuery(tradeFeed(id)).queryKey, trades.slice(0, FEED_PAGE));
+    })(),
     prefetch(client, holdersQuery(id, HOLDERS_LIMIT)),
     prefetch(client, backersQuery(id), BACKERS_DEADLINE_MS),
     prefetch(client, agentStatusQuery(), AGENT_STATUS_DEADLINE_MS),

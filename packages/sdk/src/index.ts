@@ -4,6 +4,8 @@ export * from "./pump";
 export * from "./math";
 export * from "./merkle";
 export * from "./format";
+export * from "./program";
+export * from "./launch";
 export * from "./client";
 export * from "./agents";
 export * from "./tx";

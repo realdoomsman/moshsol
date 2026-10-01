@@ -50,8 +50,10 @@ export function Stat({
 }
 
 /**
- * A 1px-ruled strip of stats (token stat row, portfolio summary). Cells share the width and wrap
- * to a 2-column grid below 768px (or scroll with `scroll`).
+ * A 1px-ruled strip of stats (token stat row, portfolio summary). A 2-column grid below 768px; from there
+ * cells share each row but wrap rather than shrink past a readable width (a seven-cell strip at 768px
+ * otherwise truncates every number), ruled by 1px shadows that the frame clips at its edges. `scroll`
+ * keeps one scrolling row instead.
  */
 export function StatRow({ children, scroll, className }: { children: ReactNode; scroll?: boolean; className?: string }) {
   return (
@@ -59,9 +61,11 @@ export function StatRow({ children, scroll, className }: { children: ReactNode; 
       className={cn(
         scroll
           ? "no-scrollbar flex overflow-x-auto [&>*]:min-w-36 [&>*]:shrink-0"
-          : "grid grid-cols-2 md:auto-cols-fr md:grid-flow-col md:grid-cols-none",
+          : "grid grid-cols-2 md:flex md:flex-wrap md:overflow-hidden md:[&>*]:shrink-0 md:[&>*]:grow md:[&>*]:basis-44",
         "border-y border-line [&>*]:border-line [&>*]:px-4 [&>*]:py-3",
-        scroll ? "[&>*+*]:border-l" : "max-md:[&>*:nth-child(even)]:border-l max-md:[&>*:nth-child(n+3)]:border-t md:[&>*+*]:border-l",
+        scroll
+          ? "[&>*+*]:border-l"
+          : "max-md:[&>*:nth-child(even)]:border-l max-md:[&>*:nth-child(n+3)]:border-t md:[&>*]:shadow-[-1px_0_0_0_var(--color-line),0_-1px_0_0_var(--color-line)]",
         className,
       )}
     >

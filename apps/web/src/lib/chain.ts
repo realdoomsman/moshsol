@@ -3,7 +3,6 @@
 import {
   curveOf,
   fetchVenueState,
-  MoshClient,
   pumpRefOf,
   seedKeyOf,
   TOKEN_2022_PROGRAM_ID,
@@ -12,45 +11,26 @@ import {
   splAta,
   type CurveState,
   type LaunchJson,
+  type MoshClient,
 } from "@holdfast/sdk";
 import { getMint } from "@solana/spl-token";
 import { useConnection } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useCallback, useMemo } from "react";
 import { launchId, type LaunchRef } from "./launch";
 
 /** What the launch-scoped chain hooks need: the id their queries are keyed by, the PDA seed and the token program. */
 type ChainLaunch = LaunchRef & Pick<LaunchJson, "createKey">;
 
-/** Read-only program client (instruction builders need no wallet). */
-export function useMoshClient(): MoshClient {
+/**
+ * Loader of the read-only program client for the current connection. A dynamic import on purpose:
+ * Anchor and the IDL arrive in their own chunk (`./program`) on the first call — when a transaction
+ * is built or a program account decoded — not with the page.
+ */
+export function useLoadMoshClient(): () => Promise<MoshClient> {
   const { connection } = useConnection();
-  return useMemo(() => new MoshClient(connection), [connection]);
-}
-
-/** Lamport balance kept live through an account subscription. */
-export function useSolBalance(owner: PublicKey | null) {
-  const { connection } = useConnection();
-  const qc = useQueryClient();
-  const address = owner?.toBase58() ?? null;
-  useEffect(() => {
-    if (!address) return;
-    const id = connection.onAccountChange(
-      new PublicKey(address),
-      (acc) => qc.setQueryData(["sol", address], BigInt(acc.lamports)),
-      { commitment: "confirmed" },
-    );
-    return () => {
-      void connection.removeAccountChangeListener(id);
-    };
-  }, [address, connection, qc]);
-  return useQuery({
-    queryKey: ["sol", address],
-    enabled: !!address,
-    queryFn: async () => BigInt(await connection.getBalance(new PublicKey(address!), "confirmed")),
-    refetchInterval: 20_000,
-  });
+  return useCallback(async () => (await import("./program")).moshClient(connection), [connection]);
 }
 
 /** The wallet's token balance in base units (0 when the account does not exist yet); Token-2022 ATA on Holdfast launches, SPL Token on pump launches. */
@@ -78,13 +58,13 @@ export interface BackerState {
 }
 
 export function useBackerAccount(l: ChainLaunch, owner: PublicKey | null) {
-  const client = useMoshClient();
+  const loadClient = useLoadMoshClient();
   const address = owner?.toBase58() ?? null;
   return useQuery({
     queryKey: ["backer", launchId(l), address],
     enabled: !!address,
     queryFn: async (): Promise<BackerState | null> => {
-      const b = await client.fetchBacker(seedKeyOf(l), new PublicKey(address!));
+      const b = await (await loadClient()).fetchBacker(seedKeyOf(l), new PublicKey(address!));
       return b ? { deposited: BigInt(b.deposited.toString()), feesClaimed: BigInt(b.feesClaimed.toString()) } : null;
     },
   });
@@ -92,13 +72,13 @@ export function useBackerAccount(l: ChainLaunch, owner: PublicKey | null) {
 
 /** Raw on-chain whitelist root (hex) — used to verify indexer-served member lists. */
 export function useChainWhitelistRoot(l: ChainLaunch, enabled: boolean) {
-  const client = useMoshClient();
+  const loadClient = useLoadMoshClient();
   return useQuery({
     queryKey: ["launch-account", launchId(l), "whitelist"],
     enabled,
     staleTime: Infinity,
     queryFn: async () => {
-      const account = await client.fetchLaunch(seedKeyOf(l));
+      const account = await (await loadClient()).fetchLaunch(seedKeyOf(l));
       return account ? Buffer.from(account.whitelistRoot as number[]).toString("hex") : null;
     },
   });
@@ -110,12 +90,20 @@ export function useChainWhitelistRoot(l: ChainLaunch, enabled: boolean) {
  * program events, so it polls.
  */
 export function useWindDownBlocker(l: Pick<LaunchJson, "address" | "mint" | "venue" | "pump">, enabled: boolean) {
-  const client = useMoshClient();
+  const { connection } = useConnection();
   return useQuery({
     queryKey: ["wind-down", launchId(l)],
     enabled,
     refetchInterval: 30_000,
-    queryFn: () => client.windDownBlocker(l),
+    queryFn: async () => {
+      const program = await import("./program");
+      try {
+        return await program.moshClient(connection).windDownBlocker(l);
+      } catch (err) {
+        // The query error is shown as is: program-error text needs the IDL, which only this chunk carries.
+        throw new Error(program.humanError(err));
+      }
+    },
   });
 }
 

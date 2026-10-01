@@ -50,8 +50,8 @@ export function faqItems(p: PlatformInfo["params"] | null): Qa[] {
     {
       q: "Why keep some of the raise as SOL?",
       a: p
-        ? `The reserve is what the vault agent buys dips with. It can only buy at least ${pctFromBps(p.agentBandBps)} under the EMA and at or below the vault's average cost, so the reserve is never spent chasing price. What the agent sells joins it: all sale proceeds stay in the vault.`
-        : "The reserve is what the vault agent buys dips with. It can only buy under the EMA band and at or below the vault's average cost, so the reserve is never spent chasing price. What the agent sells joins it: all sale proceeds stay in the vault.",
+        ? `The reserve is what the vault agent buys dips with. It can only buy at least ${pctFromBps(p.agentBandBps)} under the EMA, and only at or below the vault's average cost or as a buy-back under its average sell price, so the reserve is never spent chasing price. What the agent sells joins it: all sale proceeds stay in the vault.`
+        : "The reserve is what the vault agent buys dips with. It can only buy under the EMA band, and only at or below the vault's average cost or as a buy-back under its average sell price, so the reserve is never spent chasing price. What the agent sells joins it: all sale proceeds stay in the vault.",
       href: "/docs/agents",
       more: "Agent rules",
     },

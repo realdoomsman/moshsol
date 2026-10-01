@@ -31,6 +31,13 @@ const statusOf = (err: unknown): number => {
   return typeof code === "number" && code >= 400 && code < 600 ? code : 500;
 };
 
+const SECURITY_HEADERS = {
+  "strict-transport-security": "max-age=31536000",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+  "referrer-policy": "no-referrer",
+};
+
 /** Fastify instance with plugins, error handling and `/files` static serving (no API routes yet). */
 export async function createServer(opts: ServerOptions): Promise<FastifyInstance> {
   for (const dir of ["img", "meta"]) fs.mkdirSync(path.join(opts.filesDir, dir), { recursive: true });
@@ -58,6 +65,11 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
     void reply.status(404).send({ error: "not found" });
   });
 
+  // Every response (API JSON, /files, errors, 429s): no MIME sniffing, never framed, no Referer to linked sites,
+  // HTTPS only once seen over HTTPS (browsers ignore HSTS on plain http, so local stacks are unaffected).
+  app.addHook("onRequest", async (_req, reply) => {
+    void reply.headers(SECURITY_HEADERS);
+  });
   await app.register(cors, { origin: "*", methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] });
   // After CORS so 429s still carry Access-Control-Allow-Origin and browsers can read them.
   registerRateLimits(app, { perMin: opts.rateLimitPerMin, uploadPerMin: opts.uploadLimitPerMin });
@@ -77,7 +89,6 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
     maxAge: "365d",
     immutable: true,
     setHeaders(reply, filePath) {
-      reply.header("X-Content-Type-Options", "nosniff");
       if (filePath.endsWith(".svg")) {
         reply.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'");
       }
@@ -103,6 +114,6 @@ export function registerApi(
   app.get("/ws", { websocket: true }, (socket) => deps.hub.add(socket));
   registerRoutes(app, deps);
   registerSocialRoutes(app, { ...opts, store: deps.store, hub: deps.hub, holders: deps.holders, price: deps.price });
-  registerDiscoveryRoutes(app, { store: deps.store, price: deps.price });
+  registerDiscoveryRoutes(app, { store: deps.store, price: deps.price, summaries: deps.summaries });
   registerUpload(app, opts);
 }

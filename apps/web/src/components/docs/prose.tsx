@@ -76,17 +76,23 @@ export function Code({ children, label }: { children: string; label?: string }) 
         <span className="label text-ink-3">{label ?? "Code"}</span>
         <CopyButton value={children} label="Copy code" />
       </div>
-      <pre className="overflow-x-auto px-4 py-3.5 font-mono text-[13px] leading-[21px] text-ink">
+      {/* Focusable so keyboard users can scroll long lines sideways (WCAG 2.1.1). */}
+      <pre
+        tabIndex={0}
+        role="region"
+        aria-label={label ?? "Code"}
+        className="overflow-x-auto px-4 py-3.5 font-mono text-[13px] leading-[21px] text-ink focus-visible:outline-offset-[-2px]"
+      >
         <code>{children}</code>
       </pre>
     </div>
   );
 }
 
-/** A two-or-more column reference table with 1px rules. */
+/** A two-or-more column reference table with 1px rules; scrolls sideways (and takes focus to) on narrow screens. */
 export function Table({ head, rows, className }: { head: ReactNode[]; rows: ReactNode[][]; className?: string }) {
   return (
-    <div className={cn("mt-4 overflow-x-auto", className)}>
+    <div tabIndex={0} role="region" aria-label="Scrollable table" className={cn("mt-4 overflow-x-auto", className)}>
       <table className="w-full min-w-[480px] border-collapse">
         <thead>
           <tr>

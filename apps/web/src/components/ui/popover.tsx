@@ -53,7 +53,10 @@ export function Popover({
   label?: string;
   /** Fixed width in px (default: fit content, min 200). */
   width?: number;
-  /** Move focus into the overlay when it opens (first focusable element). */
+  /**
+   * Move focus into the overlay when it opens: the first menu item, the selected option of a listbox,
+   * otherwise the first focusable element.
+   */
   focusOnOpen?: boolean;
   className?: string;
 }) {
@@ -71,12 +74,23 @@ export function Popover({
   );
   const close = useCallback(() => setOpen(false), [setOpen]);
 
+  // `useFloating` keeps the overlay `visibility: hidden` until it is positioned, and hidden elements can't
+  // take focus: move focus in on the next frame, once it is placed (as Dialog does).
+  useEffect(() => {
+    if (!open || !focusOnOpen) return;
+    const id = window.requestAnimationFrame(() => {
+      const root = floatingRef.current;
+      const first =
+        root?.querySelector<HTMLElement>('[role="menuitem"], [role="option"][aria-selected="true"]') ??
+        root?.querySelector<HTMLElement>('[role="option"]:not([aria-disabled="true"])') ??
+        focusables(root)[0];
+      first?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [open, focusOnOpen, floatingRef]);
+
   useEffect(() => {
     if (!open) return;
-    if (focusOnOpen) {
-      const first = floatingRef.current?.querySelector<HTMLElement>('[role="menuitem"]') ?? focusables(floatingRef.current)[0];
-      first?.focus({ preventScroll: true });
-    }
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
       if (!floatingRef.current?.contains(t) && !anchorRef.current?.contains(t)) close();
@@ -93,7 +107,7 @@ export function Popover({
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, focusOnOpen, close, anchorRef, floatingRef]);
+  }, [open, close, anchorRef, floatingRef]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {

@@ -48,13 +48,21 @@ function httpUrl(s: string): URL | null {
   }
 }
 
-/** Social link: an http(s) URL or a bare/@ handle, at most 200 characters. */
+/** Hosts an X / Telegram link may point at: the site renders it with that platform's icon and name. */
+const SOCIAL_HOSTS: Record<string, RegExp> = {
+  twitter: /^((www|mobile)\.)?(x|twitter)\.com$/i,
+  telegram: /^(www\.)?(t\.me|telegram\.me)$/i,
+};
+
+/** Social link: an http(s) URL (on X / Telegram for those two labels) or a bare/@ handle, at most 200 characters. */
 export function cleanSocial(raw: unknown, label: string): string | null {
   const s = cleanText(raw, label, 200);
   if (s === null) return null;
   if (HANDLE.test(s)) return s;
   const u = httpUrl(s);
   if (!u) throw new ValidationError(`${label} must be an http(s) URL or a handle`);
+  const host = SOCIAL_HOSTS[label];
+  if (host && !host.test(u.hostname)) throw new ValidationError(`${label} must be a handle or a link on ${label === "twitter" ? "x.com" : "t.me"}`);
   return u.toString();
 }
 

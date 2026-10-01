@@ -7,7 +7,7 @@ import {
   type TransactionError,
   type TransactionInstruction,
 } from "@solana/web3.js";
-import { SAME_SLOT_TRADE_MESSAGE, describeError } from "./client";
+import { SAME_SLOT_TRADE_MESSAGE, describeError } from "./program";
 
 /**
  * Transaction landing shared by the agent, the web app and the scripts: compute limits sized from a

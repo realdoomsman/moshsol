@@ -1,0 +1,27 @@
+1
+00:00:00,500 --> 00:00:03,710
+Until launch, nothing trades.
+
+2
+00:00:04,860 --> 00:00:09,045
+Then one instruction does two
+things: it creates the token on
+
+3
+00:00:09,045 --> 00:00:14,052
+pump.fun, and it makes the first buy
+with the backers' pool. Create, then
+
+4
+00:00:14,052 --> 00:00:16,648
+buy. Nothing can get in between.
+
+5
+00:00:17,448 --> 00:00:22,296
+The bundle lands in the program
+vault, and the token is live.
+
+6
+00:00:23,096 --> 00:00:25,494
+holdfast.fun
+

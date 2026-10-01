@@ -5,12 +5,13 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { useMemo, useState, type ReactNode } from "react";
-import { useBackerAccount, useChainWhitelistRoot, useMoshClient, useSolBalance } from "@/lib/chain";
+import { useBackerAccount, useChainWhitelistRoot, useLoadMoshClient } from "@/lib/chain";
 import { fmtLamports, fmtTokens, pctOf } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
-import { launchId, type Phase } from "@/lib/launch";
+import { launchId, refundState, wasCancelled, type Phase } from "@/lib/launch";
 import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { usePlatform } from "@/lib/queries";
+import { useSolBalance } from "@/lib/sol-balance";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
 import { RefundGlyph } from "../brand/glyphs";
@@ -101,7 +102,7 @@ function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSumm
 export function BackPanel({ launch: l, phase, bare, className }: { launch: LaunchSummary; phase: Phase; bare?: boolean; className?: string }) {
   const { publicKey } = useWallet();
   const { setVisible } = useWalletModal();
-  const client = useMoshClient();
+  const loadClient = useLoadMoshClient();
   const platform = usePlatform();
   const sol = useSolBalance(publicKey);
   const backer = useBackerAccount(l, publicKey);
@@ -156,7 +157,7 @@ export function BackPanel({ launch: l, phase, bare, className }: { launch: Launc
     const sig = await tx.run({
       label: `Back $${l.symbol}`,
       successMessage: `Deposited ${fmtLamports(effective)} SOL into the $${l.symbol} raise`,
-      build: async (payer) => [await client.depositIx(payer, seedKeyOf(l), effective, proof ?? [])],
+      build: async (payer) => [await (await loadClient()).depositIx(payer, seedKeyOf(l), effective, proof ?? [])],
       invalidate: [["backer", launchId(l)]],
     });
     if (sig) setAmount("");
@@ -244,7 +245,7 @@ export function BackPanel({ launch: l, phase, bare, className }: { launch: Launc
  */
 export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSummary; phase: Phase; className?: string }) {
   const { publicKey } = useWallet();
-  const client = useMoshClient();
+  const loadClient = useLoadMoshClient();
   const tx = useTx();
   const [confirmCancel, setConfirmCancel] = useState(false);
   const isCreator = publicKey?.toBase58() === l.creator;
@@ -275,11 +276,14 @@ export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSum
                 label: launchLabel,
                 successMessage: `$${l.symbol} is live. The bundle is in the vault.`,
                 signers: mint ? [mint] : undefined,
-                build: async (payer) => [
-                  mint
-                    ? await client.launchPumpIx({ cranker: payer, launch: new PublicKey(l.address), mint: mint.publicKey })
-                    : await client.launchIx(payer, seedKeyOf(l)),
-                ],
+                build: async (payer) => {
+                  const client = await loadClient();
+                  return [
+                    mint
+                      ? await client.launchPumpIx({ cranker: payer, launch: new PublicKey(l.address), mint: mint.publicKey })
+                      : await client.launchIx(payer, seedKeyOf(l)),
+                  ];
+                },
               });
             }}
           >
@@ -305,7 +309,7 @@ export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSum
                       .run({
                         label: cancelLabel,
                         successMessage: "Raise cancelled. Refunds are open.",
-                        build: async (payer) => [await client.cancelLaunchIx(payer, seedKeyOf(l))],
+                        build: async (payer) => [await (await loadClient()).cancelLaunchIx(payer, seedKeyOf(l))],
                       })
                       .then(() => setConfirmCancel(false))
                   }
@@ -329,11 +333,11 @@ export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSum
 export function RefundPanel({ launch: l, phase, className }: { launch: LaunchSummary; phase: Phase; className?: string }) {
   const { publicKey } = useWallet();
   const { setVisible } = useWalletModal();
-  const client = useMoshClient();
+  const loadClient = useLoadMoshClient();
   const backer = useBackerAccount(l, publicKey);
   const tx = useTx();
   const deposited = backer.data?.deposited ?? 0n;
-  const allRefunded = BigInt(l.raised) > 0n && BigInt(l.refunded) >= BigInt(l.raised);
+  const refunds = refundState(l);
   return (
     <Panel title="Refunds" className={className}>
       <div className="grid gap-4 px-4 pb-4">
@@ -343,8 +347,8 @@ export function RefundPanel({ launch: l, phase, className }: { launch: LaunchSum
           </Row>
           {publicKey ? <Row label="Your deposit">{backer.isLoading ? "…" : `${fmtLamports(deposited)} SOL`}</Row> : null}
         </dl>
-        {allRefunded && deposited === 0n ? (
-          <p className="small text-ink-2">Every deposit has been refunded.</p>
+        {refunds !== "open" && deposited === 0n ? (
+          <p className="small text-ink-2">{refunds === "none" ? "Nobody deposited before this raise closed." : "Every deposit has been refunded."}</p>
         ) : publicKey ? (
           <Button
             variant="primary"
@@ -357,7 +361,7 @@ export function RefundPanel({ launch: l, phase, className }: { launch: LaunchSum
               void tx.run({
                 label: `Refund $${l.symbol}`,
                 successMessage: `Refunded ${fmtLamports(deposited)} SOL`,
-                build: async (payer) => [await client.refundIx(payer, seedKeyOf(l))],
+                build: async (payer) => [await (await loadClient()).refundIx(payer, seedKeyOf(l))],
                 invalidate: [["backer", launchId(l)]],
               })
             }
@@ -369,7 +373,7 @@ export function RefundPanel({ launch: l, phase, className }: { launch: LaunchSum
             Connect wallet to refund
           </Button>
         )}
-        {phase === "failed" ? <p className="micro text-ink-3">The first refund marks the raise as failed on-chain.</p> : null}
+        {phase === "failed" && refunds === "open" ? <p className="micro text-ink-3">The first refund marks the raise as failed on-chain.</p> : null}
       </div>
     </Panel>
   );
@@ -378,8 +382,7 @@ export function RefundPanel({ launch: l, phase, className }: { launch: LaunchSum
 /** Why the raise ended, for the refunding banner. */
 export function useRefundReason(l: LaunchSummary): string {
   const now = useNow(60_000);
-  const cancelled = l.status === "refunding" && (l.raiseDeadline > now || BigInt(l.raised) >= BigInt(l.raiseMin));
-  return cancelled
+  return wasCancelled(l, now)
     ? "The creator cancelled this raise. Every backer can refund 100%."
     : "This raise missed its minimum. Every backer can refund 100%.";
 }

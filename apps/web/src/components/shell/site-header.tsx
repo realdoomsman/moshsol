@@ -14,6 +14,7 @@ import { WalletButton } from "./wallet-menu";
 /**
  * The one top bar for every route (§4.3) — landing, docs and app share it, so moving between them
  * never changes the chrome. Desktop 56px: lockup · nav · search · network · test SOL · wallet.
+ * 768–1023px tightens the gaps so the full nav, search icon, network pill and wallet fit in one row.
  * Below 768px: 52px with the mark, network dot, search icon and an identicon-only wallet button;
  * primary navigation moves to the bottom tab bar.
  */
@@ -21,7 +22,7 @@ export function SiteHeader() {
   const pathname = usePathname();
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-paper/85 backdrop-blur-[12px]">
-      <div className="frame-app flex h-[52px] items-center gap-1 md:h-14 md:gap-7">
+      <div className="frame-app flex h-[52px] items-center gap-1 md:h-14 md:gap-4 lg:gap-7">
         <Link
           href="/"
           aria-label="Holdfast home"
@@ -30,7 +31,7 @@ export function SiteHeader() {
           <Lockup size={22} className="hidden lg:block" />
           <Mark size={26} className="lg:hidden" />
         </Link>
-        <nav aria-label="Primary" className="hidden h-full items-stretch gap-6 md:flex">
+        <nav aria-label="Primary" className="hidden h-full items-stretch gap-4 md:flex lg:gap-6">
           {NAV.map((item) => {
             const active = isNavActive(pathname, item.href);
             return (

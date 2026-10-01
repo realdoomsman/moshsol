@@ -2,7 +2,7 @@ import { lamportsToSol, PROGRAM_ID, shortAddr } from "@holdfast/sdk";
 import { CLUSTER_NAME } from "@/lib/env";
 import { fmtSolValue } from "@/lib/format";
 import { explorerAddress } from "@/lib/explorer";
-import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
+import { BUYBACK_MINT_UNSET, fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import { pctFromBps } from "../../band/model";
 import { Term } from "../../glossary";
 import { SplitBar } from "../../landing/fee-split";
@@ -100,8 +100,9 @@ export const theVault: DocPage = {
               pump.fun&rsquo;s creator fee on the token adds to it. Each <C>collect_pump_fees</C> sweep (permissionless) sends{" "}
               {s.vaultPct}% to the vault as SOL, {s.burnPct}% to the launch&rsquo;s <Term k="buybackPool" split={s} /> and {s.backerPct}%
               to backers through the fee-per-share accumulator, claimable with <C>claim_backer_fees</C>. The creator wallet gets 0%.{" "}
-              <C>buyback_burn</C> (permissionless, at most once a minute per launch) spends the pool on the Holdfast token and burns what
-              it bought; every burn is listed on the launch page.
+              <C>buyback_burn</C> (signed by the agent authority, at most once a minute per launch) spends the pool on the Holdfast token
+              and burns what it bought; every burn is listed on the launch page.
+              {p?.buybackMint === BUYBACK_MINT_UNSET ? " The Holdfast token isn’t live yet, so the pools keep accruing until it is." : null}
             </P>
             {seed && seed.profitSharedSol > 0 ? (
               <P>

@@ -82,14 +82,15 @@ export default async function Image({ params }: { params: Promise<{ wallet: stri
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 64, paddingTop: 28, borderTop: `1px solid ${C.line}` }}>
+      <div style={{ display: "flex", paddingTop: 28, borderTop: `1px solid ${C.line}` }}>
+        {/* The stats get their own flex row: Satori drops `gap` between children of a fragment. */}
         {s ? (
-          <>
+          <div style={{ display: "flex", gap: 64 }}>
             <Stat label="Launches created" value={String(s.launchesCreated)} />
             <Stat label="Backed" value={String(s.backedLaunches)} />
             <Stat label="Backer fees earned" value={`${fmtSolValue(s.backerFeesEarnedSol)} SOL`} accent={s.backerFeesEarnedSol > 0} />
             <Stat label="Volume" value={`${fmtSolValue(s.volumeSol)} SOL`} />
-          </>
+          </div>
         ) : (
           <div style={{ display: "flex", fontSize: 30, color: C.ink2 }}>Back a token before it launches. A vault agent holds the first buy.</div>
         )}

@@ -41,6 +41,8 @@ export function NetworkPill({ dotOnly, className }: { dotOnly?: boolean; classNa
 /**
  * Footer status bar (#25, Hyperliquid/Drift pattern): indexer sync + slot + lag, agent heartbeat
  * + tick, network. Built only from `/api/health` and the agent's `/status`; failures show plainly.
+ * From 768 to 1023px the footer strip is a single clipped row beside its links, so the slot number
+ * and the cluster name (already in the header's network pill) drop out there.
  */
 export function StatusBar({ className }: { className?: string }) {
   const indexer = useIndexerStatus();
@@ -51,7 +53,7 @@ export function StatusBar({ className }: { className?: string }) {
       <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
         <StatusDot tone={indexer.tone} />
         <span className="text-ink-2">{indexer.label}</span>
-        {indexer.slot !== null ? <span>· slot {fmt(indexer.slot)}</span> : null}
+        {indexer.slot !== null ? <span className="md:max-lg:hidden">· slot {fmt(indexer.slot)}</span> : null}
         {indexer.lagSlots !== null ? <span>· lag {fmt(indexer.lagSlots)}</span> : null}
       </span>
       <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
@@ -63,7 +65,7 @@ export function StatusBar({ className }: { className?: string }) {
         ) : null}
         {agent.dryRun ? <span>· dry run</span> : null}
       </span>
-      <span className="whitespace-nowrap">{CLUSTER_LABEL[CLUSTER]}</span>
+      <span className="whitespace-nowrap md:max-lg:hidden">{CLUSTER_LABEL[CLUSTER]}</span>
     </div>
   );
 }
