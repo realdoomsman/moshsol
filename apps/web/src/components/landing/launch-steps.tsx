@@ -46,10 +46,10 @@ export const DEMO = {
       fallbackCaption={`Live from ${CLUSTER_NAME} · the vault agent's latest call`}
     />
   ),
-  claim: (
+  payout: (
     <VideoSlot
-      name="claim"
-      label="A backer claims their share of the launch's creator fees and payback with one transaction."
+      name="payout"
+      label="The vault is 5× its start and the chart is strong: the agent pays backers back, and the backer claims the principal with one transaction."
       fallback={<ClaimFallback />}
       fallbackCaption={`Live from ${CLUSTER_NAME} · backer ledger`}
     />
@@ -88,7 +88,7 @@ export function launchSteps(p: Params): HowStep[] {
       title: "Backers get paid back",
       description: `When the vault's SOL is ${fmtMult(s.payoutMult)} what went in at launch and the chart is strong, the agent may pay backers: principal first, then ${s.payoutSharePct}% of the vault every ${fmtInterval(s.payoutIntervalHours)}. Buying back dips always comes first. On top, ${s.backerPct}% of pump.fun's creator fee goes to backers pro-rata; ${s.vaultPct}% to the vault, ${s.burnPct}% buys and burns the Holdfast token. Claim any time.`,
       rule: `Payback: ${fmtMult(s.payoutMult)} the start, then ${s.payoutSharePct}% per ${fmtInterval(s.payoutIntervalHours)}`,
-      frame: DEMO.claim,
+      frame: DEMO.payout,
     },
   ];
 }

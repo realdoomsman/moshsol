@@ -28,14 +28,14 @@ const MUTED = "#85857C";
 const ORANGE = "#FF5B1A";
 const LINE = "#2A2B27";
 
-/** Card copy: sentence case, numbers over adjectives, no price promises. */
+/** Card copy (owner-approved): sentence case, numbers over adjectives, no price promises, never "profit share". */
 const CARDS = [
-  { file: "00-open", kicker: "Backers buy first", title: "Launch in a minute", sub: "A pump.fun launch where backers buy first and share the vault agent's profit." },
+  { file: "00-open", kicker: "Launch in a minute", title: "Back a token before it hits pump.fun", sub: "Backers fund the first buy. A rate-limited vault agent works the chart. Once the vault is 5× its start and the chart is strong, backers get paid back." },
   { file: "01-back", kicker: "01", title: "Back the raise", sub: "Pool SOL before the token exists. Miss the minimum and everyone is refunded in full." },
-  { file: "02-bundle", kicker: "02", title: "The bundle buys first", sub: "At launch the token is created on pump.fun and the pooled SOL makes the first buy, before any public trade can exist." },
-  { file: "03-agent", kicker: "03", title: "The vault agent defends", sub: "It buys back dips at or below the vault's cost and sells rallies above it. Rate-limited, checked on-chain." },
-  { file: "04-earn", kicker: "04", title: "Backers earn", sub: "75% of the agent's realized profit goes to backers. 25% buys back and burns the Holdfast token." },
-  { file: "05-close", kicker: "holdfast.fun", title: "Hold fast.", sub: "Program EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ · pump.fun venue · Squads multisig admin" },
+  { file: "02-bundle", kicker: "02", title: "The bundle is the first buy", sub: "Same transaction as the create: the token is made on pump.fun and the pooled SOL buys before any public trade can exist." },
+  { file: "03-agent", kicker: "03", title: "The vault agent works the chart", sub: "Sells into strength, buys back dips. Every trade passes the program's band, cost and impact checks." },
+  { file: "04-earn", kicker: "04", title: "Vault at 5× + strong chart → backers get paid", sub: "Principal first, then 15% of the vault every 4 h. Buying back a dip always comes first." },
+  { file: "05-close", kicker: "holdfast.fun", title: "Hold fast.", sub: "holdfast.fun · program EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ · pump.fun venue · Squads multisig admin" },
 ];
 
 function fontFaces() {
@@ -62,12 +62,12 @@ ${fontFaces()}
 <div class="label" style="position:absolute;right:120px;top:118px;display:flex;align-items:center;gap:12px"><span style="width:11px;height:11px;border-radius:11px;background:${ORANGE}"></span>${open ? "Live on Solana" : "holdfast.fun"}</div>
 <div style="position:absolute;left:120px;right:120px;top:${open ? 380 : 360}px">
   <div class="${card.kicker.length <= 2 ? "disp" : "label"}" style="${card.kicker.length <= 2 ? `font-size:44px;color:${ORANGE}` : `font-size:24px;color:${ORANGE}`};margin-bottom:28px">${card.kicker}</div>
-  <div class="disp" style="font-size:${open ? 128 : 112}px;color:${PAPER};max-width:1500px">${card.title}</div>
+  <div class="disp" style="font-size:${card.title.length > 30 ? 96 : open ? 128 : 112}px;color:${PAPER};max-width:1680px">${card.title}</div>
   <div class="ui" style="font-size:36px;color:#A9A89F;max-width:1320px;line-height:1.4;margin-top:40px;${card.file.startsWith("05") ? `font-family:JBM,monospace;font-size:24px;color:${MUTED};max-width:1680px` : ""}">${card.sub}</div>
 </div>
 <div style="position:absolute;left:120px;right:120px;bottom:120px;border-top:1px solid ${LINE};padding-top:26px;display:flex;justify-content:space-between">
   <div class="mono" style="font-size:24px;color:${MUTED}">holdfast.fun</div>
-  <div class="ui" style="font-size:24px;color:${MUTED}">Backers buy first and share the profit.</div>
+  <div class="ui" style="font-size:24px;color:${MUTED}">Backers buy first. The vault agent works the chart.</div>
 </div>
 </body></html>`;
 }

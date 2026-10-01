@@ -6,7 +6,7 @@ import { cn } from "../ui/cn";
 import { DemoVideo, type DemoSource } from "./demo-video";
 
 /** The product-loop recordings (§3.9), set up by `scripts/src/record-demos.ts` (`pnpm record:demos`), plus the hero's launch recording. */
-export type DemoName = "launch-in-a-minute" | "back-a-raise" | "the-bundle" | "agent-defends" | "claim";
+export type DemoName = "launch-in-a-minute" | "back-a-raise" | "the-bundle" | "agent-defends" | "payout";
 
 const DIR = join(process.cwd(), "public", "videos");
 

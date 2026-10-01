@@ -48,7 +48,7 @@ export function ProofTiles({
           : upgrade.value === null
             ? "None — the program is immutable"
             : platform && upgrade.value === platform.admin
-              ? "Held by the platform admin key"
+              ? "Held by the platform admin (a Squads multisig on mainnet)"
               : "The key that can upgrade the program's code",
       address: upgrade.state === "known" ? upgrade.value : program,
     },

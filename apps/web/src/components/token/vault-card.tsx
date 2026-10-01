@@ -219,8 +219,14 @@ export function VaultCard({
             >
               {sol(pb.dividends)}
             </Row>
-            <Row label="Next payout check">
-              {pb.nextAt === undefined ? "—" : pb.nextAt > now ? `in ${formatCountdown(pb.nextAt - now)}` : "eligible now"}
+            <Row
+              label={
+                <RuleTooltip rule={`At most one payout every ${fmtInterval(split.payoutIntervalHours)}; the clock starts at launch and restarts with every payout. The vault must also be ${fmtMult(split.payoutMult)} its start and the chart strong.`}>
+                  Payout interval
+                </RuleTooltip>
+              }
+            >
+              {pb.nextAt === undefined ? "—" : pb.nextAt > now ? `${formatCountdown(pb.nextAt - now)} left` : `over · pays once ${fmtMult(split.payoutMult)} and strong`}
             </Row>
             <Row
               label={

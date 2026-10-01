@@ -1,7 +1,7 @@
 import { compact, lamportsToSol, tokensToUi } from "@holdfast/sdk";
 import type { LaunchSummary } from "./types";
 
-/** SOL amount with magnitude-aware precision ("1.25K", "32.4", "0.0521"). */
+/** SOL amount with magnitude-aware precision ("1.25K", "32.4", "0.0521"); lamport dust stays positional, never "3.7e-8". */
 export function fmtSolValue(v: number): string {
   const abs = Math.abs(v);
   if (abs === 0) return "0";
@@ -9,7 +9,8 @@ export function fmtSolValue(v: number): string {
   if (abs >= 100) return v.toFixed(1);
   if (abs >= 1) return v.toFixed(2);
   if (abs >= 0.001) return v.toFixed(4).replace(/\.?0+$/, "");
-  return v.toPrecision(2);
+  if (abs >= 1e-6) return v.toPrecision(2);
+  return v.toFixed(9).replace(/\.?0+$/, "");
 }
 
 /** `fmtSolValue` for table columns: sub-1 amounts keep all four decimals so figures line up ("0.1140"). */

@@ -70,7 +70,7 @@ const trustProxy = (process.env.TRUST_PROXY ?? "").trim().toLowerCase();
 // escape every per-IP limit; Fastify ≥ 5.12 itself trusts nothing for a number. Only a proxy address list is safe.
 if (/^\d+$/.test(trustProxy) && trustProxy !== "0") {
   throw new Error(
-    `TRUST_PROXY=${trustProxy}: hop counts are not supported; list the proxy addresses instead (Railway: uniquelocal,100.64.0.0/10)`,
+    `TRUST_PROXY=${trustProxy}: hop counts are not supported; list the proxy addresses instead, or "true" behind a proxy that rewrites X-Forwarded-For (Railway)`,
   );
 }
 const storage = process.env.STORAGE || "local";

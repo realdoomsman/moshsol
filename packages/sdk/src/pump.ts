@@ -83,15 +83,18 @@ export interface BondingCurveState {
   creator: PublicKey;
 }
 
+/** Little-endian u64 at `at`; DataView rather than `Buffer#readBigUInt64LE`, which browser Buffer polyfills may lack. */
+const u64 = (b: Uint8Array, at: number) => new DataView(b.buffer, b.byteOffset, b.byteLength).getBigUint64(at, true);
+const putU64 = (b: Uint8Array, at: number, v: bigint) => new DataView(b.buffer, b.byteOffset, b.byteLength).setBigUint64(at, v, true);
+
 export function decodeBondingCurve(data: Buffer | Uint8Array): BondingCurveState {
   const b = Buffer.from(data);
-  const u = (at: number) => b.readBigUInt64LE(at);
   return {
-    virtualTokenReserves: u(8),
-    virtualSolReserves: u(16),
-    realTokenReserves: u(24),
-    realSolReserves: u(32),
-    tokenTotalSupply: u(40),
+    virtualTokenReserves: u64(b, 8),
+    virtualSolReserves: u64(b, 16),
+    realTokenReserves: u64(b, 24),
+    realSolReserves: u64(b, 32),
+    tokenTotalSupply: u64(b, 40),
     complete: b[48] !== 0,
     creator: new PublicKey(b.subarray(49, 81)),
   };
@@ -282,8 +285,8 @@ export function pumpBuyIxs(p: {
   const userTokens = splAta(p.user, p.mint);
   const data = Buffer.alloc(25);
   Buffer.from([56, 252, 116, 8, 158, 223, 205, 95]).copy(data);
-  data.writeBigUInt64LE(p.solIn, 8);
-  data.writeBigUInt64LE(p.minTokensOut, 16);
+  putU64(data, 8, p.solIn);
+  putU64(data, 16, p.minTokensOut);
   return [
     createAssociatedTokenAccountIdempotentInstruction(p.user, userTokens, p.user, p.mint, TOKEN_PROGRAM_ID),
     new TransactionInstruction({
@@ -325,8 +328,8 @@ export function pumpSellIx(p: {
   const curve = bondingCurvePda(p.mint);
   const data = Buffer.alloc(24);
   Buffer.from([51, 230, 133, 164, 1, 127, 131, 173]).copy(data);
-  data.writeBigUInt64LE(p.tokensIn, 8);
-  data.writeBigUInt64LE(p.minSolOut, 16);
+  putU64(data, 8, p.tokensIn);
+  putU64(data, 16, p.minSolOut);
   return new TransactionInstruction({
     programId: PUMP_PROGRAM_ID,
     keys: [

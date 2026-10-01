@@ -1,7 +1,7 @@
 "use client";
 
 import { fmtLamports } from "@/lib/format";
-import { launchId } from "@/lib/launch";
+import { launchId, phaseOf } from "@/lib/launch";
 import { useDepositFeed } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { RoleChip } from "../ui/chip";
@@ -16,6 +16,7 @@ export function DepositsTab({ launch: l, now }: { launch: LaunchSummary; now: nu
   const feed = useDepositFeed(launchId(l));
   const fresh = useFreshKeys(feed.headKeys);
   const cols = 5;
+  const open = phaseOf(l, now) === "raising";
   return (
     <Table density="dense" maxHeight={480} label={`$${l.symbol} deposits`}>
       <THead>
@@ -41,7 +42,9 @@ export function DepositsTab({ launch: l, now }: { launch: LaunchSummary; now: nu
         ) : feed.rows.length === 0 ? (
           <TableMessage colSpan={cols}>
             <EmptyState>
-              No deposits yet. Back it first: backers fund the first buy, earn their cut of the venue&apos;s fees and get paid back once the vault is strong.
+              {open
+                ? "No deposits yet. Back it first: backers fund the first buy, earn their cut of the venue’s fees and get paid back once the vault is strong."
+                : "Nobody deposited before this raise closed."}
             </EmptyState>
           </TableMessage>
         ) : (

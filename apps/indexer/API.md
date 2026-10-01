@@ -38,7 +38,7 @@ over HTTP plus one WebSocket (`/ws`). CORS is open (`*`; methods `GET POST PUT D
 | Profile updates | 10/min | — | per wallet, counted after the signature verified |
 | `GET /api/portfolio/:wallet` | 60/min | — | per IP (on top of the global limit); token balances are cached 10 s per wallet |
 
-`0` disables an env-configurable limit. Behind a proxy set `TRUST_PROXY` to the proxy's addresses (e.g. `uniquelocal,100.64.0.0/10`
+`0` disables an env-configurable limit. Behind a proxy set `TRUST_PROXY` to the proxy's addresses (e.g. `uniquelocal,100.64.0.0/10`; on Railway `true`, whose edge rewrites the header
 on Railway) so the client IP comes from `X-Forwarded-For`. Fixed one-minute windows; the `429` body says how long to wait.
 
 ---

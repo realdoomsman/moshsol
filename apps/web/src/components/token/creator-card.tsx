@@ -41,7 +41,10 @@ function toUrl(v: string | null, base: string): string | null {
   }
 }
 
-/** The launch's X / Telegram / website links from its metadata. */
+/**
+ * The launch's X / Telegram / website links from its metadata. The indexer writes every launch's own page as
+ * its metadata `website` (for pump.fun / explorers), so a website that is this launch's page is not a link.
+ */
 export function socialLinks(l: LaunchSummary): SocialLink[] {
   const out: SocialLink[] = [];
   const x = toUrl(l.twitter, "https://x.com/");
@@ -49,7 +52,9 @@ export function socialLinks(l: LaunchSummary): SocialLink[] {
   const web = toUrl(l.website, "https://");
   if (x) out.push({ kind: "x", href: x, label: "X" });
   if (tg) out.push({ kind: "telegram", href: tg, label: "Telegram" });
-  if (web) out.push({ kind: "website", href: web, label: new URL(web).hostname.replace(/^www\./, "") });
+  if (web && !new URL(web).pathname.endsWith(`/launch/${l.address}`)) {
+    out.push({ kind: "website", href: web, label: new URL(web).hostname.replace(/^www\./, "") });
+  }
   return out;
 }
 

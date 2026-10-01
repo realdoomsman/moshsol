@@ -20,3 +20,4 @@ apps/agent/.agent*.db*
 .mainnet/
 .secrets/
 .x-session/
+apps/indexer/apps/

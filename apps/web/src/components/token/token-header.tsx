@@ -162,7 +162,7 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
   );
 
   return (
-    <header className="flex items-start gap-3 md:gap-4">
+    <header className="flex min-w-0 items-start gap-3 md:gap-4">
       <button
         type="button"
         onClick={() => setLightbox(true)}

@@ -74,7 +74,7 @@ export interface UploadInput {
 
 /**
  * Indexer health. Unlike other endpoints a 503 still carries the health body (e.g. first sync not
- * finished); only an unreachable indexer throws.
+ * finished); an unreachable indexer or a non-health body (429 `{ error }`, a proxy page) throws.
  */
 async function health(): Promise<IndexerHealth> {
   let res: Response;
@@ -86,9 +86,11 @@ async function health(): Promise<IndexerHealth> {
   } catch {
     throw new ApiError(0, `Can't reach ${INDEXER_URL}`);
   }
-  const body = (await res.json().catch(() => null)) as IndexerHealth | null;
-  if (!body) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
-  return { ...body, ok: res.ok && body.ok };
+  const body = (await res.json().catch(() => null)) as (Partial<IndexerHealth> & { error?: string }) | null;
+  if (!body || typeof body.ok !== "boolean" || !("slot" in body)) {
+    throw new ApiError(res.status, body?.error ?? `${res.status} ${res.statusText}`);
+  }
+  return { ...(body as IndexerHealth), ok: res.ok && body.ok };
 }
 
 export const api = {

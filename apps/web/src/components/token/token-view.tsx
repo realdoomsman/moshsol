@@ -5,7 +5,7 @@ import { ArrowUpRight } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { ApiError } from "@/lib/api";
 import { useMediaQuery, useNow } from "@/lib/hooks";
-import { launchId, phaseOf, pumpTradeUrl, VENUE_LABEL, venueKindOf, type Phase } from "@/lib/launch";
+import { launchId, phaseOf, pumpTradeUrl, type Phase } from "@/lib/launch";
 import { useLaunch } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { RefundGlyph } from "../brand/glyphs";
@@ -210,7 +210,7 @@ function LiveLayout({ launch: l, justLaunched }: { launch: LaunchSummary; justLa
             className="flex-1"
             icon={<ArrowUpRight className="size-4" strokeWidth={1.5} aria-hidden />}
           >
-            Trade on {VENUE_LABEL[venueKindOf(l)]}
+            Trade on {l.pump.graduated ? "PumpSwap" : "pump.fun"}
           </ButtonAnchor>
         ) : (
           <>

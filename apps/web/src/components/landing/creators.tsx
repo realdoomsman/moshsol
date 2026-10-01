@@ -2,9 +2,9 @@
 
 import { LIMITS, previewBundle, previewPumpBundle, solToLamports } from "@holdfast/sdk";
 import { useState } from "react";
-import { fmtSolValue, fmtTokens } from "@/lib/format";
+import { fmtSolValue, fmtTokens, fmtUsd } from "@/lib/format";
 import { pumpSplit } from "@/lib/pump-terms";
-import { usePlatform } from "@/lib/queries";
+import { usePlatform, useStats } from "@/lib/queries";
 import { INITIAL_DRAFT } from "../create/validate";
 import { pctFromBps } from "../band/model";
 import { ButtonLink } from "../ui/button";
@@ -30,6 +30,8 @@ function lamportsOf(v: string): bigint | null {
 export function Creators() {
   const platform = usePlatform();
   const p = platform.data?.params;
+  const solUsd = useStats().data?.solUsd ?? null;
+  const mcap = (sol: number) => (solUsd ? `${fmtUsd(sol * solUsd)} (${fmtSolValue(sol)} SOL)` : `${fmtSolValue(sol)} SOL`);
   const [min, setMin] = useState(INITIAL_DRAFT.raiseMin);
   const [max, setMax] = useState(INITIAL_DRAFT.raiseMax);
   const [bundle, setBundle] = useState(String(INITIAL_DRAFT.bundlePct));
@@ -142,8 +144,8 @@ export function Creators() {
                   />
                   <PreviewRow
                     label="Start market cap"
-                    a={atMin && `${fmtSolValue(atMin.marketCapAfter)} SOL`}
-                    b={atMax && `${fmtSolValue(atMax.marketCapAfter)} SOL`}
+                    a={atMin && mcap(atMin.marketCapAfter)}
+                    b={atMax && mcap(atMax.marketCapAfter)}
                   />
                 </tbody>
               </table>

@@ -28,7 +28,7 @@ const app = await createServer({
   trustProxy: config.trustProxy,
 });
 if (config.trustProxy === true) {
-  app.log.warn("TRUST_PROXY trusts every hop: clients can spoof X-Forwarded-For and escape per-IP limits; list the proxy addresses instead");
+  app.log.info("TRUST_PROXY=true: every hop trusted; correct only behind a proxy that rewrites X-Forwarded-For (Railway's edge does)");
 }
 const price = new SolPrice(store, app.log.child({ module: "price" }), { refreshMs: config.priceRefreshMs });
 const sync = new ChainSync(store, client, hub, holders, price, app.log.child({ module: "sync" }), {

@@ -26,8 +26,8 @@ export function InstructionList({ rows }: { rows: InstructionRow[] }) {
                   tabIndex={0}
                   className="group border-b border-line px-4 transition-colors hover:bg-raised focus-visible:bg-raised focus-visible:outline-offset-[-2px]"
                 >
-                  <div className="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 py-2.5 md:grid-cols-[minmax(0,11rem)_minmax(0,9rem)_minmax(0,1fr)] md:py-0">
-                    <span className="mono truncate text-ink">{r.name}</span>
+                  <div className="grid min-h-12 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-center gap-x-4 gap-y-1 py-2.5 md:grid-cols-[minmax(0,11rem)_minmax(0,9rem)_minmax(0,1fr)] md:py-0">
+                    <span className="mono break-all text-ink md:truncate">{r.name}</span>
                     <span className="small text-right text-ink-2 md:text-left">{r.caller}</span>
                     <span className="small col-span-2 text-ink-2 md:col-span-1">{r.moves}</span>
                   </div>

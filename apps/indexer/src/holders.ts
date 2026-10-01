@@ -42,16 +42,19 @@ export interface HolderSet {
  * venue account is the bonding curve's ATA (the PumpSwap pool's base account once graduated) and whose
  * vault is the pump authority's ATA. Those accounts are labelled and never counted as holders.
  *
- * Preferred source is getProgramAccounts (memcmp mint @0, sliced to owner+amount) — exact.
- * Public RPCs exclude the token programs from secondary indexes, so on the first such error we
- * switch permanently to reading the actual token accounts of the venue, the vault and every
- * wallet that ever traded the launch (from the indexed trade ledger).
+ * Preferred source is getProgramAccounts (memcmp mint @0, sliced to owner+amount) — exact. Helius refuses it on
+ * the token programs ("Too many accounts requested") and offers paginated getProgramAccountsV2 instead, which we
+ * use on that error. Other public RPCs exclude the token programs from secondary indexes; on the first such error
+ * we switch permanently to reading the actual token accounts of the venue, the vault and every wallet that ever
+ * traded the launch (from the indexed trade ledger).
  */
 export class Holders {
   private readonly cache = new Map<string, HolderSet>();
   private readonly inflight = new Map<string, Promise<HolderSet>>();
 
   private gpaUnavailable = false;
+  /** Token programs whose getProgramAccounts the RPC refused with "use getProgramAccountsV2" (Helius: SPL Token). */
+  private readonly gpaV2 = new Set<string>();
 
   constructor(
     private readonly connection: Connection,
@@ -99,6 +102,49 @@ export class Holders {
     ];
   }
 
+  /**
+   * Helius-only paginated gPA (owner+amount slice); same rows as getProgramAccounts. Without a `dataSize` filter
+   * Helius walks the whole program 10 000 accounts a page (empty pages for minutes); SPL Token accounts are always
+   * 165 bytes so that filter makes it one indexed page. Token-2022 accounts vary (extensions) and need no filter.
+   */
+  private async programAccountsV2(tokenProgram: PublicKey, mint: string): Promise<{ pubkey: string; data: Buffer }[]> {
+    const filters = tokenProgram.equals(TOKEN_PROGRAM_ID)
+      ? [{ dataSize: 165 }, { memcmp: { offset: 0, bytes: mint } }]
+      : [{ memcmp: { offset: 0, bytes: mint } }];
+    const rows: { pubkey: string; data: Buffer }[] = [];
+    let paginationKey: string | null = null;
+    do {
+      const res = await fetch(this.connection.rpcEndpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "getProgramAccountsV2",
+          params: [
+            tokenProgram.toBase58(),
+            {
+              encoding: "base64",
+              commitment: "confirmed",
+              filters,
+              dataSlice: { offset: 32, length: 40 },
+              limit: 10_000,
+              ...(paginationKey ? { paginationKey } : {}),
+            },
+          ],
+        }),
+      });
+      const json = (await res.json()) as {
+        error?: { message: string };
+        result?: { accounts: { pubkey: string; account: { data: [string, string] } }[]; paginationKey?: string | null };
+      };
+      if (json.error || !json.result) throw new Error(`getProgramAccountsV2 failed: ${json.error?.message ?? res.status}`);
+      for (const a of json.result.accounts) rows.push({ pubkey: a.pubkey, data: Buffer.from(a.account.data[0], "base64") });
+      paginationKey = json.result.paginationKey ?? null;
+    } while (paginationKey);
+    return rows;
+  }
+
   private async load(t: HolderTarget): Promise<HolderSet> {
     const tokenProgram = t.venue === "holdfast" ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
     const program = this.programAccounts(t);
@@ -110,21 +156,31 @@ export class Holders {
       const key = label ? tokenAccount.toBase58() : owner.toBase58();
       byOwner.set(key, { amount: (byOwner.get(key)?.amount ?? 0n) + amount, label });
     };
-    if (!this.gpaUnavailable) {
+    // Token account layout: mint(32) owner(32) amount(u64 LE) …; rows are sliced to owner+amount.
+    const addSliced = (pubkey: string, data: Buffer) => {
+      if (data.length < 40) return;
+      add(new PublicKey(pubkey), new PublicKey(data.subarray(0, 32)), data.readBigUInt64LE(32));
+    };
+    if (this.gpaV2.has(tokenProgram.toBase58())) {
+      for (const row of await this.programAccountsV2(tokenProgram, t.mint)) addSliced(row.pubkey, row.data);
+    } else if (!this.gpaUnavailable) {
       try {
         const accounts = await this.connection.getProgramAccounts(tokenProgram, {
           commitment: "confirmed",
           filters: [{ memcmp: { offset: 0, bytes: t.mint } }],
-          // Token account layout: mint(32) owner(32) amount(u64 LE) …
           dataSlice: { offset: 32, length: 40 },
         });
-        for (const { pubkey, account } of accounts) {
-          if (account.data.length < 40) continue;
-          add(pubkey, new PublicKey(account.data.subarray(0, 32)), account.data.readBigUInt64LE(32));
-        }
+        for (const { pubkey, account } of accounts) addSliced(pubkey.toBase58(), account.data);
       } catch (err) {
-        if (!/secondary indexes|unavailable for key/i.test(String((err as Error).message))) throw err;
-        this.gpaUnavailable = true;
+        const message = String((err as Error).message);
+        if (/getProgramAccountsV2/i.test(message)) {
+          this.gpaV2.add(tokenProgram.toBase58());
+          for (const row of await this.programAccountsV2(tokenProgram, t.mint)) addSliced(row.pubkey, row.data);
+        } else if (/secondary indexes|unavailable for key/i.test(message)) {
+          this.gpaUnavailable = true;
+        } else {
+          throw err;
+        }
       }
     }
     if (this.gpaUnavailable) {

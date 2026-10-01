@@ -2,7 +2,8 @@
 
 import { fmtPrice, shortAddr } from "@holdfast/sdk";
 import type { ReactNode } from "react";
-import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
+import { fmtLamports, fmtSolValue, fmtTokens, fmtUsd } from "@/lib/format";
+import { useStats } from "@/lib/queries";
 import { ClampGlyph } from "../brand/glyphs";
 import { StatusChip } from "../ui/chip";
 import { cn } from "../ui/cn";
@@ -73,6 +74,8 @@ export function DraftCard({
 
 /** Bundle at the minimum and maximum raise, from `previewBundle` (the program's own math). */
 export function BundleTable({ range, loading }: { range: BundleRange | null; loading: boolean }) {
+  const solUsd = useStats().data?.solUsd ?? null;
+  const mcap = (sol: number) => (solUsd ? `${fmtUsd(sol * solUsd)} · ${fmtSolValue(sol)} SOL` : `${fmtSolValue(sol)} SOL`);
   if (!range) {
     return loading ? (
       <Skeleton className="h-40 w-full" />
@@ -85,8 +88,8 @@ export function BundleTable({ range, loading }: { range: BundleRange | null; loa
     { label: "Held in vault", min: fmtTokens(range.atMin.bundleTokens), max: fmtTokens(range.atMax.bundleTokens) },
     {
       label: <RuleTooltip rule="Fully diluted: 1B supply × the curve price right after the bundle buy.">Start mcap</RuleTooltip>,
-      min: `${fmtSolValue(range.atMin.marketCapAfter)} SOL`,
-      max: `${fmtSolValue(range.atMax.marketCapAfter)} SOL`,
+      min: mcap(range.atMin.marketCapAfter),
+      max: mcap(range.atMax.marketCapAfter),
     },
     { label: "Start price", min: fmtPrice(range.atMin.priceAfter), max: fmtPrice(range.atMax.priceAfter) },
     {

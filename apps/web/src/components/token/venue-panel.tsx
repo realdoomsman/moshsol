@@ -1,11 +1,13 @@
 "use client";
 
 import { lamportsToSol, PUMP_VENUE_FEE_BPS } from "@holdfast/sdk";
+import { PublicKey } from "@solana/web3.js";
 import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import { pumpTradeUrl, VENUE_LABEL, venueKindOf } from "@/lib/launch";
 import { pumpSplit } from "@/lib/pump-terms";
+import { usePlatform } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { ButtonAnchor } from "../ui/button";
 import { Chip } from "../ui/chip";
@@ -36,13 +38,15 @@ export function VenueChip({ launch: l, className }: { launch: LaunchSummary; cla
  * from every trade.
  */
 export function TradeOnPumpPanel({ launch: l, bare, className }: { launch: LaunchSummary; bare?: boolean; className?: string }) {
-  const venue = VENUE_LABEL[venueKindOf(l)];
+  const graduated = l.pump.graduated;
+  const site = graduated ? "PumpSwap" : "pump.fun";
+  const venue = graduated ? "PumpSwap" : "pump.fun's bonding curve";
   const woundDown = l.status === "woundDown";
   const split = pumpSplit(l.terms);
   return (
-    <Panel title={bare ? undefined : `Trade on ${venue}`} className={className}>
+    <Panel title={bare ? undefined : `Trade on ${site}`} className={className}>
       <div className="grid gap-4 px-4 pb-4">
-        {bare ? <h2 className="h3 text-ink">Trade on {venue}</h2> : null}
+        {bare ? <h2 className="h3 text-ink">Trade on {site}</h2> : null}
         <p className="small text-ink-2">
           ${l.symbol} is a pump.fun token: buys and sells happen on {venue}, with its {PUMP_VENUE_FEE_BPS / 100}% venue fee.
           pump.fun pays this launch the creator share of every trade: {split.vaultPct}% goes to the vault, {split.burnPct}% buys and
@@ -56,10 +60,10 @@ export function TradeOnPumpPanel({ launch: l, bare, className }: { launch: Launc
           className="w-full"
           icon={<ArrowUpRight className="size-4" strokeWidth={1.5} aria-hidden />}
         >
-          Trade ${l.symbol} on {venue}
+          Trade ${l.symbol} on {site}
         </ButtonAnchor>
         {woundDown ? (
-          <p className="small text-ink-3">The vault was wound down; the token keeps trading on {venue}, but the agent is out.</p>
+          <p className="small text-ink-3">The vault was wound down; the token keeps trading on {site}, but the agent is out.</p>
         ) : null}
       </div>
     </Panel>
@@ -74,6 +78,8 @@ export function TradeOnPumpPanel({ launch: l, bare, className }: { launch: Launc
 export function BuybackCard({ launch: l, now, className }: { launch: LaunchSummary; now: number; className?: string }) {
   const split = pumpSplit(l.terms);
   const graduated = l.pump.graduated;
+  const buybackMint = usePlatform().data?.params.buybackMint;
+  const mintPending = buybackMint === PublicKey.default.toBase58();
   return (
     <Panel title="Buyback & burn" aside={<VenueChip launch={l} />} className={className}>
       <div className="grid gap-4 px-4 pb-4">
@@ -81,11 +87,14 @@ export function BuybackCard({ launch: l, now, className }: { launch: LaunchSumma
           <div className="num-l text-ink">{fmtLamports(l.buybackPoolSol)} SOL</div>
           <div className="small mt-0.5 text-ink-3">
             <RuleTooltip
-              rule={`${split.burnPct}% of the pump.fun creator fees this launch collects. Any wallet can spend it on the Holdfast token and burn what it buys (buyback_burn), at most once a minute and 5% of the token's venue liquidity per crank.`}
+              rule={`${split.burnPct}% of the pump.fun creator fees this launch collects. The vault agent spends it on the Holdfast token and burns what it buys (buyback_burn), at most once a minute and 5% of the token's venue liquidity per crank.`}
             >
               in the buyback pool
             </RuleTooltip>
           </div>
+          {mintPending ? (
+            <p className="small mt-2 text-ink-3">The Holdfast token isn’t live yet; the pool keeps accruing until it is and burns start.</p>
+          ) : null}
         </div>
         <dl className="small grid gap-2">
           <Row label="Burned so far">

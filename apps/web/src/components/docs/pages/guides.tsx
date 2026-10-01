@@ -316,7 +316,7 @@ export const forBackers: DocPage = {
               amount is exact at any moment and never expires. On the two legacy Holdfast-curve launches, backers also earn{" "}
               {p ? pctFromBps(p.backerFeeShareBps) : "a share"} of the {p ? pctFromBps(p.tradeFeeBps) : ""} trade fee on that curve.
             </P>
-            <Figure>{DEMO.claim}</Figure>
+            <Figure>{DEMO.payout}</Figure>
           </>
         ),
       },

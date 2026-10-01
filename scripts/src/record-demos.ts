@@ -27,17 +27,18 @@
  *                              agent's sell guardrail; pump.fun's creator fee accrues to the launch)
  *   rally [launch] [--sol n]   a script whale buys `n` SOL (default 12) on pump.fun, then the script traders sell out,
  *                              so spot ends near where it was while the whale holds enough tokens for a dump well
- *                              below the EMA; the agent sells into the rally first (realized profit → backers' claimable)
+ *                              below the EMA; the agent sells into the rally first (proceeds stay in the vault)
  *   defend-dump [launch] [--dry]
  *                              dumps just enough of the whale's tokens on pump.fun that the agent's own `evaluate()`
  *                              plans an `agent_buy_pump` (spot > band below EMA and at/below vault cost or avg agent
  *                              sell × (1 − band)), then waits for the agent's buy to land and prints it; `--dry` only predicts
- *   status [launch]            venue reserves, EMA/band, agent budgets and the burner's claimable profit share
- *   payout-prep [launch] [--mult 5 --sol 4]
- *                              (new economics, `payout` scene) script whales pump on pump.fun until the agent's sells
- *                              lift vault SOL to `mult` × the launch's initial vault SOL; then crank `payout_backers`
- *                              (`client.payoutBackersIx`, pending the program upgrade) and record /portfolio showing
- *                              the backer's principal returned. Open the raise with a 1 SOL minimum so 5× is reachable.
+ *   status [launch]            venue reserves, EMA/band, agent budgets, payback progress and the burner's claimable
+ *   demo-params                platform: 5 min agent windows, 20% sell cap, 1 h payout interval (all hard-cap minimums) so the payout scene fits a session
+ *   payout-raise               1 SOL raise (min = max) created and fully backed by the burner, launched by the script
+ *   payout-prep [launch] [--sol 4 --max-buys 16]
+ *                              script whales buy on pump.fun whenever the agent isn't selling, so its sells into strength
+ *                              lift the vault's liquid SOL to the launch's payout multiple (`payoutStatus`); the agent
+ *                              cranks `payout_backers` itself on a strong-market poll → /portfolio shows "Principal repaid"
  *
  * Recording procedure (what produced apps/web/public/videos/* and brand/x/video/*). This file prepares the chain;
  * `record-demos-capture.mjs` records a scene, `record-demos-encode.mjs` cuts and encodes it, `record-demos-cards.mjs`
@@ -60,18 +61,25 @@
  *   4. the-bundle: `record:demos the-bundle` → capture `the-bundle` (viewport 1600×2000: the vault card sits below the
  *      fold): clicks "Launch now", waits for the "Trade $SYMBOL on pump.fun curve" link. Cut: the click and the
  *      status flip (top 1600×1000), then the vault card zoomed.
- *   5. `record:demos trades --rounds 16` (volume), `record:demos rally` (the agent sells into it once its sell window
- *      has room — the realized profit is what `claim` collects), then wait until `defend-dump --dry` predicts a buy
- *      (buy window room, the agent's 15 s cooldown over). Capture `agent-defends --run "pnpm --filter
- *      @holdfast/scripts run record:demos defend-dump <address>"` (viewport 1600×1900): the dump lands, the agent's
- *      filled marker, the "Agent buy" row and "Bought" in the vault card appear. Cut: stats row + chart + first trade
- *      rows, then the vault card zoomed.
- *   6. claim: capture `claim --path /portfolio`: the burner's claimable profit share is visible, "Claim all" is
- *      clicked, the "Claimed … SOL" toast with its explorer link shows and the position's claimable resets.
+ *   5. `record:demos trades --rounds 12` (volume), `record:demos rally` (the agent sells into it once its sell window
+ *      has room — proceeds stay in the vault), then wait until `defend-dump --dry` predicts a buy (buy window room,
+ *      the agent's 15 s cooldown over). Capture `agent-defends --run "pnpm --filter @holdfast/scripts run record:demos
+ *      defend-dump <address>"` (viewport 1600×1900; the agent runs with AI_API_URL/AI_API_KEY/AI_MODEL so its
+ *      narration shows): the dump lands, the agent's filled marker and the "Agent buy" row appear, then the Agent tab
+ *      (activity feed) with "Bought back" + reason, then its narration. Cut: stats row + chart + first trade rows,
+ *      the feed as the row appears, the feed once narrated.
+ *   6. payout: `record:demos demo-params` (5 min windows, 20% sell cap, 1 h payout interval — all hard-cap minimums),
+ *      `record:demos payout-raise` (1 SOL, burner only, 10% reserve so the vault is mostly tokens), `record:demos
+ *      payout-prep` (whales buy on pump.fun until the vault's liquid SOL ≥ 5× what went in; the agent sells into
+ *      strength window after window). Once `status` says DUE (≥ 1 h after launch), capture `payout --path
+ *      /launch/<address>`: the vault card's payback block, the Agent tab until the agent's own `payout_backers`
+ *      lands ("Paid backers" — it cranks only into a strong chart, which the whale flow is), then /portfolio with
+ *      the position's principal repaid and "Claim all" collecting it.
  *   7. `record-demos-encode.mjs site <capture dir> <name>` writes 1280×800 H.264 MP4 ≤ 1.5 MB + VP9 WebM + JPG
  *      poster (780×1688 for `-m` captures) into apps/web/public/videos; `x <capture dir> <name>` writes 1920×1200
  *      H.264 + silent AAC into brand/x/video; `record-demos-cards.mjs` + `encode hero brand/x/video/launch-in-a-minute.mp4
- *      <cards and clips in order>` cut the ≤ 60 s 1920×1080 compilation; `encode manifest <name>=<seconds>…` updates
+ *      <cards and clips in order>` cut the ≤ 60 s 1920×1080 compilation, `encode site brand/x/video/launch-in-a-minute.mp4
+ *      launch-in-a-minute` its 1280×720 site version; `encode manifest <name>=<capture dir | ISO time>…` updates
  *      `apps/web/public/videos/manifest.json` (cluster, recordedAt, durationSec), which the landing caption reads.
  */
 import fs from "node:fs";
@@ -81,6 +89,7 @@ import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.j
 import {
   OPEN_WHITELIST_ROOT,
   backerClaimable,
+  payoutStatus,
   describeError,
   fmtPrice,
   lamportsToSol,
@@ -139,6 +148,7 @@ interface Target {
 
 interface State {
   backARaise?: Target;
+  payout?: Target;
   theBundle?: Target;
 }
 
@@ -181,8 +191,14 @@ async function upload(meta: Meta): Promise<string> {
   return body.uri;
 }
 
-/** A pump.fun raise (min 2 / max 10 SOL, one day, open whitelist, 20% bundle, 30% reserve) by `creator`. */
-async function openRaise(client: MoshClient, creator: Keypair, meta: Meta): Promise<Target> {
+/** A pump.fun raise (default min 2 / max 10 SOL, one day, open whitelist, 20% bundle cap, 30% reserve) by `creator`. */
+async function openRaise(
+  client: MoshClient,
+  creator: Keypair,
+  meta: Meta,
+  size = { min: 2, max: 10 },
+  shape = { bundleBps: 2_000, reserveBps: 3_000 },
+): Promise<Target> {
   const platform = await client.fetchPlatform();
   if (!platform) throw new Error("platform not initialized — run `pnpm setup:localnet` first");
   if (platform.params.holdfastCurveEnabled) {
@@ -192,13 +208,13 @@ async function openRaise(client: MoshClient, creator: Keypair, meta: Meta): Prom
     name: meta.name,
     symbol: meta.symbol,
     uri: await upload(meta),
-    raiseMin: solToLamports(2),
-    raiseMax: solToLamports(10),
+    raiseMin: solToLamports(size.min),
+    raiseMax: solToLamports(size.max),
     maxPerWallet: 0n,
     durationSecs: DAY,
     whitelistRoot: OPEN_WHITELIST_ROOT,
-    bundleSupplyBps: 2_000,
-    reserveBps: 3_000,
+    bundleSupplyBps: shape.bundleBps,
+    reserveBps: shape.reserveBps,
   });
   console.log(`created ${meta.symbol} ${address.toBase58()} (pump.fun)`);
   return { address: address.toBase58(), seedKey: seedKey.toBase58() };
@@ -244,7 +260,9 @@ async function status(connection: Connection, client: MoshClient, t: Target) {
       `agent would now: ${ev.plan.action} — ${ev.plan.reason}`,
     );
   }
-  lines.push(`burner backer claimable ${lamportsToSol(claimable)} SOL (profit share)`);
+  const ps = payoutStatus(l, Math.floor(Date.now() / 1000));
+  lines.push(`payback: liquid ${lamportsToSol(ps.liquid)} / target ${lamportsToSol(ps.target)} SOL · repaid ${lamportsToSol(l.backersRepaid.toString())} SOL · ${ps.due ? "DUE" : "not due"}`);
+  lines.push(`burner backer claimable ${lamportsToSol(claimable)} SOL`);
   console.log(lines.join("\n"));
 }
 
@@ -304,42 +322,55 @@ async function rally(connection: Connection, client: MoshClient, t: Target, sol:
 }
 
 /**
- * `payout` scene (new economics: agent sells keep all proceeds in the vault; backers get their principal
- * back once vault liquid SOL ≥ `mult` × the initial vault SOL, then 15% every 4 h via `payout_backers`).
- * Script whales buy on pump.fun in `--sol` steps until the agent has sold enough that vault SOL reaches the
- * multiple (every agent sell window lets it sell ≤ 5% of the vault, ~1 SOL/window near launch price, so
- * this runs across several windows: ~10 min each on localnet). Use a small raise (1 SOL min) so the
- * multiple is reachable. When `client.payoutBackersIx` exists (ProgramEcon), `payout` cranks it after this.
+ * `payout` scene: script whales buy on pump.fun in `--sol` steps whenever the agent is not already selling,
+ * so it sells into strength window after window until the vault's liquid SOL reaches the launch's payout
+ * multiple (`payoutStatus` from the SDK, the program's own rule). The agent then cranks `payout_backers`
+ * itself on a poll where the market is strong (its gate: above the band, net buying, volume, VWAP) — the
+ * whale buys keep the flow bullish, so that lands within a window. Use `payout-raise` (1 SOL, burner only)
+ * so the multiple is reachable, and `demo-params` first (5 min windows, 20% sell cap).
  */
-async function payoutPrep(connection: Connection, client: MoshClient, t: Target, mult: number, stepSol: number) {
+async function payoutPrep(connection: Connection, client: MoshClient, t: Target, stepSol: number, maxBuys: number) {
   const whales = [1, 2, 3].map((i) => key(`whale-${i}`));
-  await Promise.all(whales.map((w) => topUp(connection, w, stepSol * 4 + 20)));
+  await Promise.all(whales.map((w) => topUp(connection, w, stepSol * Math.ceil(maxBuys / 3) + 10)));
   const venue = new VenueTrader(client);
-  const first = (await snapshot(client, t)).account;
-  const initialVault = BigInt(first.vaultSol.toString()) + BigInt(first.agentSolReceived.toString()) - BigInt(first.agentSolSpent.toString());
-  const target = (initialVault * BigInt(Math.round(mult * 100))) / 100n;
-  console.log(`vault SOL at launch ≈ ${lamportsToSol(initialVault)} SOL · payout at ${mult}× = ${lamportsToSol(target)} SOL`);
-  for (let round = 0; round < 60; round++) {
+  let buys = 0;
+  for (let round = 0; round < 400; round++) {
     const { account: l, json } = await snapshot(client, t);
-    const vault = BigInt(l.vaultSol.toString());
-    if (vault >= target) {
-      console.log(`vault ${lamportsToSol(vault)} SOL ≥ ${lamportsToSol(target)} SOL: ready for payout_backers`);
+    const now = Math.floor(Date.now() / 1000);
+    const ps = payoutStatus(l, now);
+    if (ps.liquid >= ps.target) {
+      console.log(`vault ${lamportsToSol(ps.liquid)} SOL ≥ ${lamportsToSol(ps.target)} SOL target${ps.due ? " — payout due: the agent cranks it on its next strong-market poll" : ` — due at ${new Date(ps.nextCheckAt * 1000).toISOString()}`}`);
       return;
     }
     const curve = await venueOf(connection, json);
-    const ev = predict(l, curve, BigInt(Math.floor(Date.now() / 1000)));
-    console.log(`  round ${round + 1}: vault ${lamportsToSol(vault)} / ${lamportsToSol(target)} SOL · spot ${fmtPrice(q64ToSolPerToken(ev.projection.price))} · agent: ${ev.plan.action} — ${ev.plan.reason}`);
-    // Below the sell band: a whale buys `stepSol` to put spot above it; otherwise wait for the agent's sell (or its window).
-    if (ev.plan.action !== "sell" && !ev.plan.reason.includes("window budget")) {
-      const whale = whales[round % whales.length]!;
+    const ev = predict(l, curve, BigInt(now));
+    console.log(`  round ${round + 1}: vault ${lamportsToSol(ps.liquid)} / ${lamportsToSol(ps.target)} SOL · spot ${fmtPrice(q64ToSolPerToken(ev.projection.price))} · agent: ${ev.plan.action} — ${ev.plan.reason}`);
+    // The vault's tokens must be worth the target at spot before selling them can reach it: whales keep buying
+    // (one `stepSol` buy per round, bounded by `maxBuys` so the curve never completes) until the vault's
+    // tokens + liquid SOL cover the target, then only when the agent isn't already selling into the move.
+    const tokensAtSpot = (ev.projection.x * BigInt(l.vaultTokens.toString())) / ev.projection.y;
+    const covered = ps.liquid + tokensAtSpot >= (ps.target * 13n) / 10n;
+    if (buys < maxBuys && (!covered || (ev.plan.action !== "sell" && !ev.plan.reason.includes("window budget")))) {
+      const whale = whales[buys % whales.length]!;
       const lamports = solToLamports(stepSol);
       const q = quoteBuy(curve, lamports, venueFeeBps(json));
       await send(client, whale, await venue.buyIxs(whale.publicKey, json, lamports, minOut(q.tokensOut, SLIPPAGE_BPS)));
-      console.log(`  whale bought ${stepSol} SOL → price ${fmtPrice(q.priceAfter)}`);
+      buys++;
+      console.log(`  whale-${(buys % 3) + 1} bought ${stepSol} SOL (${buys}/${maxBuys}) → price ${fmtPrice(q.priceAfter)} · vault tokens at spot ${lamportsToSol(tokensAtSpot)} SOL`);
     }
-    await sleep(20_000);
+    await sleep(15_000);
   }
-  throw new Error("vault did not reach the payout multiple in 60 rounds — raise --sol or lower --mult");
+  throw new Error("vault did not reach the payout target — raise --sol/--max-buys");
+}
+
+/** Demo-only platform knobs so the payout scene fits a recording session: 5 min agent windows, 20% sell cap (both within the program's hard caps). */
+async function demoParams(connection: Connection, client: MoshClient) {
+  const admin = loadOrCreateKeypair("admin");
+  const platform = await client.fetchPlatform();
+  if (!platform) throw new Error("platform not initialized");
+  const params = { ...platform.params, agentWindowSecs: 300, agentSellBpsPerWindow: 2_000, payoutIntervalSecs: 3_600 };
+  await send(clientFor(connection, admin), admin, [await client.updatePlatformIx(admin.publicKey, params)]);
+  console.log("platform: agentWindowSecs 300, agentSellBpsPerWindow 2000, payoutIntervalSecs 3600 (new launches freeze these)");
 }
 
 /** Reserves after a public sell of `tokens` (the venue's fee comes off the proceeds, not the price). */
@@ -477,8 +508,39 @@ async function main(): Promise<void> {
     case "rally":
       await rally(connection, client, await resolve(client, launchArg, state.theBundle), Number(flag("sol", "12")));
       return;
+    case "demo-params":
+      await demoParams(connection, client);
+      return;
+    case "payout-raise": {
+      const burner = key("burner");
+      await topUp(connection, burner, 50);
+      const t = await openRaise(
+        clientFor(connection, burner),
+        burner,
+        {
+          name: flag("name", "Lighthouse"),
+          symbol: flag("symbol", "LGHT"),
+          description: "A 1 SOL raise funded by its creator: the bundle is the first buy on pump.fun and the vault agent works the chart.",
+          bg: "#7C2D12",
+          fg: "#FFEDD5",
+        },
+        { min: 1, max: 1 },
+        { bundleBps: 2_500, reserveBps: 1_000 },
+      );
+      await deposit(client, burner, t, 1, "burner");
+      remember({ payout: t });
+      await topUp(connection, creator, 5);
+      let json = (await snapshot(client, t)).json;
+      for (let i = 0; i < 20 && BigInt(json.raised) < solToLamports(1); i++) {
+        await sleep(500);
+        json = (await snapshot(client, t)).json;
+      }
+      const mint = await launchRaise(client, creator, json);
+      console.log(`payout-raise ready: /launch/${t.address} · mint ${mint.toBase58()}`);
+      return;
+    }
     case "payout-prep":
-      await payoutPrep(connection, client, await resolve(client, launchArg, state.theBundle), Number(flag("mult", "5")), Number(flag("sol", "4")));
+      await payoutPrep(connection, client, await resolve(client, launchArg, state.payout ?? state.theBundle), Number(flag("sol", "4")), Number(flag("max-buys", "16")));
       return;
     case "defend-dump":
       await defendDump(connection, client, await resolve(client, launchArg, state.theBundle));

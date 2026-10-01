@@ -33,7 +33,7 @@ const RUN = flag("run", "");
 const PORT = Number(flag("port", "9333"));
 const BURNER = path.resolve(flag("burner", ".localnet/demo/burner.json"));
 
-const HEIGHTS = { "back-a-raise": 1000, "the-bundle": 2000, "agent-defends": 1900, claim: 1000 };
+const HEIGHTS = { "back-a-raise": 1000, "the-bundle": 2000, "agent-defends": 1900, payout: 2000 };
 const VIEW = MOBILE ? { width: 390, height: 844 } : { width: 1600, height: HEIGHTS[scene] ?? 1000 };
 
 // ---------------------------------------------------------------- CDP
@@ -208,6 +208,7 @@ class Page {
   }
   /** Element lookup shared by `rect`: a selector, or the first visible button/link/input whose text is `target` (else starts with it). */
   static finder(target) {
+    if (target.startsWith("tab:")) return `[...document.querySelectorAll('[role=tab]')].find((e) => e.getClientRects().length && e.innerText.trim().startsWith(${JSON.stringify(target.slice(4))}))`;
     if (target.startsWith("#") || target.startsWith("[")) return `document.querySelector(${JSON.stringify(target)})`;
     const t = JSON.stringify(target);
     return `(() => { const els = [...document.querySelectorAll('button, a, input, [role=button]')].filter((e) => e.getClientRects().length); const txt = (e) => (e.innerText || e.value || '').trim(); return els.find((e) => txt(e) === ${t}) ?? els.find((e) => txt(e).startsWith(${t})); })()`;
@@ -358,36 +359,79 @@ const SCENES = {
     const run = RUN ? runCommand(RUN) : Promise.resolve(0);
     await p.waitFor(`(document.body.textContent.match(/Agent buy/g) || []).length > ${agentBuysBefore}`, 150_000, 250);
     p.mark("landed");
+    // Narration replaces the raw reason ("Dip −x% vs EMA: …") on the newest buy-back row once the model answers.
+    const buyNarrated = `(() => { const row = [...document.querySelectorAll('tr')].find((r) => r.getClientRects().length && /BOUGHT BACK/i.test(r.innerText)); return !!row && !/Dip −/.test(row.innerText); })()`;
     if (MOBILE) {
-      // The chart marker is in view; tap the phone sections for the "Agent buy" row, then the vault card.
+      // The chart marker is in view; tap the phone sections for the "Agent buy" row, then the agent's activity feed.
       await sleep(2_200);
       await p.clickTarget("Trades", 500);
       p.mark("trades");
       await sleep(2_800);
-      await p.clickTarget("Vault", 500);
-      p.mark("vault");
-      await sleep(3_200);
-    } else {
+      await p.clickTarget("More", 500);
+      await sleep(400);
+      await p.clickTarget("tab:Agent", 400);
+      p.mark("agent");
+      await sleep(300);
+      await p.eval(`[...document.querySelectorAll('[role=tab]')].find((e) => e.getClientRects().length && /^Agent/.test(e.innerText.trim()))?.scrollIntoView({ behavior: 'smooth', block: 'start' })`);
+      await sleep(1_200);
+      await p.waitFor(buyNarrated, 60_000).catch(() => {});
+      p.mark("narrated");
       await sleep(4_000);
+    } else {
+      await sleep(3_000);
+      // The activity feed: the buy-back with the agent's reason and its narration.
+      await p.clickTarget("tab:Agent", 600);
+      p.mark("agent");
+      await p.waitFor(buyNarrated, 60_000).catch(() => {});
+      p.mark("narrated");
+      await p.remember("activity", `[...document.querySelectorAll('table, section')].find((e) => /Vault agent activity/.test(e.getAttribute('aria-label') || ''))?.closest('section') ?? document.getElementById('activity')`);
+      await sleep(4_500);
     }
     await p.stopRecording();
     await run;
   },
 
-  async claim(p) {
-    await p.goto(flag("path", "/portfolio"));
+  /**
+   * The agent pays backers (vault ≥ 5× its start, strong chart, agent-signed `payout_backers`): the launch
+   * page's vault card (payback progress, "eligible"), the agent feed's "Paid backers" row, then /portfolio with
+   * the position's principal repaid and "Claim all" collecting it. `--path /launch/<address>`; the crank is the
+   * agent's own (nothing to `--run`), so this waits for it: run `payout-prep` first and start when `status` says DUE.
+   */
+  async payout(p) {
+    await p.goto(flag("path"));
     await p.connectTestWallet();
     await p.injectCursor();
-    await p.setCursor(VIEW.width * 0.55, VIEW.height * 0.7);
-    await p.rectOf("Claim all");
+    await p.setCursor(VIEW.width - 60, VIEW.height - 60);
+    const vaultExpr = `[...document.querySelectorAll('section, article, div')].find((e) => e.getAttribute('aria-label') === 'Vault' || (e.querySelector(':scope > h2, :scope > header h2, :scope > div > h2')?.innerText || '').trim() === 'Vault')`;
+    await p.remember("vault", vaultExpr);
+    const paidBefore = await p.eval(`(document.body.textContent.match(/Paid backers/g) || []).length`);
     await p.startRecording();
-    await sleep(1_400);
+    if (MOBILE) await p.clickTarget("Vault", 500);
+    await sleep(2_500);
+    p.mark("vault");
+    // Open the agent feed and wait for the payout to land.
+    if (MOBILE) {
+      await p.clickTarget("More", 500);
+      await sleep(400);
+    }
+    await p.clickTarget("tab:Agent", 600);
+    p.mark("agent");
+    await p.waitFor(`(document.body.textContent.match(/Paid backers/g) || []).length > ${paidBefore}`, 20 * 60_000, 500);
+    p.mark("paid");
+    if (!MOBILE) await p.remember("activity", `[...document.querySelectorAll('table, section')].find((e) => /Vault agent activity/.test(e.getAttribute('aria-label') || ''))?.closest('section') ?? document.getElementById('activity')`);
+    await sleep(3_500);
+    // The backer's side: principal repaid, claimable, one claim.
+    await p.goto("/portfolio");
+    await p.injectCursor();
+    await p.setCursor(VIEW.width * 0.55, VIEW.height * 0.7);
+    await p.waitFor(`document.body.innerText.includes('Claim all')`, 30_000);
+    p.mark("portfolio");
+    await sleep(2_200);
     const claimBefore = await p.eval(`document.body.innerText`);
     await p.clickTarget("Claim all", 850);
     p.mark("click");
     await p.waitFor(`document.body.innerText.includes('Claimed ') && document.body.innerText !== ${JSON.stringify(claimBefore)}`, 60_000);
     p.mark("landed");
-    await p.remember("toast", `[...document.querySelectorAll('[data-sonner-toast], [role=status], li')].find((e) => e.innerText.includes('Claimed '))`);
     await sleep(3_500);
     await p.stopRecording();
   },

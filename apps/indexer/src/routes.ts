@@ -16,7 +16,7 @@ import type { SolPrice } from "./price";
 import { Limiter, sweepLimiters } from "./ratelimit";
 import { parsePubkey, ValidationError } from "./sanitize";
 import { allSummaries, summaryOf } from "./summaries";
-import { activityFromRow, holderTarget, type ChainSync } from "./sync";
+import { activityFromRow, holderTarget, type ChainSync, type SyncHealth } from "./sync";
 import { ACTIVITY_TYPES, type Candle, type LaunchSummary, type TradeRow } from "./types";
 
 export class NotFoundError extends Error {}
@@ -154,6 +154,8 @@ export function requireLaunch(store: Store, idRaw: string): SnapshotLaunchDbRow 
   return row as SnapshotLaunchDbRow;
 }
 
+/** How long one `/api/health` answer (an RPC getSlot) serves every poller; the web polls it from each tab. */
+const HEALTH_TTL_MS = 2_000;
 /** `GET /api/portfolio/:wallet` requests per minute per client IP (on top of the global budget). */
 const PORTFOLIO_LIMIT_PER_MIN = 60;
 /** How long a wallet's token balances are reused before the chain is asked again. */
@@ -181,8 +183,9 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
   const connection = client.connection;
   const launchRow = (idRaw: string) => requireLaunch(store, idRaw);
 
+  const healthCache = new TtlCache<SyncHealth>(HEALTH_TTL_MS);
   app.get("/api/health", async (_req, reply) => {
-    const h = await sync.health();
+    const h = await healthCache.get("health", () => sync.health());
     return reply.code(h.ok ? 200 : 503).send({
       ok: h.ok,
       slot: h.slot,

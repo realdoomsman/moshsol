@@ -34,7 +34,7 @@ const PLANS = {
     // The click and the status flip in the top of the page, then the vault card as it fills.
     desktop: [
       ["start+0.6", "live+2.4", { x: 0, y: 0, w: 1600, h: 1000 }],
-      ["live+2.4", "end+1.2", { rect: "vaultLive", pad: 24, fit: true }],
+      ["live+2.4", "end+1.2", { rect: "vaultLive", pad: 24, maxH: 560, fit: true }],
     ],
     mobile: [["start+0.6", "end+0.6"]],
   },
@@ -42,13 +42,26 @@ const PLANS = {
     // The dump hits and the agent buys: stats row, chart and the first trade rows, then the vault card.
     desktop: [
       ["dump-0.8", "landed+2.6", { x: 0, y: 180, w: 1600, h: 1000 }],
-      ["landed+2.6", "end+1.8", { rect: "vault", pad: 24, fit: true }],
+      ["agent+0.6", "agent+3.2", { rect: "activity", pad: 16, maxH: 560, fit: true }],
+      ["narrated-0.2", "end-0.4", { rect: "activity", pad: 16, maxH: 560, fit: true }],
     ],
-    mobile: [["landed-2.2", "end+0.4"]],
+    mobile: [
+      ["landed-2.2", "agent+2.8"],
+      ["narrated-0.2", "end+0.2"],
+    ],
   },
-  claim: {
-    desktop: [["start+0.4", "end+1.2"]],
-    mobile: [["start+0.4", "end+1.2"]],
+  payout: {
+    // The vault card's payback block, the agent feed as "Paid backers" lands, then /portfolio: principal repaid, Claim all.
+    desktop: [
+      ["vault-2.0", "vault+0.6", { rect: "vault", pad: 24, maxH: 560, anchor: "bottom", fit: true }],
+      ["paid-1.2", "paid+3.0", { rect: "activity", pad: 16, maxH: 560, fit: true }],
+      ["portfolio+0.3", "end+0.8", { x: 0, y: 0, w: 1600, h: 1000 }],
+    ],
+    mobile: [
+      ["vault-2.0", "vault+0.6"],
+      ["paid-1.2", "paid+3.0"],
+      ["portfolio+0.3", "end+0.8"],
+    ],
   },
 };
 
@@ -73,15 +86,17 @@ function cropBox(spec, t) {
     const r = t.rects[spec.rect];
     if (!r) throw new Error(`capture has no rect ${spec.rect}`);
     const pad = spec.pad ?? 0;
+    // A tall card is cropped to `maxH` CSS px of its top (totals first) or bottom (`anchor: "bottom"`), centred otherwise.
+    const rh = spec.maxH ? Math.min(r.h, spec.maxH) : r.h;
+    const ry = spec.anchor === "bottom" ? r.y + r.h - rh : r.y;
     let w = r.w + pad * 2;
-    let h = r.h + pad * 2;
-    // Grow to the requested aspect around the rect, clamped to the page.
+    let h = rh + pad * 2;
     if (spec.aspect) {
       if (w / h < spec.aspect) w = h * spec.aspect;
       else h = w / spec.aspect;
     }
     let x = r.x + r.w / 2 - w / 2;
-    let y = r.y + r.h / 2 - h / 2;
+    let y = ry + rh / 2 - h / 2;
     x = Math.max(0, Math.min(t.view.width - w, x));
     y = Math.max(0, Math.min(t.view.height - h, y));
     box = { x, y, w, h };
@@ -95,8 +110,8 @@ function cropBox(spec, t) {
 /** Renders one segment to an intermediate MP4 at `out` size (lanczos, 30 fps, visually lossless). */
 function renderSegment(capDir, t, seg, size, file) {
   const [fromExpr, toExpr, crop] = seg;
-  const from = timeOf(fromExpr, t.marks);
-  const to = timeOf(toExpr, t.marks);
+  const from = typeof fromExpr === "number" ? fromExpr : timeOf(fromExpr, t.marks);
+  const to = typeof toExpr === "number" ? toExpr : timeOf(toExpr, t.marks);
   if (to <= from) throw new Error(`empty segment ${fromExpr}..${toExpr}`);
   const frames = t.frames;
   let first = frames.findIndex((f) => f.ts >= from);
@@ -148,7 +163,16 @@ function master(capDir, size) {
   const plan = PLANS[t.scene]?.[t.device];
   if (!plan) throw new Error(`no plan for ${t.scene}/${t.device}`);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hf-enc-"));
-  const segs = plan.map((seg, i) => renderSegment(capDir, t, seg, size, path.join(tmp, `seg${i}.mp4`)));
+  // Segments play forward in time: one that starts before the previous ended is clamped to it (dropped when empty).
+  let cursor = -Infinity;
+  const segs = [];
+  plan.forEach((seg, i) => {
+    const from = Math.max(timeOf(seg[0], t.marks), cursor);
+    const to = timeOf(seg[1], t.marks);
+    if (to - from < 0.3) return;
+    cursor = to;
+    segs.push(renderSegment(capDir, t, [from, to, seg[2]], size, path.join(tmp, `seg${i}.mp4`)));
+  });
   const out = path.join(tmp, "master.mp4");
   joinSegments(segs, out);
   return { out, tmp, t };

@@ -73,12 +73,17 @@ export function describeAgentTrade(m: AgentMarker, symbol: string): string {
 // ---------------------------------------------------------------------------------------------
 // Featured launch
 
-/** Live launch with the most trades — the landing's featured launch. */
+/**
+ * The landing's featured launch: the most-traded live pump launch (the model every number on the
+ * site describes); a legacy Holdfast-curve launch only when no pump launch is live.
+ */
 export function mostTraded(live: LaunchSummary[]): LaunchSummary | null {
   let best: LaunchSummary | null = null;
   for (const l of live) {
     if (l.status !== "live") continue;
-    if (!best || l.tradeCount > best.tradeCount) best = l;
+    const preferred = l.venue === "pump" && best?.venue !== "pump";
+    const outranked = best?.venue === "pump" && l.venue !== "pump";
+    if (!best || preferred || (!outranked && l.tradeCount > best.tradeCount)) best = l;
   }
   return best;
 }
