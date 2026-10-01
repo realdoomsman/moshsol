@@ -1,27 +1,27 @@
 {
+  "launch-in-a-minute": {
+    "cluster": "localnet",
+    "recordedAt": "2026-10-01T09:38:30.000Z",
+    "durationSec": 59.8
+  },
   "back-a-raise": {
     "cluster": "localnet",
-    "recordedAt": "2026-10-01T07:40:40.000Z",
-    "durationSec": 8.8
+    "recordedAt": "2026-10-01T09:38:30.000Z",
+    "durationSec": 9.8
   },
   "the-bundle": {
     "cluster": "localnet",
-    "recordedAt": "2026-10-01T07:44:30.000Z",
-    "durationSec": 10.5
+    "recordedAt": "2026-10-01T09:38:58.000Z",
+    "durationSec": 10.6
   },
   "agent-defends": {
     "cluster": "localnet",
-    "recordedAt": "2026-10-01T07:53:47.000Z",
-    "durationSec": 12.5
+    "recordedAt": "2026-10-01T09:45:19.000Z",
+    "durationSec": 17.2
   },
-  "claim": {
+  "payout": {
     "cluster": "localnet",
-    "recordedAt": "2026-10-01T07:54:59.000Z",
-    "durationSec": 9.4
-  },
-  "launch-in-a-minute": {
-    "cluster": "localnet",
-    "recordedAt": "2026-10-01T07:40:40.000Z",
-    "durationSec": 47.1
+    "recordedAt": "2026-10-01T10:53:57.000Z",
+    "durationSec": 16.3
   }
 }
