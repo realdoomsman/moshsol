@@ -131,18 +131,20 @@ export class FlowWindow {
         const received = c.agentSolReceived - last.c.agentSolReceived;
         // Public buys add their net to real_sol and their gross to volume; sells take their gross from real_sol
         // and add it to volume; the agent's own fills are in both and come out through the agent_* counters.
-        const volume = Number(c.volumeSol - last.c.volumeSol - spent - received) / LAMPORTS;
+        const gross = Number(c.volumeSol - last.c.volumeSol - spent - received) / LAMPORTS;
         const net = Number(c.realSol - last.c.realSol - spent + received) / LAMPORTS;
+        // On a pump launch public volume never reaches the Launch counters: the price-implied |net| is its lower bound
+        // (otherwise imbalance and the volume ratio stay 0 / 1 there and no flow gate — the payout's included — can ever fire).
+        const volume = Math.max(0, gross, Math.abs(net));
         const trades = c.tradeCount - last.c.tradeCount - (c.agentBuys - last.c.agentBuys) - (c.agentSells - last.c.agentSells);
-        this.samples.push({ t, dt: t - last.t, volume: Math.max(0, volume), net, trades: Math.max(0, trades), price: Math.sqrt(last.price * price) });
+        this.samples.push({ t, dt: t - last.t, volume, net, trades: Math.max(0, trades), price: Math.sqrt(last.price * price) });
         const cutoff = t - FLOW_LONG_SECS;
         let drop = 0;
         while (drop < this.samples.length && this.samples[drop]!.t <= cutoff) drop++;
         if (drop > 0) this.samples.splice(0, drop);
         if (c.agentBuys !== last.c.agentBuys || c.agentSells !== last.c.agentSells) this.agentTradeAt = t;
-        const activity = Math.max(0, volume, Math.abs(net));
-        bucket.activity += activity;
-        this.dailySum += activity;
+        bucket.activity += volume;
+        this.dailySum += volume;
       }
       this.daily.set(minute, bucket);
       const dayCutoff = minute - FLOW_DAY_SECS / 60;
