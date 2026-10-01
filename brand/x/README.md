@@ -25,27 +25,29 @@ Voice rules (from the brand brief): numbers over adjectives; never promise price
 
 ## Launch thread (post 1 is the pin)
 1. Backers buy first and share the profit.
-   Backers fund the first buy. It sits in an on-chain vault, traded only by a rate-limited agent. Backers get 100% of its realized profit and 50% of every trading fee.
+   On Holdfast, backers fund a token's first buy. The launch creates the token on pump.fun and buys the bundle before anyone else can. A rate-limited vault agent trades it; backers get 75% of its realized profit.
    Live on Solana → holdfast.fun
    [image: announce.png]
-2. How a launch works, in four beats:
+2. How a launch works:
    01 Back the raise — miss the minimum and everyone is refunded in full.
-   02 The bundle buys first — before any public trade exists.
-   03 The vault agent defends — buys dips, sells rallies, inside limits the program enforces.
-   04 Backers earn — half of every 1% trading fee and all of the agent's realized profit.
-3. The vault agent can't go rogue. Every trade must pass on-chain checks:
+   02 Launch — the token is created on pump.fun and the bundle is its first buy.
+   03 The vault agent trades — sells into rallies, buys back dips, inside limits the program enforces.
+   04 Earn — 75% of the agent's realized profit goes to backers, 25% buys back and burns the Holdfast token.
+3. The creator gets 0% of fees. pump.fun's creator fee on every trade flows to the launch instead: 75% into the vault as market-making capital, 25% to the buyback-and-burn pool. Holdfast itself only earns the 1% launch fee and the create fee.
+4. The vault agent can't go rogue. Every trade must pass on-chain checks:
    • price ≥ 2% under/over the EMA
    • buys at or below the vault's average cost
    • sells above cost — the vault never realizes a loss
    • per-window budgets and a 3% max price impact
-   The agent key can move value only between the launch's own curve and vault.
-4. Rules you can check, not promises. Mint authority revoked. Fixed 1B supply. Fees frozen per launch at creation. Only the platform admin (a Squads multisig) can withdraw a vault, and every withdrawal shows on the launch page → holdfast.fun/docs/verify
-5. When a launch goes quiet — 3+ days old, no trade for 24h, nobody outside the curve and vault holding — anyone can wind it down. The vault's tokens go back to the curve and the curve's and vault's SOL goes to backers.
-6. Drag the price on the landing page and watch what the program would let the vault agent do. It's the real arithmetic, seeded with a live launch.
+   • near the launch price with little volume it may sell about 1 SOL an hour, and only sells big into real buy volume
+   The agent key can move value only between the launch's vault and the token's own market.
+5. Rules you can check, not promises. Fixed supply, metadata on-chain, terms frozen per launch at creation. The platform admin (a Squads multisig) can withdraw a vault, and every withdrawal shows on the launch page → holdfast.fun/docs/verify
+6. When a launch goes quiet — 3+ days old, no trade for 24h, nobody outside the market and the vault holding — anyone can wind it down. The vault sells what's left and all its SOL goes to backers.
+7. No wallet? Sign in with Google and Holdfast makes you one. Export the key any time.
 
 ## Standalone posts
-- "On Holdfast, when the vault agent sells above its average cost, 100% of the profit goes to the backers who funded the first buy."
+- "On Holdfast, when the vault agent sells above its average cost, 75% of the profit goes to the backers who funded the first buy and 25% buys back and burns the Holdfast token."
 - "The platform admin can withdraw a vault with admin_withdraw_vault. Every withdrawal is an on-chain event, shown on the launch page."
-- "Every Holdfast launch freezes its fee split at creation. Backers get 50% of fees. The admin can't change that later."
+- "Creators on Holdfast earn 0% of fees. The pump.fun creator fee goes to the vault that trades their token and to the burn pool. Every launch freezes that at creation."
 - "The vault agent's latest call, live: holdfast.fun/agents"
-- "Back a raise from 1 SOL, watch the bundle buy first, claim your fee and profit share. Sign in with Google if you don't have a wallet."
+- "Back a raise from 1 SOL, watch the bundle buy first on pump.fun, claim your share of the agent's profit. Sign in with Google if you don't have a wallet."
