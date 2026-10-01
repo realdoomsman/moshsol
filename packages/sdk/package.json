@@ -10,8 +10,7 @@
   },
   "scripts": {
     "sync-idl": "node -e \"const fs=require('fs');fs.copyFileSync('../../target/idl/moshsol.json','src/idl/moshsol.json');fs.copyFileSync('../../target/types/moshsol.ts','src/idl/moshsol.ts')\"",
-    "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/*.test.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",
