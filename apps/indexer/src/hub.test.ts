@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { WebSocket } from "ws";
+import { HiddenLaunches } from "./hidden";
 import { Hub, MAX_BUFFERED_BYTES } from "./hub";
+import type { WsMessage } from "./types";
 
 /** The slice of a `ws` socket the hub uses. */
 function fakeSocket(bufferedAmount: number) {
@@ -33,4 +35,21 @@ test("a client too far behind is dropped instead of buffered for; the others sti
   assert.equal(reader.sent.length, 2);
   assert.equal(stalled.terminated, true);
   assert.deepEqual(stalled.sent, []);
+});
+
+test("event and launch pushes of hidden launches (by address or mint) are dropped; others still go out", (t) => {
+  const hub = new Hub(new HiddenLaunches(["HiddenAddr", "HiddenMint"]));
+  t.after(() => hub.close());
+  const client = fakeSocket(0);
+  hub.add(client as unknown as WebSocket);
+  const event = (launch: string, mint: string) => ({ type: "event", event: { launch, mint } }) as unknown as WsMessage;
+  const launch = (address: string, mint: string) => ({ type: "launch", launch: { address, mint } }) as unknown as WsMessage;
+
+  hub.broadcast(event("HiddenAddr", "m1"));
+  hub.broadcast(event("a2", "HiddenMint"));
+  hub.broadcast(launch("HiddenAddr", "m1"));
+  hub.broadcast(launch("a2", "HiddenMint"));
+  hub.broadcast(event("a3", "m3"));
+  hub.broadcast(launch("a3", "m3"));
+  assert.deepEqual(client.sent.map((s) => JSON.parse(s).type), ["event", "launch"]);
 });

@@ -4,6 +4,8 @@ import type { LaunchJson } from "@holdfast/sdk";
 import { Keypair } from "@solana/web3.js";
 import Fastify from "fastify";
 import { DEFAULT_PUBKEY, Store, type EventDbRow } from "./db";
+import { registerDiscoveryRoutes } from "./discovery";
+import { HiddenLaunches } from "./hidden";
 import type { SolPrice } from "./price";
 import { registerRoutes, type RouteDeps } from "./routes";
 import { LaunchSummaries } from "./summaries";
@@ -60,12 +62,14 @@ function deposit(store: Store, launch: string, backer: string, lamports: bigint,
   store.insertEvent(event(launch, backer, "deposit", lamports, index));
 }
 
-/** Routes over an in-memory store; the chain client is never called by the routes tested here. */
-async function app(store: Store) {
+/** Routes (core + discovery) over an in-memory store; the chain client is never called by the routes tested here. */
+async function app(store: Store, hidden = new HiddenLaunches()) {
   const fastify = Fastify();
   const price = {} as SolPrice;
-  const deps = { store, client: { connection: {}, programId: null }, sync: {}, price, summaries: new LaunchSummaries(store, price) };
+  const summaries = new LaunchSummaries(store, price, hidden);
+  const deps = { store, client: { connection: {}, programId: null }, sync: {}, price, summaries };
   registerRoutes(fastify, deps as unknown as RouteDeps);
+  registerDiscoveryRoutes(fastify, { store, price, summaries });
   await fastify.ready();
   return fastify;
 }
@@ -186,4 +190,49 @@ test("stats: a raise past its deadline below its minimum is neither raising nor 
   assert.equal(stats.totalLaunches, 3);
   assert.equal(stats.raisingLaunches, 2);
   assert.equal(stats.totalRaisedSol, 2.5);
+});
+
+test("hidden launches (by address or mint) stay off the list, its search, /api/search, trending and the feed, but resolve by id", async (t) => {
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  const [visible, visibleMint, byAddress, byAddressMint, byMint, hiddenMint, raising] = [key(), key(), key(), key(), key(), key(), key()];
+  seedTrading(store, visible, visibleMint);
+  seedTrading(store, byAddress, byAddressMint);
+  seedTrading(store, byMint, hiddenMint);
+  seedTrading(store, raising, null);
+  const now = Math.floor(Date.now() / 1000);
+  // The hidden launches trade the most: unfiltered, they would top trending and the feed.
+  trade(store, visible, "v1", now - 60, 1e-7);
+  trade(store, byAddress, "a1", now - 30, 1e-7);
+  trade(store, byMint, "m1", now - 20, 1e-7);
+  trade(store, byMint, "m2", now - 10, 1e-7);
+  for (const [i, launch] of [visible, byAddress, byMint, raising].entries()) store.insertEvent({ ...event(launch, key(), "trade", 1n, i), slot: 10 + i });
+
+  const server = await app(store, new HiddenLaunches([byAddress, hiddenMint, raising]));
+  t.after(() => server.close());
+  const get = async (url: string) => {
+    const res = await server.inject({ method: "GET", url });
+    assert.equal(res.statusCode, 200, url);
+    return res.json();
+  };
+  const addresses = (list: { address: string }[]) => list.map((l) => l.address);
+
+  const list = await get("/api/launches?status=all&limit=200");
+  assert.deepEqual(addresses(list.launches), [visible]);
+  assert.equal(list.total, 1);
+  assert.deepEqual(addresses((await get("/api/launches?q=t")).launches), [visible]);
+  assert.deepEqual((await get(`/api/launches?q=${hiddenMint}`)).launches, []);
+  assert.deepEqual(addresses((await get("/api/search?q=T")).launches), [visible]);
+  assert.deepEqual((await get(`/api/search?q=${byAddress.slice(0, 8)}`)).launches, []);
+  assert.deepEqual(addresses((await get("/api/trending")).top), [visible]);
+  assert.deepEqual((await get("/api/activity")).events.map((e: { launch: string }) => e.launch), [visible]);
+
+  // Direct links keep working, by address or mint, flagged for noindex; listed launches carry no flag.
+  assert.equal((await get(`/api/launches/${byAddress}`)).hidden, true);
+  assert.equal((await get(`/api/launches/${byAddressMint}`)).hidden, true);
+  assert.equal((await get(`/api/launches/${hiddenMint}`)).address, byMint);
+  assert.equal((await get(`/api/launches/${raising}`)).hidden, true);
+  assert.equal((await get(`/api/launches/${visible}`)).hidden, undefined);
+  assert.equal((await get(`/api/launches/${byMint}/trades`)).trades.length, 2);
+  assert.notEqual((await get(`/api/launches/${byMint}/candles?tf=60`)).candles.length, 0);
 });

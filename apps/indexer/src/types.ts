@@ -33,6 +33,8 @@ export interface LaunchSummary extends LaunchJson {
   comments: number;
   /** The creator's profile name, if set. */
   creatorName: string | null;
+  /** Set (only) on a launch in `HIDDEN_LAUNCHES`: kept off every list, still served by id; pages should not be indexed. */
+  hidden?: true;
   /** SOL credited to backers under the pre-October-2026 profit split (sum of historical `VaultProfitShared`); 0 on launches since. */
   profitSharedSol: number;
   /** Backer payback (`payout_backers`): principal repaid so far and dividends paid on top, in SOL (snapshot `backersRepaid` / `backerPayouts`). */

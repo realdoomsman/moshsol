@@ -1,4 +1,5 @@
 import { INDEXER_URL } from "@/lib/env";
+import { withIndexerToken } from "@/lib/indexer-internal";
 
 /** Formats the OG renderer can decode; anything else falls back to the drawn tile. */
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/svg+xml"];
@@ -36,7 +37,8 @@ export async function imageDataUri(raw: string | null, types = IMAGE_TYPES): Pro
     const signal = AbortSignal.timeout(3_000);
     for (let hop = 0; ; hop++) {
       if (!isAllowedImageUrl(url)) return null;
-      const res = await fetch(url, { signal, redirect: "manual" });
+      // Only an indexer `/files` URL gets the internal token; gateways never see it.
+      const res = await fetch(url, withIndexerToken(url, { signal, redirect: "manual" }));
       const location = res.headers.get("location");
       if (res.status >= 300 && res.status < 400 && location) {
         await res.body?.cancel();

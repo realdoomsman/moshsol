@@ -4,6 +4,7 @@ import { ArweaveStore } from "./arweave";
 import { config } from "./config";
 import { Store } from "./db";
 import { Holders } from "./holders";
+import { HiddenLaunches } from "./hidden";
 import { Hub } from "./hub";
 import { SolPrice } from "./price";
 import { registerRpcProxy } from "./rpc-proxy";
@@ -18,7 +19,8 @@ const SHUTDOWN_TIMEOUT_MS = 5_000;
 const connection = new Connection(config.rpcUrl, { commitment: "confirmed" });
 const client = new MoshClient(connection);
 const store = new Store(config.dbPath);
-const hub = new Hub();
+const hidden = new HiddenLaunches(config.hiddenLaunches);
+const hub = new Hub(hidden);
 const holders = new Holders(connection, client.programId, config.holdersTtlMs, store);
 const files = { filesDir: config.filesDir, publicUrl: config.publicUrl };
 
@@ -26,6 +28,7 @@ const app = await createServer({
   ...files,
   rateLimitPerMin: config.rateLimitPerMin,
   uploadLimitPerMin: config.uploadLimitPerMin,
+  internalToken: config.internalToken,
   trustProxy: config.trustProxy,
 });
 if (config.trustProxy === true) {
@@ -42,7 +45,7 @@ const sync = new ChainSync(store, client, hub, holders, price, app.log.child({ m
   ...files,
 });
 const arweave = config.arweave ? new ArweaveStore(config.arweave, store, app.log.child({ module: "arweave" })) : null;
-const summaries = new LaunchSummaries(store, price);
+const summaries = new LaunchSummaries(store, price, hidden);
 registerApi(app, { store, client, sync, hub, holders, price, summaries }, {
   ...files,
   siteUrl: config.siteUrl,
@@ -87,6 +90,8 @@ app.log.info(
     commentLimitPerMin: config.commentLimitPerMin,
     socialIpLimitPerMin: config.socialIpLimitPerMin,
     moderation: config.adminToken !== null,
+    internalToken: config.internalToken !== null,
+    hiddenLaunches: hidden.size,
     storage: config.arweave
       ? { network: config.arweave.network, payer: arweave?.address, dailyBudgetLamports: config.arweave.dailyBudgetLamports }
       : "local",

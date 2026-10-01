@@ -8,7 +8,7 @@ import { createServer } from "./server";
 test("every response carries the security headers: API errors, rate-limited paths and uploaded files (SVGs sandboxed)", async (t) => {
   const filesDir = fs.mkdtempSync(path.join(os.tmpdir(), "hf-server-"));
   t.after(() => fs.rmSync(filesDir, { recursive: true, force: true }));
-  const app = await createServer({ filesDir, publicUrl: "http://indexer.test", rateLimitPerMin: 0, uploadLimitPerMin: 0, trustProxy: false });
+  const app = await createServer({ filesDir, publicUrl: "http://indexer.test", rateLimitPerMin: 0, uploadLimitPerMin: 0, internalToken: null, trustProxy: false });
   t.after(() => app.close());
   fs.writeFileSync(path.join(filesDir, "img", "a.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   fs.writeFileSync(path.join(filesDir, "img", "b.svg"), "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>");

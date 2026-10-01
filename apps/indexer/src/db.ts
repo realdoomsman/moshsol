@@ -623,12 +623,14 @@ const SQL = {
     ORDER BY slot DESC, rowid DESC LIMIT :limit`,
   candlePoints: "SELECT timestamp, price_sol, sol FROM trades WHERE launch = ? ORDER BY slot ASC, rowid ASC",
   deposits: "SELECT * FROM deposits WHERE launch = ? AND timestamp < ? ORDER BY slot DESC, rowid DESC LIMIT ?",
+  // `exclude`: JSON array of launch addresses left out (hidden launches).
   agentTrades: `
     SELECT t.*, l.mint AS mint, l.venue AS venue, ${LAUNCH_SYMBOL} AS symbol
     FROM trades t JOIN launches l ON l.address = t.launch
-    WHERE t.is_agent = 1 ORDER BY t.slot DESC, t.rowid DESC LIMIT ?`,
-  volumeSince: "SELECT COALESCE(SUM(sol), 0) AS v FROM trades WHERE timestamp >= ?",
-  activity: `${ACTIVITY_SELECT} ORDER BY e.slot DESC, e.rowid DESC LIMIT ?`,
+    WHERE t.is_agent = 1 AND t.launch NOT IN (SELECT value FROM json_each(:exclude))
+    ORDER BY t.slot DESC, t.rowid DESC LIMIT :limit`,
+  activity: `${ACTIVITY_SELECT} WHERE e.launch NOT IN (SELECT value FROM json_each(:exclude))
+    ORDER BY e.slot DESC, e.rowid DESC LIMIT :limit`,
   activityOne: `${ACTIVITY_SELECT} WHERE e.signature = ? AND e.event_index = ?`,
   launchActivity: `${ACTIVITY_SELECT}
     WHERE e.launch = :launch AND e.timestamp < :before ORDER BY e.slot DESC, e.rowid DESC LIMIT :limit`,
@@ -1008,16 +1010,14 @@ export class Store {
     return rows<DepositDbRow>(this.stmts.deposits, [launch, beforeTs, limit]);
   }
 
-  agentTrades(limit: number): AgentTradeDbRow[] {
-    return rows<AgentTradeDbRow>(this.stmts.agentTrades, [limit]);
+  /** Newest agent trades, launches in `exclude` (addresses) left out. */
+  agentTrades(limit: number, exclude: readonly string[]): AgentTradeDbRow[] {
+    return rows<AgentTradeDbRow>(this.stmts.agentTrades, { limit, exclude: JSON.stringify(exclude) });
   }
 
-  volumeSince(ts: number): number {
-    return row<{ v: number }>(this.stmts.volumeSince, [ts])?.v ?? 0;
-  }
-
-  activity(limit: number): ActivityDbRow[] {
-    return rows<ActivityDbRow>(this.stmts.activity, [limit]);
+  /** The newest events across launches (the global feed), launches in `exclude` (addresses) left out. */
+  activity(limit: number, exclude: readonly string[]): ActivityDbRow[] {
+    return rows<ActivityDbRow>(this.stmts.activity, { limit, exclude: JSON.stringify(exclude) });
   }
 
   activityEvent(signature: string, eventIndex: number): ActivityDbRow | undefined {

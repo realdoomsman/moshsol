@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { activityFromRow } from "./activity";
 import { SIGNATURE_MAX_SKEW_SECS, safeEqual, sha256Hex, verifySignedMessage } from "./auth";
 import type { CommentDbRow, LaunchDbRow, Store } from "./db";
+import type { HiddenLaunches } from "./hidden";
 import type { Holders } from "./holders";
 import type { Hub } from "./hub";
 import type { SolPrice } from "./price";
@@ -19,6 +20,8 @@ export interface SocialDeps {
   hub: Hub;
   holders: Holders;
   price: SolPrice;
+  /** Left off the profile's created/backed launch lists (and the totals over them). */
+  hidden: HiddenLaunches;
   filesDir: string;
   publicUrl: string;
   adminToken: string | null;
@@ -292,7 +295,8 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
     const wallet = pubkeyParam(req.params.wallet, "wallet").toBase58();
     const profile = store.profile(wallet);
 
-    const created = summariesOf(store, price, store.walletLaunches(wallet));
+    // Hidden launches are left off public profiles, like every other launch list.
+    const created = summariesOf(store, price, store.walletLaunches(wallet).filter((row) => !deps.hidden.has(row)));
     const nowSecs = Math.floor(Date.now() / 1000);
     // A raise past its deadline below its minimum reads `raising` on chain but can only refund: count it as refunding.
     const statusOf = (l: LaunchJson) => (raiseFailed(l, nowSecs) ? "refunding" : l.status);
@@ -317,7 +321,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps): vo
     const backed = [];
     for (const d of store.walletDeposits(wallet)) {
       const row = store.launch(d.launch);
-      if (!row?.snapshot) continue;
+      if (!row?.snapshot || deps.hidden.has(row)) continue;
       const snap = JSON.parse(row.snapshot) as LaunchJson;
       const dep = BigInt(d.amount);
       const claimed = claimedByLaunch.get(d.launch) ?? 0n;

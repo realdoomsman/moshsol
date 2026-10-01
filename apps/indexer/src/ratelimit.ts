@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { safeEqual } from "./auth";
 
 const WINDOW_MS = 60_000;
 
@@ -39,8 +40,13 @@ export function sweepLimiters(app: FastifyInstance, limiters: Limiter[]): void {
  * Per-IP limits: a generous budget across every route (0 disables) and a tight one for the uploads
  * (`POST /api/upload`, `POST /api/upload/image`: write files to disk). Over-budget requests get 429 + `Retry-After`.
  * The RPC proxy (`/rpc`, `/rpc-ws`) is exempt here: it counts every JSON-RPC call against its own limit.
+ * Requests carrying `x-holdfast-internal: <internalToken>` (the web's server renders, which reach the indexer from a
+ * few shared egress IPs on behalf of every visitor) skip the general budget; uploads still count against theirs.
  */
-export function registerRateLimits(app: FastifyInstance, opts: { perMin: number; uploadPerMin: number }): void {
+export function registerRateLimits(
+  app: FastifyInstance,
+  opts: { perMin: number; uploadPerMin: number; internalToken: string | null },
+): void {
   const all = opts.perMin > 0 ? new Limiter(opts.perMin) : null;
   const upload = opts.uploadPerMin > 0 ? new Limiter(opts.uploadPerMin) : null;
   if (!all && !upload) return;
@@ -51,7 +57,11 @@ export function registerRateLimits(app: FastifyInstance, opts: { perMin: number;
     if (route === "/rpc" || route === "/rpc-ws") return;
     const now = Date.now();
     const isUpload = req.method === "POST" && route?.startsWith("/api/upload") === true;
-    for (const limiter of isUpload ? [all, upload] : [all]) {
+    // Constant-time compare; nobody is exempt while no token is configured.
+    const token = req.headers[INTERNAL_HEADER];
+    const internal = opts.internalToken !== null && typeof token === "string" && safeEqual(token, opts.internalToken);
+    const general = internal ? null : all;
+    for (const limiter of isUpload ? [general, upload] : [general]) {
       if (!limiter) continue;
       const over = limiter.hit(req.ip, now);
       if (!over) continue;
@@ -63,3 +73,6 @@ export function registerRateLimits(app: FastifyInstance, opts: { perMin: number;
     }
   });
 }
+
+/** Header the web's server-side fetches authenticate with (`INTERNAL_TOKEN` here, `INDEXER_INTERNAL_TOKEN` on the web). */
+export const INTERNAL_HEADER = "x-holdfast-internal";

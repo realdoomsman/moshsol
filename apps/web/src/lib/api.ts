@@ -1,4 +1,5 @@
 import { AGENT_URL, INDEXER_URL } from "./env";
+import { withIndexerToken } from "./indexer-internal";
 import type {
   ActivityEvent,
   ActivityType,
@@ -38,10 +39,10 @@ export class ApiError extends Error {
  */
 const SERVER_TIMEOUT_MS = 1_500;
 /**
- * Server renders share identical plain GETs (public data: no headers, body or credentials) for this
+ * Server renders share identical plain GETs (public data: no caller headers, body or credentials) for this
  * long from the moment one is sent, in flight included: concurrent and back-to-back renders cost the
- * indexer/agent one request per URL per window, not one per render (and the indexer's per-IP budget
- * counts all SSR as one client). Live data stays fresh: browsers then follow the websocket.
+ * indexer/agent one request per URL per window, not one per render (without INDEXER_INTERNAL_TOKEN the
+ * indexer's per-IP budget counts all SSR as one client). Live data stays fresh: browsers then follow the websocket.
  */
 const SERVER_SHARE_MS = 1_000;
 /** URLs remembered at once; expired entries go first, then the oldest. */
@@ -53,13 +54,17 @@ type RawResponse = { ok: boolean; status: number; statusText: string; text: stri
 const shared = new Map<string, { at: number; res: Promise<RawResponse> }>();
 
 async function fetchRaw(base: string, path: string, init?: RequestInit): Promise<RawResponse> {
+  const url = `${base}${path}`;
   let res: Response;
   try {
-    res = await fetch(`${base}${path}`, {
-      cache: "no-store",
-      signal: typeof window === "undefined" ? AbortSignal.timeout(SERVER_TIMEOUT_MS) : undefined,
-      ...init,
-    });
+    res = await fetch(
+      url,
+      withIndexerToken(url, {
+        cache: "no-store",
+        signal: typeof window === "undefined" ? AbortSignal.timeout(SERVER_TIMEOUT_MS) : undefined,
+        ...init,
+      }),
+    );
   } catch {
     throw new ApiError(0, `Can't reach ${base}`);
   }

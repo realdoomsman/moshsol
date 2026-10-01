@@ -1,4 +1,5 @@
 import type { WebSocket } from "ws";
+import { HiddenLaunches } from "./hidden";
 import type { WsMessage } from "./types";
 
 const HEARTBEAT_MS = 30_000;
@@ -8,12 +9,15 @@ const HEARTBEAT_MS = 30_000;
  */
 export const MAX_BUFFERED_BYTES = 1 << 20;
 
-/** Fan-out of indexer updates to `/ws` clients, with ping/pong liveness checks. */
+/**
+ * Fan-out of indexer updates to `/ws` clients, with ping/pong liveness checks. Event and launch pushes of hidden
+ * launches are dropped: clients build their live feeds and lists from them.
+ */
 export class Hub {
   private readonly clients = new Map<WebSocket, { alive: boolean }>();
   private readonly heartbeat: NodeJS.Timeout;
 
-  constructor() {
+  constructor(private readonly hidden = new HiddenLaunches()) {
     this.heartbeat = setInterval(() => {
       for (const [socket, state] of this.clients) {
         if (!state.alive) {
@@ -40,6 +44,8 @@ export class Hub {
 
   broadcast(msg: WsMessage): void {
     if (this.clients.size === 0) return;
+    if (msg.type === "event" && this.hidden.has({ address: msg.event.launch, mint: msg.event.mint })) return;
+    if (msg.type === "launch" && this.hidden.has(msg.launch)) return;
     const data = JSON.stringify(msg);
     for (const socket of this.clients.keys()) {
       if (socket.readyState !== socket.OPEN) continue;

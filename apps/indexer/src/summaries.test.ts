@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LaunchJson } from "@holdfast/sdk";
 import { DEFAULT_PUBKEY, Store } from "./db";
+import { HiddenLaunches } from "./hidden";
 import type { SolPrice } from "./price";
 import { LaunchSummaries, vaultModelOf } from "./summaries";
 
@@ -98,7 +99,7 @@ test("cached summaries show a write at once, by address and by mint", (t) => {
   seedLive(store);
   const nowMs = 1_800_000_000_000;
   // A TTL far longer than the test: only the write can refresh the cache.
-  const summaries = new LaunchSummaries(store, {} as SolPrice, 3_600_000, () => nowMs);
+  const summaries = new LaunchSummaries(store, {} as SolPrice, new HiddenLaunches(), 3_600_000, () => nowMs);
   assert.equal(summaries.byId(LAUNCH)?.volume1hSol, 0);
   assert.equal(summaries.all(), summaries.all(), "reads between writes share one computation");
 
@@ -113,7 +114,7 @@ test("without writes, the rolling windows are at most one TTL behind the clock",
   t.after(() => store.close());
   seedLive(store);
   let nowMs = 1_800_000_000_000;
-  const summaries = new LaunchSummaries(store, {} as SolPrice, 5_000, () => nowMs);
+  const summaries = new LaunchSummaries(store, {} as SolPrice, new HiddenLaunches(), 5_000, () => nowMs);
   // On the 1h window's edge: one more second and it falls out.
   trade(store, "sigA", nowMs / 1000 - 3_600, 1);
   assert.equal(summaries.byId(LAUNCH)?.volume1hSol, 1);

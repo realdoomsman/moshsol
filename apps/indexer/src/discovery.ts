@@ -1,6 +1,7 @@
 import { ACC_PRECISION, BPS, lamportsToSol, type LaunchJson } from "@holdfast/sdk";
 import type { FastifyInstance } from "fastify";
 import type { LaunchDbRow, Store } from "./db";
+import type { HiddenLaunches } from "./hidden";
 import type { SolPrice } from "./price";
 import { WINDOW_SECS, WINDOWS, intQuery, oneOf, type Query } from "./routes";
 import { ValidationError } from "./sanitize";
@@ -131,13 +132,13 @@ function tradersBoard(store: Store, since: number): Entry[] {
   }));
 }
 
-function launchesBoard(store: Store, price: SolPrice, window: Window, since: number): Entry[] {
+function launchesBoard(store: Store, price: SolPrice, hidden: HiddenLaunches, window: Window, since: number): Entry[] {
   const windowAgg = store.launchWindowAggregates(since);
   const out = [];
   const solUsd = price.current;
   for (const { row, snap } of launchInfos(store).values()) {
     const agg = windowAgg.get(row.address);
-    if (snap.status !== "live" || !agg || agg.volume <= 0) continue;
+    if (snap.status !== "live" || !agg || agg.volume <= 0 || hidden.has(row)) continue;
     // Growth vs the price at the window start (last trade before it), else vs the launch price.
     const ref = (window === "all" ? null : store.priceAt(row.address, since)) ?? row.launch_price;
     out.push({
@@ -206,7 +207,7 @@ export function registerDiscoveryRoutes(
           entries = tradersBoard(store, since);
           break;
         case "launches":
-          entries = launchesBoard(store, price, window, since);
+          entries = launchesBoard(store, price, summaries.hidden, window, since);
           break;
       }
       if (kind !== "launches") {
@@ -239,24 +240,29 @@ export function registerDiscoveryRoutes(
     const addrPrefix = raw.length >= 3 && BASE58_RE.test(raw) ? raw : null;
 
     const solUsd = price.current;
-    const launches = store.searchLaunches(text, addrPrefix, SEARCH_MAX).map((row) => {
-      const snap = JSON.parse(row.snapshot) as LaunchJson;
-      return {
-        address: row.address,
-        venue: row.venue,
-        mint: row.mint,
-        name: row.meta_name ?? row.onchain_name,
-        symbol: row.meta_symbol ?? row.onchain_symbol,
-        image: row.image,
-        status: snap.status,
-        priceSol: snap.priceSol,
-        marketCapSol: snap.marketCapSol,
-        marketCapUsd: solUsd ? snap.marketCapSol * solUsd.usd : null,
-        raised: snap.raised,
-        holders: row.holders,
-        creatorName: row.creator_name,
-      };
-    });
+    // Over-fetched by the hidden ids so dropping hidden matches still fills the page.
+    const matches = store.searchLaunches(text, addrPrefix, SEARCH_MAX + summaries.hidden.size);
+    const launches = matches
+      .filter((row) => !summaries.hidden.has(row))
+      .slice(0, SEARCH_MAX)
+      .map((row) => {
+        const snap = JSON.parse(row.snapshot) as LaunchJson;
+        return {
+          address: row.address,
+          venue: row.venue,
+          mint: row.mint,
+          name: row.meta_name ?? row.onchain_name,
+          symbol: row.meta_symbol ?? row.onchain_symbol,
+          image: row.image,
+          status: snap.status,
+          priceSol: snap.priceSol,
+          marketCapSol: snap.marketCapSol,
+          marketCapUsd: solUsd ? snap.marketCapSol * solUsd.usd : null,
+          raised: snap.raised,
+          holders: row.holders,
+          creatorName: row.creator_name,
+        };
+      });
 
     const users = new Map<string, { wallet: string; name: string | null; avatar: string | null }>();
     for (const p of store.searchProfiles(text, addrPrefix, SEARCH_MAX)) users.set(p.wallet, p);
@@ -270,7 +276,7 @@ export function registerDiscoveryRoutes(
   });
 
   app.get("/api/trending", async () => {
-    const ranked = rankTrending(summaries.all());
+    const ranked = rankTrending(summaries.listed());
     const top = ranked[0];
     const nowSecs = Math.floor(Date.now() / 1000);
     if (top && top.trades1h > 0) {

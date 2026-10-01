@@ -1,6 +1,7 @@
 import { lamportsToSol, type LaunchJson } from "@holdfast/sdk";
 import { ReadCache } from "./cache";
 import { DEFAULT_PUBKEY, type LaunchDbRow, type PumpEventAggDbRow, type Store, type TradeAggDbRow, type VaultEventAggDbRow } from "./db";
+import { HiddenLaunches } from "./hidden";
 import type { SolPrice, SolUsd } from "./price";
 import type { LaunchSummary } from "./types";
 
@@ -155,15 +156,26 @@ export class LaunchSummaries {
   constructor(
     private readonly store: Store,
     private readonly price: SolPrice,
+    readonly hidden = new HiddenLaunches(),
     ttlMs = READ_CACHE_TTL_MS,
     private readonly now: () => number = Date.now,
   ) {
     this.cache = new ReadCache(() => store.dataVersion(), ttlMs, now);
   }
 
-  /** Every launch with a snapshot, newest first. Shared between requests: never mutate it. */
+  /** Every launch with a snapshot, hidden ones included (flagged), newest first. Shared between requests: never mutate it. */
   all(): readonly LaunchSummary[] {
     return this.index().list;
+  }
+
+  /** `all()` without the hidden launches: what lists, discovery and platform totals show. Never mutate it. */
+  listed(): readonly LaunchSummary[] {
+    return this.index().listed;
+  }
+
+  /** Addresses of the hidden launches that exist (for SQL-side exclusion of their rows). */
+  hiddenAddresses(): readonly string[] {
+    return this.index().hiddenAddresses;
   }
 
   /** A launch with a snapshot by address or mint (an address wins over another launch's mint, as in `Store.launchById`). */
@@ -171,7 +183,7 @@ export class LaunchSummaries {
     return this.index().byId.get(id);
   }
 
-  private index(): { list: LaunchSummary[]; byId: Map<string, LaunchSummary> } {
+  private index(): { list: LaunchSummary[]; listed: LaunchSummary[]; hiddenAddresses: string[]; byId: Map<string, LaunchSummary> } {
     return this.cache.get("summaries", () => {
       const now = Math.floor(this.now() / 1000);
       const aggs = this.store.tradeAggregates(now);
@@ -179,15 +191,19 @@ export class LaunchSummaries {
       const pump = this.store.pumpEventAggregates();
       const solUsd = this.price.current;
       const rows = this.store.launches();
-      const list = rows.map((row) =>
-        toSummary(this.store, row, aggs.get(row.address), vault.get(row.address), pump.get(row.address), solUsd, now),
-      );
+      const list = rows.map((row) => {
+        const summary = toSummary(this.store, row, aggs.get(row.address), vault.get(row.address), pump.get(row.address), solUsd, now);
+        if (this.hidden.has(row)) summary.hidden = true;
+        return summary;
+      });
       // Keyed by the row's columns, not the snapshot's: a pump launch's mint lands with its `launched` event,
       // before the next snapshot refresh. Addresses go in last so they win over a colliding mint.
       const byId = new Map<string, LaunchSummary>();
       for (const [i, row] of rows.entries()) if (row.mint !== DEFAULT_PUBKEY) byId.set(row.mint, list[i]);
       for (const [i, row] of rows.entries()) byId.set(row.address, list[i]);
-      return { list, byId };
+      const listed = list.filter((s) => !s.hidden);
+      const hiddenAddresses = list.filter((s) => s.hidden).map((s) => s.address);
+      return { list, listed, hiddenAddresses, byId };
     });
   }
 }

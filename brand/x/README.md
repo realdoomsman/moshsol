@@ -166,3 +166,6 @@ It sells into strength only above the band and the vault's cost, buys back dips 
 
 Illustrative chart; the numbers are the program's.
 ```
+
+## Posted on @TryHoldFast (2026-10-01)
+Article `2105645092799127789` · P1 `2105645338124070939` · P2 `2105645917810659832` · P3 `2105646427636678663` · P4 `2105646937693204482` · P5 `2105647450509754440` · P6 `2105648190305304913` · P7 `2105648703889703193` · P8 `2105649217314099427` (program id left on the card only) · PINNED quote of the article + holdfast-explainer.mp4 `2105670300943966523` · V1 `2105670961483714724` · V2 `2105671549097549852`.

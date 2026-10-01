@@ -20,6 +20,8 @@ export interface ServerOptions {
   publicUrl: string;
   rateLimitPerMin: number;
   uploadLimitPerMin: number;
+  /** Token whose `x-holdfast-internal` requests (the web's server renders) skip `rateLimitPerMin`; null = nobody does. */
+  internalToken: string | null;
   /** X-Forwarded-For trust: `true` = every hop, a string = comma-separated trusted proxy addresses/CIDRs/keywords. */
   trustProxy: boolean | string;
 }
@@ -72,7 +74,7 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
   });
   await app.register(cors, { origin: "*", methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] });
   // After CORS so 429s still carry Access-Control-Allow-Origin and browsers can read them.
-  registerRateLimits(app, { perMin: opts.rateLimitPerMin, uploadPerMin: opts.uploadLimitPerMin });
+  registerRateLimits(app, { perMin: opts.rateLimitPerMin, uploadPerMin: opts.uploadLimitPerMin, internalToken: opts.internalToken });
   await app.register(multipart, {
     throwFileSizeLimit: true,
     limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 10, parts: 12, fieldSize: 3 * 1024 * 1024 },
@@ -113,7 +115,14 @@ export function registerApi(
 ): void {
   app.get("/ws", { websocket: true }, (socket) => deps.hub.add(socket));
   registerRoutes(app, deps);
-  registerSocialRoutes(app, { ...opts, store: deps.store, hub: deps.hub, holders: deps.holders, price: deps.price });
+  registerSocialRoutes(app, {
+    ...opts,
+    store: deps.store,
+    hub: deps.hub,
+    holders: deps.holders,
+    price: deps.price,
+    hidden: deps.summaries.hidden,
+  });
   registerDiscoveryRoutes(app, { store: deps.store, price: deps.price, summaries: deps.summaries });
   registerUpload(app, opts);
 }

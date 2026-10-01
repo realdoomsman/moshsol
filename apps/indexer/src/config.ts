@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -26,6 +26,18 @@ function envFlag(name: string): boolean {
   if (["", "0", "false", "no"].includes(raw)) return false;
   if (["1", "true", "yes"].includes(raw)) return true;
   throw new Error(`${name} must be 1/true/yes or 0/false/no, got "${process.env[name]}"`);
+}
+
+/** `HIDDEN_LAUNCHES`: comma-separated launch addresses and/or mints (a typo fails startup instead of hiding nothing). */
+function hiddenLaunches(): string[] {
+  const ids = (process.env.HIDDEN_LAUNCHES ?? "").split(",").map((s) => s.trim()).filter((s) => s !== "");
+  return ids.map((id) => {
+    try {
+      return new PublicKey(id).toBase58();
+    } catch {
+      throw new Error(`HIDDEN_LAUNCHES must list launch addresses or mints (base58), got "${id}"`);
+    }
+  });
 }
 
 /** Solana keypair paying for Arweave uploads: `ARWEAVE_KEYPAIR_JSON` (secret key JSON array) or `ARWEAVE_KEYPAIR` (file path). */
@@ -103,6 +115,10 @@ export const config = {
   arweave: storage === "arweave" ? arweaveConfig(rpcUrl) : null,
   /** Enables `DELETE /api/comments/:id` (header `x-admin-token`); moderation is off when unset. */
   adminToken: process.env.ADMIN_TOKEN?.trim() || null,
+  /** `x-holdfast-internal` requests carrying this skip RATE_LIMIT_PER_MIN (the web's server renders); unset = nobody does. */
+  internalToken: process.env.INTERNAL_TOKEN?.trim() || null,
+  /** Launch addresses and/or mints kept off every list/discovery surface; still served by id. */
+  hiddenLaunches: hiddenLaunches(),
   /**
    * Client IP from X-Forwarded-For behind reverse proxies: a comma-separated list of proxy IPs/CIDRs or
    * `loopback`/`linklocal`/`uniquelocal` trusts only those proxies, so clients can't spoof their IP.

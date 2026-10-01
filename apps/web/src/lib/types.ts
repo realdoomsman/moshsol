@@ -32,6 +32,8 @@ export interface LaunchSummary extends LaunchJson {
   /** Visible comments. */
   comments: number;
   creatorName: string | null;
+  /** Set (only) on a launch the indexer hides from lists (`HIDDEN_LAUNCHES`): its page still works but is `noindex`. */
+  hidden?: true;
   /** SOL credited to backers under the pre-October-2026 profit split (sum of historical `VaultProfitShared`); 0 on launches since. */
   profitSharedSol: number;
   /** Backer payback (`payout_backers`): the principal repaid so far and the dividends paid on top, in SOL. */

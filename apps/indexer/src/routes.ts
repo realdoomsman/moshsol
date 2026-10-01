@@ -262,8 +262,8 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
     const limit = intQuery(q, "limit", 50, 200);
     const offset = intQuery(q, "offset", 0, Number.MAX_SAFE_INTEGER);
     const text = (q.q ?? "").trim().toLowerCase();
-    // `filter` copies: the cached list is shared and `sortSummaries` sorts in place.
-    let list = summaries.all().filter((s) => status === "all" || s.status === status);
+    // `filter` copies: the cached list is shared and `sortSummaries` sorts in place. Hidden launches are never listed.
+    let list = summaries.listed().filter((s) => status === "all" || s.status === status);
     if (text) {
       list = list.filter(
         (s) =>
@@ -479,12 +479,12 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
 
   app.get<{ Querystring: Query }>("/api/activity", async (req) => {
     const limit = intQuery(req.query, "limit", 50, 500);
-    return { events: store.activity(limit).map(activityFromRow) };
+    return { events: store.activity(limit, summaries.hiddenAddresses()).map(activityFromRow) };
   });
 
   app.get("/api/stats", async () =>
     summaries.cache.get("stats", () => {
-      const all = summaries.all();
+      const all = summaries.listed();
       const now = Math.floor(Date.now() / 1000);
       // A raise past its deadline below its minimum still reads `raising` on chain; it raised nothing that stays.
       const failed = new Set(all.filter((l) => raiseFailed(l, now)));
@@ -500,7 +500,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
         pumpLaunches: all.filter((l) => l.venue === "pump").length,
         totalRaisedSol: sum((l) => (l.status === "refunding" || failed.has(l) ? 0 : lamportsToSol(l.raised))),
         totalVolumeSol: sum((l) => lamportsToSol(l.volumeSol)),
-        volume24hSol: store.volumeSince(now - 86_400),
+        volume24hSol: sum((l) => l.volume24hSol),
         backerFeesAccruedSol: sum((l) => lamportsToSol(l.backerFeesAccrued)),
         profitSharedSol: sum((l) => l.profitSharedSol),
         backersRepaidSol: sum((l) => l.backersRepaidSol),
@@ -517,7 +517,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
   );
 
   app.get("/api/agents", async () => {
-    const all = summaries.all();
+    const all = summaries.listed();
     let spent = 0n;
     let received = 0n;
     for (const l of all) {
@@ -555,7 +555,7 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
         agentSells: l.agentSells,
       })),
       recent: store
-        .agentTrades(50)
+        .agentTrades(50, summaries.hiddenAddresses())
         .map((t) => ({ ...tradeRow(t), launch: t.launch, venue: t.venue, mint: t.mint, symbol: t.symbol })),
     };
   });

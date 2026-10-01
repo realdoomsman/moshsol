@@ -37,7 +37,7 @@ carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Po
 
 | Limit | Default | Env | Scope |
 |---|---|---|---|
-| All routes | 1200/min | `RATE_LIMIT_PER_MIN` | per IP |
+| All routes | 1200/min | `RATE_LIMIT_PER_MIN` | per IP; requests with header `x-holdfast-internal: <INTERNAL_TOKEN>` (the web's server renders) are exempt |
 | `POST /api/upload`, `POST /api/upload/image` | 20/min | `UPLOAD_LIMIT_PER_MIN` | per IP (on top of the global limit) |
 | Signed writes (`POST …/comments`, `PUT /api/users/:wallet`) | 20/min | `SOCIAL_IP_LIMIT_PER_MIN` | per IP, every attempt counts |
 | Comments | 5/min | `COMMENT_LIMIT_PER_MIN` | per wallet, counted after the signature verified |
@@ -46,6 +46,17 @@ carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Po
 
 `0` disables an env-configurable limit. Behind a proxy set `TRUST_PROXY` to the proxy's addresses (e.g. `uniquelocal,100.64.0.0/10`; on Railway `true`, whose edge rewrites the header
 on Railway) so the client IP comes from `X-Forwarded-For`. Fixed one-minute windows; the `429` body says how long to wait.
+`INTERNAL_TOKEN` (secret; unset = nobody is exempt) is compared in constant time and only lifts the all-routes limit:
+uploads, signed writes, the portfolio limit and the RPC proxy count internal requests like any other.
+
+### Hidden launches
+
+Launches listed in `HIDDEN_LAUNCHES` (comma-separated launch addresses and/or mints) are left out of every list and
+discovery surface: `GET /api/launches` (every `status`/`sort`/`q`), `/api/search`, `/api/trending`, the `launches`
+leaderboard, `/api/stats` (counts and totals), `/api/agents`, `/api/activity`, `/api/users/:wallet` (`launches`,
+`backed` and the totals over them) and the `/ws` `event` / `launch` pushes. They still resolve by id —
+`/api/launches/:id` and every sub-route, `/api/candles`, `/api/portfolio/:wallet` — with `"hidden": true` on their
+`LaunchSummary`, so existing links keep working.
 
 ---
 
@@ -119,8 +130,8 @@ disconnected (reconnect and refetch). Messages are JSON:
 
 | `type` | Shape | When |
 |---|---|---|
-| `event` | `{ type, event: ActivityEvent }` | A new on-chain event was indexed (trade, deposit, launch, claim, crank, …) |
-| `launch` | `{ type, launch: LaunchSummary }` | A launch's summary changed (every touching event, holder refresh, metadata, venue price poll) |
+| `event` | `{ type, event: ActivityEvent }` | A new on-chain event was indexed (trade, deposit, launch, claim, crank, …); not sent for hidden launches |
+| `launch` | `{ type, launch: LaunchSummary }` | A launch's summary changed (every touching event, holder refresh, metadata, venue price poll); not sent for hidden launches |
 | `comment` | `{ type, launch, comment: Comment }` | A comment was posted (`launch` = launch address) |
 | `comment_deleted` | `{ type, launch, id }` | A moderator removed a comment |
 | `reset` | `{ type, genesisHash }` | Chain reset: the index (including comments) was rebuilt — drop caches and refetch |
@@ -235,6 +246,7 @@ public trades indexed since.
 | `topHolderPct` | Largest holder's % of total supply, venue and vault excluded; `null` until holders were first loaded |
 | `comments` | Visible comments |
 | `creatorName` | The creator's profile name, `null` if unset |
+| `hidden` | `true` only on a launch in `HIDDEN_LAUNCHES` (see [Hidden launches](#hidden-launches)); absent otherwise. Pages showing it should not be indexed |
 | `profitSharedSol` | SOL paid to backers under the profit split that existed before the October 2026 vault model (sum of historical `VaultProfitShared` events); 0 on every launch since. Agent sell proceeds now stay in the vault |
 | `backersRepaidSol`, `backerPayoutsSol` | Backer payback by `payout_backers` (agent authority only): principal repaid so far (≤ `initialVaultSol`) and dividends paid on top, in SOL (snapshot `backersRepaid` / `backerPayouts`) |
 | `payoutTargetSol`, `payoutMultiple` | `initialVaultSol × terms.payoutMultBps / 10000` in SOL — the liquid vault SOL at which backers become payable — and `vaultSol / initialVaultSol` now (0 before launch). On-chain: a payout needs `vaultSol ≥ target`, at most one per `payoutIntervalSecs` (the principal payout starts the clock), never below `minVaultSol`; the agent only cranks it in a strong market |
@@ -402,7 +414,7 @@ carries both `address` and `mint`.
 | `q` | — | Case-insensitive substring of name, symbol, mint or address |
 | `limit` / `offset` | `50` / `0` | `limit` ≤ 200 |
 
-→ `{ "launches": LaunchSummary[], "total": 4 }` (`total` counts all matches before paging).
+→ `{ "launches": LaunchSummary[], "total": 4 }` (`total` counts all matches before paging; hidden launches never match).
 
 ### `GET /api/launches/:id`
 
