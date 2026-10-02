@@ -25,6 +25,7 @@ import { ExecutorPool, loadExecutors } from "./executors";
 import { log } from "./log";
 import { Metrics } from "./metrics";
 import { TradeSender, landed, sendIxs } from "./send";
+import { PublicVolume } from "./public-volume";
 import type { Decision, StatusSnapshot } from "./status";
 import {
   displayPrices,
@@ -148,6 +149,8 @@ export class Agent {
   private readonly metrics = new Metrics();
   /** The shared agent wallets that execute pump trades once the platform registers them. */
   private readonly executors: ExecutorPool;
+  /** Total traded volume of pump launches from the indexer (public trades included). */
+  private readonly publicVolume: PublicVolume;
   /** Top-ups sent to agent wallets in the last hour (bounded by `executorTopUpMaxPerHourLamports`). */
   private topUps: { at: number; lamports: number }[] = [];
   private lastTopUpSkip: string | null = null;
@@ -180,6 +183,7 @@ export class Agent {
     this.stream = cfg.subscribe ? new Stream(cfg.wsUrl, STREAM_COMMITMENT) : null;
     this.sender = new TradeSender(client.connection, signer, cfg.priorityFee, this.alt, this.stream, cfg.sender);
     this.executors = new ExecutorPool(loadExecutors(cfg.executorSource), { minLamports: cfg.executorMinLamports, spacingMs: cfg.cooldownMs });
+    this.publicVolume = new PublicVolume(cfg.indexerUrl, cfg.indexerInternalToken, 10_000, (msg, extra) => log("public_volume_failed", { msg, ...extra }));
   }
 
   currentStrategy(): StrategyParams {
@@ -581,7 +585,12 @@ export class Agent {
   private marketOf(rt: LaunchRuntime): MarketState | null {
     if (rt.json.venue !== "pump") return marketOf(rt.account);
     const venue = decodeVenue(rt.json, rt.venue);
-    return venue ? marketOf(rt.account, venue.curve) : null;
+    if (!venue) return null;
+    const market = marketOf(rt.account, venue.curve);
+    // Pump launches: the program only counts its own trades; the guardrail needs the chart's real volume.
+    const indexed = this.publicVolume.get(rt.address.toBase58());
+    if (indexed !== null && indexed > market.volumeSol) market.volumeSol = indexed;
+    return market;
   }
 
   private skipReason(): string | undefined {

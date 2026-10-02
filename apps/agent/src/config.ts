@@ -23,6 +23,13 @@ export interface AgentConfig {
    * agent keypair file).
    */
   executorSource: ExecutorSource;
+  /**
+   * The indexer (`INDEXER_URL`, e.g. https://api.holdfast.fun): source of a pump launch's real traded volume, which
+   * the sell guardrail is keyed on (the program only counts its own trades). Unset = on-chain volume only.
+   */
+  indexerUrl: string | null;
+  /** `INDEXER_INTERNAL_TOKEN`: exempts the agent's reads from the indexer's per-IP limit (same value as its INTERNAL_TOKEN). */
+  indexerInternalToken: string | null;
   /** Below this a wallet is not picked and gets topped up from the agent key (`EXECUTOR_MIN_SOL`). */
   executorMinLamports: number;
   /** Top-ups bring a low wallet to this (`EXECUTOR_TOPUP_SOL`)… */
@@ -135,6 +142,8 @@ export function loadConfig(): AgentConfig {
       ? { kind: "env", json: keypairJson }
       : { kind: "file", path: path.resolve(REPO_ROOT, keypair) },
     executorSource: executorsJson ? { kind: "env", json: executorsJson } : { kind: "dir", path: path.resolve(REPO_ROOT, executorsDir) },
+    indexerUrl: process.env.INDEXER_URL?.trim().replace(/\/+$/, "") || null,
+    indexerInternalToken: process.env.INDEXER_INTERNAL_TOKEN?.trim() || null,
     executorMinLamports,
     executorTopUpLamports,
     executorTopUpMaxPerHourLamports: sol("EXECUTOR_TOPUP_MAX_SOL_PER_HOUR", 0.2),
