@@ -113,13 +113,22 @@ export function BackPanel({ launch: l, phase, bare, className }: { launch: Launc
 
   const wl = useMemo(() => {
     if (!l.whitelisted) return null;
-    if (!l.whitelist?.length) return { tree: null, error: "The member list isn't in the metadata" };
+    if (!l.whitelist?.length) {
+      // Metadata not readable yet (Arweave can take minutes to publish): a single-member list ("fund it yourself",
+      // or this wallet alone) is checkable without it, because its on-chain root is that member's leaf.
+      for (const member of [publicKey, l.creator ? new PublicKey(l.creator) : null]) {
+        if (!member || chainRoot.data === undefined) continue;
+        const tree = buildWhitelist([member]);
+        if (Buffer.from(tree.root).toString("hex") === chainRoot.data) return { tree, error: null };
+      }
+      return { tree: null, error: chainRoot.data === undefined ? "Checking the member list…" : "The member list isn't in the metadata yet; try again in a few minutes" };
+    }
     try {
       return { tree: buildWhitelist(l.whitelist.map((a) => new PublicKey(a))), error: null };
     } catch {
       return { tree: null, error: "The member list is malformed" };
     }
-  }, [l.whitelisted, l.whitelist]);
+  }, [l.whitelisted, l.whitelist, l.creator, publicKey, chainRoot.data]);
   const treeRoot = wl?.tree ? Buffer.from(wl.tree.root).toString("hex") : null;
   const rootMatches = treeRoot !== null && chainRoot.data !== undefined ? treeRoot === chainRoot.data : null;
   const proof = publicKey && wl?.tree ? wl.tree.proof(publicKey) : null;
@@ -132,8 +141,11 @@ export function BackPanel({ launch: l, phase, bare, className }: { launch: Launc
   }
   const room = BigInt(l.raiseMax) - BigInt(l.raised);
   const deposited = backer.data?.deposited ?? 0n;
-  // Same rule as the program: the stricter of the creator's cap and the platform beta cap (0 = none).
-  const caps = [BigInt(l.maxPerWallet), BigInt(platform.data?.params.maxWalletDepositLamports ?? "0")].filter((c) => c > 0n);
+  // Same rule as the program: the stricter of the creator's cap and the platform beta cap (0 = none); the creator is
+  // exempt from the platform cap (raise.rs).
+  const isCreator = publicKey?.toBase58() === l.creator;
+  const platformCap = isCreator ? 0n : BigInt(platform.data?.params.maxWalletDepositLamports ?? "0");
+  const caps = [BigInt(l.maxPerWallet), platformCap].filter((c) => c > 0n);
   const cap = caps.length ? minBig(...caps) : 0n;
   const walletRoom = cap > 0n ? (cap > deposited ? cap - deposited : 0n) : null;
   const affordable = sol.data === undefined ? null : sol.data > DEPOSIT_HEADROOM ? sol.data - DEPOSIT_HEADROOM : 0n;
