@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import dns from "node:dns";
 import fs from "node:fs/promises";
 import net from "node:net";
@@ -12,6 +13,26 @@ const MAX_REDIRECTS = 3;
 
 /** URI that is not fetchable at all (wrong scheme, private host); not worth retrying. */
 export class UnfetchableUriError extends Error {}
+
+/** Local copy of a launch upload stored on Arweave, keyed by its metadata URI (gateways lag behind fresh items). */
+const cacheKey = (uri: string) => createHash("sha256").update(uri).digest("hex").slice(0, 32);
+
+/**
+ * Writes the metadata JSON and image of an Arweave upload under FILES_DIR/cache. The cached JSON points `image` at
+ * the local copy (served by /files/), so the launch renders before the gateway serves the item.
+ */
+export async function cacheUpload(filesDir: string, publicUrl: string, uri: string, metadata: object, image: Buffer, ext: string): Promise<void> {
+  const dir = path.join(filesDir, "cache");
+  await fs.mkdir(dir, { recursive: true });
+  const key = cacheKey(uri);
+  await fs.writeFile(path.join(dir, `${key}.${ext}`), image);
+  await fs.writeFile(path.join(dir, `${key}.json`), JSON.stringify({ ...metadata, image: `${publicUrl}/files/cache/${key}.${ext}` }));
+}
+
+async function cachedMetadata(filesDir: string, uri: string): Promise<unknown> {
+  const raw = await fs.readFile(path.join(filesDir, "cache", `${cacheKey(uri)}.json`), "utf8").catch(() => null);
+  return raw === null ? null : (JSON.parse(raw) as unknown);
+}
 
 const PRIVATE = new net.BlockList();
 for (const [addr, prefix] of [
@@ -149,7 +170,8 @@ export function parseMetadata(json: unknown): MetaUpdate {
 
 /**
  * Loads a launch's metadata JSON. URIs under our own `PUBLIC_URL/files/meta/` are read straight
- * from disk; anything else must be a public http(s) URL (5s timeout, 256 KB cap).
+ * from disk, as is the local copy of an Arweave upload made through this indexer (`cacheUpload`);
+ * anything else must be a public http(s) URL (5s timeout, 256 KB cap).
  */
 export async function loadMetadata(uri: string, publicUrl: string, filesDir: string): Promise<MetaUpdate> {
   const ownPrefix = `${publicUrl}/files/meta/`;
@@ -162,5 +184,7 @@ export async function loadMetadata(uri: string, publicUrl: string, filesDir: str
     });
     return parseMetadata(JSON.parse(raw));
   }
+  const cached = await cachedMetadata(filesDir, uri);
+  if (cached !== null) return parseMetadata(cached);
   return parseMetadata(await fetchRemoteJson(uri));
 }

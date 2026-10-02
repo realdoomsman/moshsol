@@ -52,11 +52,12 @@ export interface SyncHealth {
 const SIG_PAGE = 1_000;
 const HEALTH_RPC_TIMEOUT_MS = 3_000;
 /**
- * Metadata fetch retries: 5 s·2^n backoff capped at 30 min, 48 attempts ≈ 21 h. Fresh Arweave items can
- * take minutes (sometimes longer) before gateways serve them, and a gateway 404 must never be final.
+ * Metadata fetch retries: 5 s·2^n backoff capped at 2 min, 600 attempts ≈ 20 h. Fresh Arweave items can
+ * take minutes (sometimes longer) before gateways serve them, and a gateway 404 must never be final; a short cap
+ * shows a new launch's image within ~2 min of the gateway serving it (uploads through /api/upload don't wait at all).
  */
-const META_MAX_ATTEMPTS = 48;
-const META_BACKOFF_CAP_MS = 30 * 60_000;
+const META_MAX_ATTEMPTS = 600;
+const META_BACKOFF_CAP_MS = 2 * 60_000;
 const NO_META: MetaUpdate = {
   status: "none",
   name: null,

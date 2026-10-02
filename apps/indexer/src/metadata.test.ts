@@ -72,3 +72,23 @@ test("X/Telegram handles and on-platform links are kept; the website may be any 
   assert.equal(parseMetadata({ twitter: "https://evil.example/x.com" }).twitter, null);
   assert.equal(parseMetadata({ telegram: "https://t.me.evil.example/chat" }).telegram, null);
 });
+
+test("an upload's local copy is served before the gateway has the item", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { cacheUpload } = await import("./metadata");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "hf-meta-"));
+  // A URI no gateway serves: only the cache can answer it.
+  const uri = "https://arweave.invalid/not-yet-published";
+  const member = "J2f7aX7NzziEaDjffJFtsnkKRyxxLWjWkebEQMyPtNp9";
+  await cacheUpload(dir, PUBLIC_URL, uri, { name: "Test Cat", symbol: "TEST", description: "test", image: "https://arweave.invalid/img", whitelist: [member] }, Buffer.from("png"), "png");
+  const meta = await loadMetadata(uri, PUBLIC_URL, dir);
+  assert.equal(meta.status, "ok");
+  assert.equal(meta.description, "test");
+  assert.match(meta.image ?? "", /^https:\/\/indexer\.example\/files\/cache\/[0-9a-f]{32}\.png$/);
+  assert.deepEqual(meta.whitelist, [member]);
+  const file = (meta.image ?? "").slice(`${PUBLIC_URL}/files/`.length);
+  assert.equal(await fs.readFile(path.join(dir, file), "utf8"), "png");
+  await fs.rm(dir, { recursive: true, force: true });
+});

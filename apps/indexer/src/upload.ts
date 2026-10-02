@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { ArweaveStore } from "./arweave";
+import { cacheUpload } from "./metadata";
 import { cleanSocial, cleanText, parsePubkey, parsePubkeyList, ValidationError } from "./sanitize";
 
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -114,6 +115,11 @@ export function registerUpload(
     if (opts.arweave) {
       const stored = await opts.arweave.uploadLaunch(image, kind.mime, metadataFor);
       req.log.info({ ...stored, kind: kind.ext, bytes: image.length, whitelist: fields.whitelist?.length ?? 0 }, "upload stored on arweave");
+      // Arweave gateways can take minutes to serve a fresh item: keep a local copy so the launch shows its image,
+      // description and member list from the first poll (loadMetadata reads it before going to the network).
+      await cacheUpload(opts.filesDir, opts.publicUrl, stored.uri, metadataFor(stored.image), image, kind.ext).catch((err) =>
+        req.log.warn({ err: String(err), uri: stored.uri }, "upload cache write failed"),
+      );
       return reply.send(stored);
     }
 
