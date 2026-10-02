@@ -81,3 +81,6 @@ export const PUMP_VENUE_FEE_BPS = 125;
 export const WIND_DOWN_MIN_AGE_SECS = 3 * 86_400;
 /** …and saw no vault trade for this long (plus at most `terms.deadHoldersBps` of supply outside the venue and vault). */
 export const WIND_DOWN_IDLE_SECS = 86_400;
+
+/** Slots in `platform.agentExecutors`: the shared agent wallets that execute the vault agent's pump trades. */
+export const AGENT_EXECUTOR_SLOTS = 15;

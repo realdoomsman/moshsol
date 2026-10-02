@@ -2,7 +2,7 @@ import { AnchorProvider, BN, BorshCoder, EventParser, Program, type Provider, ty
 import { getTokenMetadata, TOKEN_PROGRAM_ID, unpackAccount, unpackMint } from "@solana/spl-token";
 import { Connection, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY, type TransactionInstruction } from "@solana/web3.js";
 import { IDL, type BackerAccount, type LaunchAccount, type LaunchTermsAccount, type Moshsol, type MoshEvent, type PlatformAccount, type PlatformParams } from "./program";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, BPF_LOADER_UPGRADEABLE_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "./constants";
+import { AGENT_EXECUTOR_SLOTS, ASSOCIATED_TOKEN_PROGRAM_ID, BPF_LOADER_UPGRADEABLE_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "./constants";
 import { backerPda, curvePda, launchPda, platformPda, tokenAta, vaultPda } from "./pda";
 import {
   ammEventAuthorityPda,
@@ -50,6 +50,11 @@ export type ReviewedTerms = TermsLike & {
 /** The terms a pump launch freezes from platform params (`LaunchTerms::pump`): no trade-fee split, creator share 0. */
 export function pumpTermsOf(t: TermsLike): LaunchTermsAccount {
   return { ...termsOf(t), tradeFeeBps: 0, backerFeeShareBps: 0, creatorFeeShareBps: 0 };
+}
+
+/** The platform's registered agent wallets (`agentExecutors` without the unset slots), in slot order. */
+export function agentExecutorsOf(p: Pick<PlatformAccount, "agentExecutors">): PublicKey[] {
+  return p.agentExecutors.filter((k) => !k.equals(PublicKey.default));
 }
 
 /** Exactly the `LaunchTerms` fields of a params/terms object (what `create_launch*` compare on chain). */
@@ -234,6 +239,25 @@ export class MoshClient {
       .instruction();
   }
 
+  /**
+   * Admin only: sets the platform's agent wallets (at most 15; the rest of the slots stay unset).
+   * Once any is set, every `agent_buy_pump` / `agent_sell_pump` must go through one (`executor`);
+   * an empty list unsets them (the pump authority trades itself again).
+   */
+  async setAgentExecutorsIx(admin: PublicKey, executors: PublicKey[]) {
+    if (executors.length > AGENT_EXECUTOR_SLOTS) throw new Error(`at most ${AGENT_EXECUTOR_SLOTS} agent wallets`);
+    const seen = new Set<string>();
+    for (const k of executors) {
+      if (k.equals(PublicKey.default) || seen.has(k.toBase58())) throw new Error(`invalid or duplicate agent wallet ${k.toBase58()}`);
+      seen.add(k.toBase58());
+    }
+    const slots = [...executors, ...Array<PublicKey>(AGENT_EXECUTOR_SLOTS - executors.length).fill(PublicKey.default)];
+    return this.program.methods
+      .setAgentExecutors(slots)
+      .accountsStrict({ admin, platform: platformPda(this.programId) })
+      .instruction();
+  }
+
   /** Step 1 of the two-step admin handoff: the current admin nominates `newAdmin`. */
   async proposeAdminIx(admin: PublicKey, newAdmin: PublicKey) {
     return this.program.methods
@@ -401,15 +425,15 @@ export class MoshClient {
       .instruction();
   }
 
-  /** Venue accounts of a pump launch's trade, for its current venue. */
-  private async venueAccounts(l: PumpLaunchRef) {
+  /** Venue accounts of a pump launch's trade, for its current venue; `user` = the agent wallet when one trades. */
+  private async venueAccounts(l: PumpLaunchRef, user?: PublicKey) {
     const cfg = await fetchPumpConfig(this.connection);
     return l.graduated
-      ? poolVenueAccounts({ mint: l.mint, coinCreator: l.address, launch: l.address, config: cfg, programId: this.programId })
-      : curveVenueAccounts({ mint: l.mint, creator: l.address, launch: l.address, config: cfg, programId: this.programId });
+      ? poolVenueAccounts({ mint: l.mint, coinCreator: l.address, launch: l.address, user, config: cfg, programId: this.programId })
+      : curveVenueAccounts({ mint: l.mint, creator: l.address, launch: l.address, user, config: cfg, programId: this.programId });
   }
 
-  private pumpAgentAccounts(agent: PublicKey, l: PumpLaunchRef) {
+  private pumpAgentAccounts(agent: PublicKey, l: PumpLaunchRef, executor: PublicKey | null) {
     const authority = pumpAuthorityPda(l.address, this.programId);
     return {
       agent,
@@ -420,22 +444,31 @@ export class MoshClient {
       vaultTokens: splAta(authority, l.mint),
       tokenProgram: TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      executor,
+      executorTokens: executor ? splAta(executor, l.mint) : null,
     };
   }
 
-  async agentBuyPumpIx(agent: PublicKey, l: PumpLaunchRef, solIn: bigint, minTokensOut: bigint) {
+  /**
+   * Agent authority only. `executor` = one of `platform.agentExecutors` (required once any is set; it
+   * must sign too): the agent wallet the trade goes through. `null` = the pump authority trades (only
+   * while no agent wallet is set).
+   */
+  async agentBuyPumpIx(agent: PublicKey, l: PumpLaunchRef, solIn: bigint, minTokensOut: bigint, executor: PublicKey | null) {
     return this.program.methods
       .agentBuyPump(bn(solIn), bn(minTokensOut))
-      .accountsStrict(this.pumpAgentAccounts(agent, l))
-      .remainingAccounts(await this.venueAccounts(l))
+      .accountsStrict(this.pumpAgentAccounts(agent, l, executor))
+      .remainingAccounts(await this.venueAccounts(l, executor ?? undefined))
       .instruction();
   }
 
-  async agentSellPumpIx(agent: PublicKey, l: PumpLaunchRef, tokensIn: bigint, minSolOut: bigint) {
+  /** Agent authority only; `executor` as in `agentBuyPumpIx`. */
+  async agentSellPumpIx(agent: PublicKey, l: PumpLaunchRef, tokensIn: bigint, minSolOut: bigint, executor: PublicKey | null) {
     return this.program.methods
       .agentSellPump(bn(tokensIn), bn(minSolOut))
-      .accountsStrict(this.pumpAgentAccounts(agent, l))
-      .remainingAccounts(await this.venueAccounts(l))
+      .accountsStrict(this.pumpAgentAccounts(agent, l, executor))
+      .remainingAccounts(await this.venueAccounts(l, executor ?? undefined))
       .instruction();
   }
 

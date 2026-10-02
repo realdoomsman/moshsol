@@ -37,6 +37,10 @@ log("started", {
   programId: client.programId.toBase58(),
   dryRun: cfg.dryRun,
   pollMs: cfg.pollMs,
+  // Origins only, like `rpc`.
+  stream: cfg.subscribe ? new URL(cfg.wsUrl).origin : "off",
+  debounceMs: cfg.debounceMs,
+  sender: cfg.sender ? { url: new URL(cfg.sender.url).origin, tipLamports: cfg.sender.tipLamports } : "off",
   cooldownMs: cfg.cooldownMs,
   minTradeLamports: cfg.minTradeLamports,
   strategy: cfg.strategy,

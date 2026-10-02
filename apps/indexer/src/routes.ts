@@ -1,6 +1,7 @@
 import {
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  agentExecutorsOf,
   backerClaimable,
   lamportsToSol,
   platformPda,
@@ -224,6 +225,8 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
       agentAuthority: p.agentAuthority.toBase58(),
       // The dev key (`dev_withdraw_vault`); null while disabled (`Pubkey::default()`).
       devAuthority: p.devAuthority.equals(PublicKey.default) ? null : p.devAuthority.toBase58(),
+      // The shared agent wallets that execute the vault agent's pump trades (`set_agent_executors`); [] while unset.
+      agentExecutors: agentExecutorsOf(p).map((k) => k.toBase58()),
       launchCount: Number(p.launchCount.toString()),
       params: {
         tradeFeeBps: pr.tradeFeeBps,

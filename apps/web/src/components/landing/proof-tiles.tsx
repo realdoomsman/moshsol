@@ -1,6 +1,7 @@
 import { PROGRAM_ID, shortAddr, vaultPda } from "@holdfast/sdk";
 import { PublicKey } from "@solana/web3.js";
 import { ArrowUpRight } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { explorerAddress } from "@/lib/explorer";
 import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
@@ -80,7 +81,16 @@ export function ProofTiles({
     },
     {
       title: "Agent authority",
-      detail: "Can only sign the agent buy and sell instructions, payout_backers and buyback_burn",
+      detail: platform?.agentExecutors.length ? (
+        <>
+          Can only sign the agent buy and sell instructions, payout_backers and buyback_burn. Its pump trades run through the{" "}
+          <Link href="/agents#wallets" className="underline decoration-ink-3/60 underline-offset-2 hover:decoration-ink">
+            agent wallets
+          </Link>
+        </>
+      ) : (
+        "Can only sign the agent buy and sell instructions, payout_backers and buyback_burn"
+      ),
       address: platform?.agentAuthority ?? null,
     },
   ];

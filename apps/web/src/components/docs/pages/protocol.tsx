@@ -71,7 +71,7 @@ export const theVault: DocPage = {
             <Table
               head={["Instruction", "Signer", "What it moves"]}
               rows={[
-                [<C key="a">agent_buy / agent_sell</C>, "Agent authority", "Value between the vault and the launch's venue, inside the agent rules; sell proceeds stay in the vault"],
+                [<C key="a">agent_buy / agent_sell</C>, "Agent authority, plus an agent wallet on pump.fun / PumpSwap", "Value between the vault and the launch's venue, inside the agent rules; sell proceeds stay in the vault"],
                 [<C key="f">collect_pump_fees</C>, "Anyone", `pump.fun creator fees: ${s.vaultPct}% into the vault, ${s.burnPct}% to the buyback pool, ${s.backerPct}% to backers`],
                 [<C key="p">payout_backers</C>, "Agent authority, once eligible", `Vault SOL to backers: the principal, then ${s.payoutSharePct}% of the vault at most every ${fmtInterval(s.payoutIntervalHours)}`],
                 [<C key="w">wind_down_pump</C>, "Anyone, once eligible", "Vault tokens sold into the venue; all vault SOL to backers"],
@@ -79,6 +79,12 @@ export const theVault: DocPage = {
                 [<C key="d">dev_withdraw_vault</C>, "Dev key (one key, set by the admin)", "Any amount of vault SOL and tokens to the dev key's own wallet"],
               ]}
             />
+            <P>
+              On pump.fun and PumpSwap an agent trade is executed by one of 15 shared{" "}
+              <A href="/agents#wallets">agent wallets</A>: value moves vault → wallet → market → vault inside one program instruction,
+              and the program checks that the wallet ends with exactly the SOL and tokens it started with. A wallet never holds a coin
+              between trades.
+            </P>
             <Callout tone="warn" title="The admin and the dev key can withdraw a vault">
               <C>admin_withdraw_vault</C> lets the platform admin, a 2-of-3 Squads multisig on mainnet, send a vault&rsquo;s SOL and
               tokens to the platform fee recipient; <C>dev_withdraw_vault</C> lets a single dev key (the platform&rsquo;s{" "}
@@ -301,6 +307,29 @@ export const agents: DocPage = {
           </>
         ),
       },
+      {
+        id: "agent-wallets",
+        title: "Agent wallets",
+        body: (
+          <>
+            <P>
+              On pump.fun and PumpSwap the agent&rsquo;s trades are executed by 15 shared Holdfast agent wallets, the same for every coin.
+              Inside one program instruction value moves vault → wallet → market → vault; the program checks that the wallet ends with
+              exactly the SOL and tokens it started with, so a wallet never holds a coin between trades. The wallets never trade against
+              each other: one trade per launch at a time, each a decision of the same vault strategy. The agent authority still signs
+              every trade, so every rule above applies. The wallets pay their own transaction fees, topped up from the agent key.
+            </P>
+            <P>
+              {platform && platform.agentExecutors.length === 0
+                ? "None are registered yet; until they are, each vault's pump authority trades directly. "
+                : null}
+              The wallets are listed on the platform account (<C>agent_executors</C>) and at <A href="/agents#wallets">/agents</A>. Every
+              agent trade emits the program&rsquo;s <C>Trade</C> event with the executing wallet as <C>trader</C>, and on Solscan each
+              trade transaction invokes the Holdfast program.
+            </P>
+          </>
+        ),
+      },
     ];
   },
 };
@@ -418,6 +447,12 @@ export const verify: DocPage = {
               Every withdrawal is a <C>VaultWithdrawn</C> (admin) or <C>VaultWithdrawnByDev</C> (dev key) event: it&rsquo;s listed on
               the launch page and at <C>/api/launches/:mint/activity?type=vault_withdrawn</C>. Every payback is a <C>BackersPaid</C>{" "}
               event (<C>?type=backers_paid</C>).
+            </li>
+            <li>
+              The platform account&rsquo;s <C>agent_executors</C> lists the 15 agent wallets that execute the vault agent&rsquo;s pump
+              trades (also at <A href="/agents#wallets">/agents</A>). Each trade emits the program&rsquo;s <C>Trade</C> event with the
+              wallet as <C>trader</C>, its transaction invokes the Holdfast program, and the program checks the wallet ends it with
+              exactly what it started with.
             </li>
           </Ol>
           <Figure caption={`Read live from ${CLUSTER_NAME} on the server; each tile links to the account.`}>

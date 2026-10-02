@@ -37,6 +37,28 @@ export function loadOrCreateKeypair(name: string): Keypair {
   return kp;
 }
 
+/**
+ * The agent wallets (`platform.agentExecutors`) from `dir` (relative to the repo root): every `*.json`
+ * keypair file in name order. With `create`, files `01.json … <count>.json` that are missing are generated
+ * first (existing ones are never touched). Secret keys never leave the files.
+ */
+export function agentWallets(dir: string, create?: { count: number }): Keypair[] {
+  const abs = path.resolve(ROOT, dir);
+  if (create) {
+    fs.mkdirSync(abs, { recursive: true });
+    for (let i = 1; i <= create.count; i++) {
+      const file = path.join(abs, `${String(i).padStart(2, "0")}.json`);
+      if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(Array.from(Keypair.generate().secretKey)), { mode: 0o600 });
+    }
+  }
+  if (!fs.existsSync(abs)) throw new Error(`no agent wallet directory ${abs}`);
+  return fs
+    .readdirSync(abs)
+    .filter((f) => f.endsWith(".json"))
+    .sort()
+    .map((f) => Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(path.join(abs, f), "utf8")) as number[])));
+}
+
 export async function airdrop(connection: Connection, to: PublicKey, sol: number) {
   const sig = await connection.requestAirdrop(to, Math.round(sol * LAMPORTS_PER_SOL));
   const bh = await connection.getLatestBlockhash("confirmed");

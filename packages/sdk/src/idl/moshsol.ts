@@ -399,6 +399,27 @@ export type Moshsol = {
         {
           "name": "systemProgram",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "executor",
+          "docs": [
+            "One of `platform.agent_executors`, required once any is set: the venue `user`."
+          ],
+          "writable": true,
+          "signer": true,
+          "optional": true
+        },
+        {
+          "name": "executorTokens",
+          "docs": [
+            "and gets it closed back to it at the end."
+          ],
+          "writable": true,
+          "optional": true
         }
       ],
       "args": [
@@ -651,6 +672,27 @@ export type Moshsol = {
         {
           "name": "systemProgram",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "executor",
+          "docs": [
+            "One of `platform.agent_executors`, required once any is set: the venue `user`."
+          ],
+          "writable": true,
+          "signer": true,
+          "optional": true
+        },
+        {
+          "name": "executorTokens",
+          "docs": [
+            "and gets it closed back to it at the end."
+          ],
+          "writable": true,
+          "optional": true
         }
       ],
       "args": [
@@ -2181,7 +2223,7 @@ export type Moshsol = {
         {
           "name": "platform",
           "docs": [
-            "hand because the typed account no longer fits it."
+            "decoded by hand because the typed account no longer fits it."
           ],
           "writable": true,
           "pda": {
@@ -2535,6 +2577,64 @@ export type Moshsol = {
         {
           "name": "agentAuthority",
           "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "setAgentExecutors",
+      "docs": [
+        "Sets, replaces or (all `Pubkey::default()`) unsets the 15 agent wallets that execute",
+        "the vault agent's pump trades."
+      ],
+      "discriminator": [
+        241,
+        118,
+        110,
+        36,
+        145,
+        146,
+        78,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "platform"
+          ]
+        },
+        {
+          "name": "platform",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "executors",
+          "type": {
+            "array": [
+              "pubkey",
+              15
+            ]
+          }
         }
       ]
     },
@@ -3445,6 +3545,21 @@ export type Moshsol = {
       "code": 6045,
       "name": "devKeyDisabled",
       "msg": "No dev key is set on the platform (set_dev_authority)"
+    },
+    {
+      "code": 6046,
+      "name": "executorNotRegistered",
+      "msg": "The executor is not one of the platform's agent wallets"
+    },
+    {
+      "code": 6047,
+      "name": "executorRequired",
+      "msg": "Agent wallets are set: the trade must go through one (executor)"
+    },
+    {
+      "code": 6048,
+      "name": "executorNotSettled",
+      "msg": "The agent wallet must end the trade with exactly the lamports and tokens it started with"
     }
   ],
   "types": [
@@ -4469,9 +4584,25 @@ export type Moshsol = {
             "docs": [
               "The owner's single dev key: may withdraw any vault (`dev_withdraw_vault`) to itself,",
               "without the admin multisig. `Pubkey::default()` = disabled. Set by the admin",
-              "(`set_dev_authority`). Appended last so the migration from `PlatformV3` is an append."
+              "(`set_dev_authority`). Appended after `bump` (the migration from `PlatformV3`)."
             ],
             "type": "pubkey"
+          },
+          {
+            "name": "agentExecutors",
+            "docs": [
+              "The shared, publicly labelled agent wallets that execute the vault agent's pump trades",
+              "(`agent_buy_pump` / `agent_sell_pump` take one as `executor`; value moves vault → wallet →",
+              "venue → vault inside the instruction). All `Pubkey::default()` = unset: the pump",
+              "authority trades itself. Set by the admin (`set_agent_executors`). Appended last so the",
+              "migration from `PlatformV4` is an append. (Literal length: the IDL needs a number.)"
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                15
+              ]
+            }
           }
         ]
       }

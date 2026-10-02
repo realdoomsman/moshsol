@@ -83,6 +83,8 @@ export class Market {
   readonly pubSol: number[] = [];
   readonly pubTok: number[] = [];
   publicFails = 0;
+  /** Public volume, lamports: executed public trades (gross) plus the history's churn (see `churn`). */
+  publicVolume = 0;
   /** Gross lamports of the last executed public trade (what `volume_sol` counted). */
   private lastGross = 0;
 
@@ -115,6 +117,7 @@ export class Market {
     }
     this.book(Number(gross - bpsCeil(gross, publicFeeBps(c))), Number(res.out));
     this.lastGross = Number(gross);
+    this.publicVolume += this.lastGross;
     this.record(this.lastGross, 0);
     return res.out;
   }
@@ -133,6 +136,7 @@ export class Market {
     }
     this.book(Number(gross), Number(amount));
     this.lastGross = Number(gross);
+    this.publicVolume += this.lastGross;
     this.record(-Number(amount), 0);
     return amount;
   }
@@ -147,6 +151,7 @@ export class Market {
   churn(lamports: number): void {
     if (lamports < 1) return;
     const l = Math.floor(lamports);
+    this.publicVolume += l;
     if (this.chain.venue === "holdfast") {
       this.chain.volumeSol += BigInt(l);
       this.chain.tradeCount += 2;
@@ -256,6 +261,8 @@ export interface RunResult {
   inBand: number;
   feesSol: number;
   publicFails: number;
+  /** Public volume over the run, SOL (`Market.publicVolume`). */
+  publicVolumeSol: number;
   agent: AgentStats | null;
 }
 
@@ -266,7 +273,10 @@ class SimAgent {
   private nextTradeAt = 0;
   private failures = 0;
   private plan: Plan | null = null;
-  /** Like `agent.ts`: one flow observation per poll, reused by the re-read right before sending. */
+  /**
+   * One flow observation per poll, reused by the re-read right before sending. The live agent also folds in every
+   * streamed update, which only refines the same per-second samples (`FlowWindow`): `pollMs: 1_000` mirrors it.
+   */
   private readonly flow = new FlowWindow();
   private features: FlowFeatures = NEUTRAL_FLOW;
   readonly stats: AgentStats = {
@@ -456,6 +466,7 @@ export function simulate(sc: Scenario, policy: Policy, opt: SimOptions = DEFAULT
     inBand: prices.length > 0 ? inBand / prices.length : 0,
     feesSol: Number(chain.feesSol) / 1e9,
     publicFails: market.publicFails,
+    publicVolumeSol: market.publicVolume / 1e9,
     agent: agent ? agent.stats : null,
   };
 }

@@ -5,7 +5,7 @@ use common::*;
 use moshsol::constants::*;
 use moshsol::errors::MoshError;
 use moshsol::pump::{self, WSOL_MINT};
-use anchor_lang::{AnchorDeserialize, Space};
+use anchor_lang::{AnchorDeserialize, Space, ToAccountMetas};
 use anchor_spl::token::{spl_token, ID as TOKEN_ID};
 use moshsol::state::{LaunchStatus, Venue};
 use solana_sdk::pubkey::Pubkey;
@@ -934,4 +934,277 @@ fn graduation_moves_agent_fees_and_wind_down_to_pumpswap() {
     assert_eq!(l6.vault_tokens, 0);
     assert!(l6.backer_fees_accrued > l5.backer_fees_accrued);
     env.assert_pump_invariants(&launch);
+}
+
+// ---------------- agent wallets (executors) ----------------
+
+/// 15 funded wallets registered as the platform's agent wallets.
+fn register_executors(env: &mut Env) -> Vec<solana_sdk::signature::Keypair> {
+    let wallets: Vec<_> = (0..15).map(|_| env.user(1)).collect();
+    let mut keys = [Pubkey::default(); 15];
+    for (k, w) in keys.iter_mut().zip(&wallets) {
+        *k = w.pubkey();
+    }
+    let admin = env.admin.insecure_clone();
+    ok(env.set_agent_executors(&admin, keys));
+    wallets
+}
+
+/// The `Trade` events a transaction emitted.
+fn trades(meta: &litesvm::types::TransactionMetadata) -> Vec<moshsol::events::Trade> {
+    use anchor_lang::Discriminator;
+    use base64::Engine;
+    meta.logs
+        .iter()
+        .filter_map(|l| l.strip_prefix("Program data: "))
+        .filter_map(|d| base64::engine::general_purpose::STANDARD.decode(d).ok())
+        .filter(|b| b.len() > 8 && b[..8] == *moshsol::events::Trade::DISCRIMINATOR)
+        .map(|b| moshsol::events::Trade::deserialize(&mut &b[8..]).unwrap())
+        .collect()
+}
+
+/// The agent wallet ends the trade exactly as it started, but for the fee it paid as payer.
+fn assert_wallet_untouched(env: &Env, wallet: &Pubkey, mint: &Pubkey, lamports_before: u64) {
+    assert_eq!(lamports_before - env.lamports(wallet), 10_000, "only the two-signature fee left the wallet");
+    assert!(env.svm.get_account(&spl_ata(wallet, mint)).map_or(true, |a| a.lamports == 0), "token account closed");
+    assert!(env.svm.get_account(&spl_ata(wallet, &WSOL_MINT)).map_or(true, |a| a.lamports == 0), "no WSOL account left");
+}
+
+#[test]
+fn set_agent_executors_is_admin_only_and_rejects_duplicates() {
+    let mut env = pump_env();
+    assert!(!env.platform().has_agent_executors());
+    let a = env.user(1);
+    let b = env.user(1);
+    let mut keys = [Pubkey::default(); 15];
+    keys[0] = a.pubkey();
+    keys[7] = b.pubkey();
+    let stranger = env.user(1);
+    assert_err(env.set_agent_executors(&stranger, keys), MoshError::Unauthorized);
+    let agent = env.agent.insecure_clone();
+    assert_err(env.set_agent_executors(&agent, keys), MoshError::Unauthorized);
+    let admin = env.admin.insecure_clone();
+    let mut dup = keys;
+    dup[14] = a.pubkey();
+    assert_err(env.set_agent_executors(&admin, dup), MoshError::InvalidParam);
+    ok(env.set_agent_executors(&admin, keys));
+    let p = env.platform();
+    assert_eq!(p.agent_executors, keys);
+    assert!(p.is_agent_executor(&a.pubkey()) && p.is_agent_executor(&b.pubkey()));
+    assert!(!p.is_agent_executor(&stranger.pubkey()) && !p.is_agent_executor(&Pubkey::default()));
+    // All default unsets them again.
+    ok(env.set_agent_executors(&admin, [Pubkey::default(); 15]));
+    assert!(!env.platform().has_agent_executors());
+}
+
+#[test]
+fn agent_trades_through_registered_wallets_on_the_curve() {
+    let mut env = pump_env();
+    let (_creator, launch, mint, _backers) = env.live_pump_launch(&[10 * SOL, 10 * SOL]);
+    let l0 = env.launch_at(&launch);
+    let outsider = env.user(1);
+    // No wallets registered: none may be used, the pump authority trades itself.
+    assert_err(env.agent_sell_pump_via(&outsider, &launch, l0.window_sell_cap / 10, 0), MoshError::ExecutorNotRegistered);
+    let wallets = register_executors(&mut env);
+    let (w1, w2) = (wallets[0].insecure_clone(), wallets[14].insecure_clone());
+    // Registered: every trade goes through one of them, and only through a registered one.
+    assert_err(env.agent_sell_pump(&launch, l0.window_sell_cap / 10, 0), MoshError::ExecutorRequired);
+    assert_err(env.agent_sell_pump_via(&outsider, &launch, l0.window_sell_cap / 10, 0), MoshError::ExecutorNotRegistered);
+    // Every rule still applies: no rally yet, no dip either.
+    assert_err(env.agent_sell_pump_via(&w1, &launch, l0.window_sell_cap / 10, 0), MoshError::AgentSellNotRally);
+    assert_err(env.agent_buy_pump_via(&w1, &launch, l0.window_buy_cap / 10, 0), MoshError::AgentBuyNotDip);
+
+    env.warp(60);
+    let whale = public_pump(&mut env, &mint, 20 * SOL);
+    assert_err(env.agent_sell_pump_via(&w1, &launch, l0.window_sell_cap + 1, 0), MoshError::AgentWindowLimit);
+    assert!(env.agent_sell_pump_via(&w1, &launch, l0.window_sell_cap / 4, 100 * SOL).is_err(), "venue slippage");
+    // The agent authority must still sign: a wallet alone can't trade the vault.
+    let stranger = env.user(2);
+    let ix = solana_sdk::instruction::Instruction {
+        program_id: moshsol::ID,
+        accounts: {
+            let mut m = moshsol::accounts::AgentTradePump {
+                agent: stranger.pubkey(),
+                platform: platform_pda(),
+                launch,
+                mint,
+                pump_authority: pump_authority_pda(&launch),
+                vault_tokens: spl_ata(&pump_authority_pda(&launch), &mint),
+                token_program: TOKEN_ID,
+                system_program: anchor_lang::system_program::ID,
+                associated_token_program: anchor_spl::associated_token::ID,
+                executor: Some(w1.pubkey()),
+                executor_tokens: Some(spl_ata(&w1.pubkey(), &mint)),
+            }
+            .to_account_metas(None);
+            m.extend(env.venue_accounts_for(&launch, &w1.pubkey()));
+            m
+        },
+        data: anchor_lang::InstructionData::data(&moshsol::instruction::AgentSellPump { tokens_in: 1_000_000, min_sol_out: 0 }),
+    };
+    assert_err(env.send(&[ix], &[&w1, &stranger]), MoshError::Unauthorized);
+
+    // Rally sell through w1: tokens go vault → wallet → curve, the SOL comes back to the vault.
+    let chunk = l0.window_sell_cap / 4;
+    let w1_before = env.lamports(&w1.pubkey());
+    let meta = ok(env.agent_sell_pump_via(&w1, &launch, chunk, 0));
+    eprintln!("CU agent_sell_pump via wallet: {}", meta.compute_units_consumed);
+    let l1 = env.launch_at(&launch);
+    assert_eq!(l1.vault_tokens, l0.vault_tokens - chunk);
+    assert_eq!(l1.agent_sells, 1);
+    let received = l1.agent_sol_received;
+    let cost = (l0.vault_cost_sol as u128 * chunk as u128).div_ceil(l0.vault_tokens as u128) as u64;
+    assert!(received > cost, "the rally sell realized a profit");
+    assert_eq!(l1.vault_sol, l0.vault_sol + received);
+    assert_eq!(l1.vault_cost_sol, l0.vault_cost_sol - cost);
+    assert_wallet_untouched(&env, &w1.pubkey(), &mint, w1_before);
+    let t = trades(&meta);
+    assert_eq!(t.len(), 1);
+    assert_eq!((t[0].trader, t[0].is_agent, t[0].is_buy, t[0].sol_amount), (w1.pubkey(), true, false, received));
+    env.assert_pump_invariants(&launch);
+
+    // Impact cap through a wallet: a fresh launch frozen with a 0.1% cap.
+    let mut p = test_params();
+    p.agent_max_impact_bps = 10;
+    let admin = env.admin.insecure_clone();
+    ok(env.update_platform(&admin, p));
+    env.warp(60);
+    let (_c2, launch2, mint2, _b2) = env.live_pump_launch(&[10 * SOL]);
+    env.warp(60);
+    public_pump(&mut env, &mint2, 10 * SOL);
+    let l2 = env.launch_at(&launch2);
+    assert_err(env.agent_sell_pump_via(&w2, &launch2, l2.window_sell_cap, 0), MoshError::AgentPriceImpact);
+
+    // A dump: the dip buy goes vault SOL → wallet → curve, the tokens land in the vault.
+    env.warp(600);
+    let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &mint));
+    ok(env.pump_public_sell(&whale, &mint, whale_tokens));
+    let l = env.launch_at(&launch);
+    assert_err(env.agent_buy_pump_via(&w2, &launch, l.window_buy_cap + 1, 0), MoshError::AgentWindowLimit);
+    assert_err(env.agent_buy_pump_via(&w2, &launch, l.vault_sol - l.terms.min_vault_sol + 1, 0), MoshError::VaultFloor);
+    // Someone creates w2's token account and parks tokens on it: used as found, left as found.
+    let parked = 1_000;
+    let w2_ata = env.create_spl_ata(&outsider, &w2.pubkey(), &mint);
+    let buyer = env.user(3);
+    ok(env.pump_public_buy(&buyer, &mint, SOL / 100));
+    let ix = spl_token::instruction::transfer(&spl_token::ID, &spl_ata(&buyer.pubkey(), &mint), &w2_ata, &buyer.pubkey(), &[], parked)
+        .unwrap();
+    ok(env.send(&[ix], &[&buyer]));
+    env.warp(1);
+    let l = env.launch_at(&launch);
+    let spend = l.window_buy_cap / 4;
+    let w2_before = env.lamports(&w2.pubkey());
+    let meta = ok(env.agent_buy_pump_via(&w2, &launch, spend, 0));
+    eprintln!("CU agent_buy_pump via wallet: {}", meta.compute_units_consumed);
+    let l3 = env.launch_at(&launch);
+    assert_eq!(l3.agent_buys, 1);
+    assert_eq!(l3.vault_sol, l.vault_sol - spend);
+    assert_eq!(l3.vault_cost_sol, l.vault_cost_sol + spend);
+    let bought = l3.vault_tokens - l.vault_tokens;
+    assert!(bought > 0);
+    assert_eq!(w2_before - env.lamports(&w2.pubkey()), 10_000, "only the fee left the wallet");
+    assert_eq!(env.spl_balance(&w2_ata), parked, "the pre-existing token account is left as found");
+    let t = trades(&meta);
+    assert_eq!((t[0].trader, t[0].is_buy, t[0].sol_amount, t[0].token_amount), (w2.pubkey(), true, spend, bought));
+    env.assert_pump_invariants(&launch);
+}
+
+#[test]
+fn agent_trades_through_registered_wallets_on_pumpswap() {
+    let mut env = pump_env();
+    let (_c, launch, mint, _backers) = env.live_pump_launch(&[10 * SOL]);
+    let cranker = env.user(2);
+    let whale = env.user(200);
+    let left = env.curve(&mint).real_token_reserves;
+    ok(env.pump_public_buy_tokens(&whale, &mint, left, 120 * SOL));
+    ok(env.pump_migrate(&cranker, &mint));
+    ok(env.graduate_pump(&cranker, &launch));
+    let wallets = register_executors(&mut env);
+    let w = wallets[3].insecure_clone();
+    assert_err(env.agent_sell_pump(&launch, 1_000_000, 0), MoshError::ExecutorRequired);
+
+    env.warp(60);
+    ok(env.amm_public_buy(&whale, &mint, 10 * SOL));
+    let l0 = env.launch_at(&launch);
+    assert_err(env.agent_sell_pump_via(&w, &launch, l0.window_sell_cap + 1, 0), MoshError::AgentWindowLimit);
+    let chunk = l0.window_sell_cap / 4;
+    let agent_before = env.lamports(&env.agent.pubkey());
+    let w_before = env.lamports(&w.pubkey());
+    let meta = ok(env.agent_sell_pump_via(&w, &launch, chunk, 0));
+    eprintln!("CU agent_sell_pump (pool) via wallet: {}", meta.compute_units_consumed);
+    let l1 = env.launch_at(&launch);
+    let received = l1.agent_sol_received - l0.agent_sol_received;
+    assert!(received > 0);
+    assert_eq!(l1.vault_tokens, l0.vault_tokens - chunk);
+    assert_eq!(l1.vault_sol, l0.vault_sol + received);
+    assert_wallet_untouched(&env, &w.pubkey(), &mint, w_before);
+    let agent_after = env.lamports(&env.agent.pubkey());
+    // The agent fronts the wallet's one-time PumpSwap volume accumulator, nothing else.
+    assert!(agent_before - agent_after < SOL / 100, "agent paid {}", agent_before - agent_after);
+    assert_eq!(trades(&meta)[0].trader, w.pubkey());
+    env.assert_pump_invariants(&launch);
+
+    env.warp(600);
+    let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &mint));
+    ok(env.amm_public_sell(&whale, &mint, whale_tokens / 2));
+    let l2 = env.launch_at(&launch);
+    let w = wallets[9].insecure_clone();
+    assert_err(env.agent_buy_pump_via(&w, &launch, l2.window_buy_cap + 1, 0), MoshError::AgentWindowLimit);
+    let spend = l2.window_buy_cap / 2;
+    let w_before = env.lamports(&w.pubkey());
+    let meta = ok(env.agent_buy_pump_via(&w, &launch, spend, 0));
+    eprintln!("CU agent_buy_pump (pool) via wallet: {}", meta.compute_units_consumed);
+    let l3 = env.launch_at(&launch);
+    assert_eq!(l3.vault_sol, l2.vault_sol - spend);
+    assert!(l3.vault_tokens > l2.vault_tokens);
+    assert_wallet_untouched(&env, &w.pubkey(), &mint, w_before);
+    let t = trades(&meta);
+    assert_eq!((t[0].trader, t[0].is_buy, t[0].token_amount), (w.pubkey(), true, l3.vault_tokens - l2.vault_tokens));
+    env.assert_pump_invariants(&launch);
+}
+
+/// The platform as it sits on mainnet since the dev-key upgrade (302 bytes, dumped 2026-10-02)
+/// gains the 15 agent wallets, unset, every other byte kept; the admin pays the rent delta and
+/// then registers the wallets.
+#[test]
+fn migrate_platform_appends_agent_wallets_to_current_mainnet_layout() {
+    use moshsol::state::{Platform, PlatformV4};
+    let mut env = Env::bare();
+    env.svm.set_sysvar(&solana_sdk::rent::Rent { lamports_per_byte_year: 2_540, exemption_threshold: 2.0, burn_percent: 50 });
+    let admin = env.admin.insecure_clone();
+    let (key, mut acct) = fixture_account("mainnet-v4/449KHjhaaW58syfaWstZDzcUwTW613XbVB7S6Zp1gpZe");
+    assert_eq!(key, platform_pda());
+    assert_eq!(acct.data.len(), 8 + PlatformV4::INIT_SPACE);
+    acct.data[8..40].copy_from_slice(admin.pubkey().as_ref());
+    let old = PlatformV4::deserialize(&mut &acct.data[8..]).unwrap();
+    assert_ne!(old.dev_authority, Pubkey::default(), "mainnet has its dev key set");
+    let old_acct = acct.clone();
+    env.svm.set_account(key, acct).unwrap();
+
+    assert_anchor_err(
+        env.set_agent_executors(&admin, [Pubkey::default(); 15]),
+        anchor_lang::error::ErrorCode::AccountDidNotDeserialize,
+    );
+    let stranger = env.user(2);
+    assert_err(env.migrate_platform(&stranger), MoshError::Unauthorized);
+    let admin_before = env.lamports(&admin.pubkey());
+    let meta = ok(env.migrate_platform(&admin));
+    eprintln!("CU migrate_platform (v4): {}", meta.compute_units_consumed);
+    let new_acct = env.svm.get_account(&key).unwrap();
+    assert_eq!(new_acct.data.len(), 8 + Platform::INIT_SPACE);
+    assert_eq!(new_acct.data[..old_acct.data.len()], old_acct.data[..], "every old byte kept");
+    let p = env.platform();
+    assert_eq!((p.admin, p.pending_admin, p.fee_recipient, p.agent_authority), (old.admin, old.pending_admin, old.fee_recipient, old.agent_authority));
+    assert_eq!((p.params, p.launch_count, p.bump, p.dev_authority), (old.params, old.launch_count, old.bump, old.dev_authority));
+    assert!(!p.has_agent_executors());
+    let rent_delta = env.svm.minimum_balance_for_rent_exemption(new_acct.data.len())
+        - env.svm.minimum_balance_for_rent_exemption(old_acct.data.len());
+    assert_eq!(new_acct.lamports, old_acct.lamports + rent_delta);
+    assert_eq!(admin_before - env.lamports(&admin.pubkey()), rent_delta + 5_000);
+    assert_err(env.migrate_platform(&admin), MoshError::AlreadyMigrated);
+
+    // What the mainnet migration transaction does next: register the 15 wallets.
+    let keys: [Pubkey; 15] = std::array::from_fn(|_| Pubkey::new_unique());
+    ok(env.set_agent_executors(&admin, keys));
+    assert_eq!(env.platform().agent_executors, keys);
 }

@@ -337,6 +337,8 @@ pub fn launch_pump(ctx: Context<LaunchPump>) -> Result<()> {
         system_program: &system_program,
         graduated: false,
         remaining: &venue_accounts,
+        executor: None,
+        executor_base: std::cell::Cell::new(0),
         rent_owed: std::cell::Cell::new(0),
         donated: std::cell::Cell::new(0),
     };

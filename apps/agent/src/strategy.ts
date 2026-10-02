@@ -393,6 +393,19 @@ export interface StrategyParams {
   supportVolumeMult: number;
   supportClipShare: number;
   supportSpacingSecs: number;
+  /**
+   * Clip granularity: one decision buys at most `buyClipShare` / sells at most `sellClipShare` of what the window
+   * may still trade (buys: the window's buy budget left, capped by the vault SOL above its floor; sells: the
+   * window's sell budget left after the inventory floor and the sell guardrail), never below the minimum trade.
+   * Every clip passes band, cost, budget and impact on its own. 1 = off (one clip to the band edge).
+   */
+  buyClipShare: number;
+  sellClipShare: number;
+  /**
+   * At least this many seconds between the agent's own fills on a launch, either side (so a buy and a sell are
+   * never closer than this either), counted from the decision that first saw the last fill. 0 = off.
+   */
+  clipSpacingSecs: number;
 }
 
 export type ParamKey = keyof StrategyParams;
@@ -416,6 +429,9 @@ export const PARAM_SPACE: Record<ParamKey, { lo: number; hi: number; log?: boole
   supportVolumeMult: { lo: 0, hi: 20 },
   supportClipShare: { lo: 0.05, hi: 1 },
   supportSpacingSecs: { lo: 30, hi: 3_600, log: true },
+  buyClipShare: { lo: 0.05, hi: 1 },
+  sellClipShare: { lo: 0.05, hi: 1 },
+  clipSpacingSecs: { lo: 0, hi: 600 },
 };
 
 export const PARAM_KEYS = Object.keys(PARAM_SPACE) as ParamKey[];
@@ -449,6 +465,11 @@ export const DEFAULT_PARAMS: StrategyParams = {
   supportVolumeMult: 2,
   supportClipShare: 0.33,
   supportSpacingSecs: 300,
+  // Event-driven timing (backtest/results/speed.md, selected by the speed gate at 3 s cooldown: "clips ≤ 25%,
+  // ≥ 15 s apart"): objective ≥ 0.39 on WF TEST and TEST with a worst 10% not below v1's, ~17 fills/h instead of 3–4.
+  buyClipShare: 0.25,
+  sellClipShare: 0.25,
+  clipSpacingSecs: 15,
 };
 
 /** `base` with the given overrides; throws on unknown keys or values outside `PARAM_SPACE`. */
@@ -554,11 +575,15 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
     if (ideal < s.minTradeLamports) ideal = s.minTradeLamports;
     supportNote = `; support mode: ${quiet}, clip ${Math.round(params.supportClipShare * 100)}%`;
   }
+  // Clip granularity: at most `buyClipShare` of the window's buy room per decision, never below the minimum trade.
+  const buyClip = (room * BigInt(Math.round(params.buyClipShare * 10_000))) / BPS;
+  const clipRoom = params.buyClipShare >= 1 ? room : buyClip > s.minTradeLamports ? buyClip : s.minTradeLamports;
+  const clipNote = clipRoom < minBig(ideal, room) ? `; clip ≤ ${Math.round(params.buyClipShare * 100)}% of ${solStr(room)} window room` : "";
 
   const impactOk = (a: bigint) => buyImpactOk(m, proj, a);
   // Cost rules are checked against the slippage floor, so any fill the transaction accepts passes them.
   const worstFill = (a: bigint) => minOut(buyFill(m, proj, a), s.slippageBps);
-  const solIn = largestFeasible(minBig(ideal, room), (a) => impactOk(a) && buyCostOk(m, proj, a, worstFill(a)));
+  const solIn = largestFeasible(minBig(ideal, clipRoom), (a) => impactOk(a) && buyCostOk(m, proj, a, worstFill(a)));
   if (solIn < s.minTradeLamports) {
     if (!impactOk(s.minTradeLamports)) return hold("impact", `${head}, impact limit leaves buy below minimum`);
     const cost = `spot above vault avg cost ${avgPriceStr(costSol, costTokens)}`;
@@ -579,7 +604,7 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
     action: "buy",
     kind: belowCost ? "dip" : "buyback",
     ...(support.on ? { support: true } : {}),
-    reason: `${head}: buy ${solStr(solIn)} ${how} (impact ${Number(impactBps) / 100}%)${supportNote}`,
+    reason: `${head}: buy ${solStr(solIn)} ${how} (impact ${Number(impactBps) / 100}%)${supportNote}${clipNote}`,
     amount: solIn,
     expectedOut: expectedTokens,
     minOut: minOut(expectedTokens, s.slippageBps),
@@ -635,11 +660,17 @@ function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyP
   const allowance = sellAllowance(params, mcapMult, volumeSol, windowCapSol, flow);
   let capNote = "";
   if (allowance.sol < windowCapSol) {
-    // Tokens whose gross (net allowance plus the venue's fee) leaves the current curve (x·T / (y + T) = cap), minus what this window already sold.
-    const capLamports = grossForNet(m, BigInt(Math.floor(allowance.sol * 1e9)));
-    const capTokens = capLamports < x ? (y * capLamports) / (x - capLamports) : room;
+    // The allowance is SOL of proceeds. Value what this window already sold at what buying it back would cost on
+    // today's curve (x·S / (y − S)): with nothing else traded that is exactly what the sells took out of the curve
+    // (before the venue's fee), and buyers since only raise it, so the bound is conservative whichever way the price
+    // moved. Then size the rest as the tokens whose gross leaves the curve (x·T / (y + T) = cap). Counting tokens, or
+    // valuing them at today's sell price, lets several clips overshoot the allowance.
     const sold = proj.sellCap - proj.sellRemaining;
-    const left = capTokens > sold ? capTokens - sold : 0n;
+    const allowanceLamports = BigInt(Math.floor(allowance.sol * 1e9));
+    const soldLamports = sold === 0n ? 0n : sold < y ? (x * sold) / (y - sold) : allowanceLamports;
+    const leftLamports = allowanceLamports > soldLamports ? allowanceLamports - soldLamports : 0n;
+    const capLamports = grossForNet(m, leftLamports);
+    const left = leftLamports === 0n ? 0n : capLamports < x ? (y * capLamports) / (x - capLamports) : room;
     const cap =
       `mcap ${mcapMult.toFixed(1)}× launch, ${fmtSol(volumeSol, 1)} SOL traded: sell allowance ${fmtSol(allowance.sol, 3)} SOL this window` +
       `${allowance.strong ? ` (strong buy flow ×${params.strongFlowMult.toFixed(1)})` : ""}`;
@@ -653,6 +684,15 @@ function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyP
   const impactTarget = impactTargets(proj, t.maxImpactBps).down;
   const ideal = sellToPrice(proj, floorTarget > impactTarget ? floorTarget : impactTarget);
   if (ideal === 0n || proceeds(ideal) < s.minTradeLamports) return hold("too_small", `${head}, ideal sell below minimum`);
+  // Clip granularity: at most `sellClipShare` of what this window may still sell per decision; proceeds are concave
+  // in the tokens sold, so `atLeast` (the minimum trade's share of the room, scaled up) still clears the minimum.
+  if (params.sellClipShare < 1) {
+    const atLeast = (room * ((s.minTradeLamports * 1_001n) / 1_000n)) / proceeds(room) + 1n;
+    const sellClip = (room * BigInt(Math.round(params.sellClipShare * 10_000))) / BPS;
+    const clip = sellClip > atLeast ? sellClip : atLeast;
+    if (clip < minBig(ideal, room)) capNote += `; clip ≤ ${Math.round(params.sellClipShare * 100)}% of ${tokStr(room)} window room`;
+    room = minBig(clip, room);
+  }
 
   // Cost rule checked against the slippage floor, so any fill the transaction accepts passes it.
   const tokensIn = largestFeasible(minBig(ideal, room), (a) => {
@@ -690,6 +730,11 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
   const band = Number(m.terms.bandBps);
   const devBps = Number(proj.deviationPpm) / 100;
   const vwap = `${(flow.vwapDevBps / 100).toFixed(1)}% vs 30 min VWAP`;
+  // Clip spacing guards both sides: no fill, and so never a buy and a sell, closer than `clipSpacingSecs` on this launch.
+  const spacing =
+    flow.sinceAgentTradeSecs < params.clipSpacingSecs
+      ? `clips are spaced ${Math.round(params.clipSpacingSecs)}s apart on either side (last agent fill ${Math.round(flow.sinceAgentTradeSecs)}s ago), next in ${Math.ceil(params.clipSpacingSecs - flow.sinceAgentTradeSecs)}s`
+      : null;
   if (proj.price <= proj.buyCeiling) {
     const head = `dip ${dev} vs EMA`;
     // Selling climax that is easing: the window sold on climax volume, the latest minute sells less than the window did.
@@ -701,6 +746,7 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
       return done(hold("flow", `${head} but live sell-off: ${Math.round(sellShare * 100)}% of the last minute's volume were sells, waiting for ≤ ${Math.round(params.buyDumpShare * 100)}%`));
     }
     if (params.vwapEntryBps > 0 && flow.vwapDevBps > -params.vwapEntryBps) return done(hold("flow", `${head} but ${vwap}, buying from −${pctStr(params.vwapEntryBps)}`));
+    if (spacing) return done(hold("spacing", `${head} but ${spacing}`));
     return done(planBuy(m, s, proj, params, flow, head));
   }
   if (proj.price >= proj.sellFloor) {
@@ -711,6 +757,7 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
       return done(hold("flow", `${head} but thin: volume ${flow.volumeRatio.toFixed(2)}× the median minute, selling from ${params.sellThinRatio.toFixed(2)}×`));
     }
     if (params.vwapEntryBps > 0 && flow.vwapDevBps < params.vwapEntryBps) return done(hold("flow", `${head} but ${vwap}, selling from +${pctStr(params.vwapEntryBps)}`));
+    if (spacing) return done(hold("spacing", `${head} but ${spacing}`));
     return done(planSell(m, s, proj, params, flow, head));
   }
   return done(hold("in_band", `price inside band (${dev} vs EMA)`));

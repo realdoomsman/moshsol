@@ -1,12 +1,14 @@
 use anchor_lang::prelude::*;
-use anchor_spl::associated_token::get_associated_token_address;
-use anchor_spl::token::Token;
+use anchor_spl::associated_token::{self, get_associated_token_address, AssociatedToken};
+use anchor_spl::token::{self, CloseAccount, Token};
+use anchor_spl::token_interface::{self, TransferChecked};
 
 use super::pump_venue::{venue_view, VenueTrade, VenueView};
 use crate::constants::*;
 use crate::errors::MoshError;
 use crate::events::Trade;
 use crate::math;
+use crate::pump;
 use crate::state::{Launch, LaunchStatus, Platform, Venue};
 
 /// Agent trade on a pump launch's venue. The venue accounts follow as remaining accounts in
@@ -14,6 +16,12 @@ use crate::state::{Launch, LaunchStatus, Platform, Venue};
 /// program ids, the launch's own curve / pool and its token accounts are pinned here, the venue
 /// validates the rest, and every fill is measured from balances. The same rules as the
 /// Holdfast-curve agent apply, computed from the venue's reserves.
+///
+/// Once the platform has agent wallets (`set_agent_executors`), every trade goes through one
+/// of them (`executor`, a signer, with its token account for the mint): it is the venue `user`
+/// instead of the pump authority. Inside the instruction the vault's SOL / tokens move to it,
+/// it trades, and the fill moves back to the vault; it must end with exactly the lamports and
+/// tokens it started with. Without agent wallets the pump authority trades itself.
 #[derive(Accounts)]
 pub struct AgentTradePump<'info> {
     /// Fronts the transient WSOL account rent on PumpSwap (returned in the same instruction).
@@ -43,11 +51,20 @@ pub struct AgentTradePump<'info> {
     pub vault_tokens: UncheckedAccount<'info>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    /// One of `platform.agent_executors`, required once any is set: the venue `user`.
+    #[account(mut)]
+    pub executor: Option<Signer<'info>>,
+    /// CHECK: ATA(executor, mint), checked in `prepare`; the executor creates it when missing
+    /// and gets it closed back to it at the end.
+    #[account(mut)]
+    pub executor_tokens: Option<UncheckedAccount<'info>>,
 }
 
 struct Prepared<'a, 'info> {
     venue: VenueTrade<'a, 'info>,
     view: VenueView,
+    wallet: Option<Wallet<'a, 'info>>,
 }
 fn prepare<'a, 'info>(
     accounts: &AgentTradePump<'info>,
@@ -57,26 +74,116 @@ fn prepare<'a, 'info>(
     clock: &Clock,
 ) -> Result<Prepared<'a, 'info>> {
     let launch = &accounts.launch;
-    require!(!accounts.platform.params.agents_paused, MoshError::AgentsPaused);
+    let platform = &accounts.platform;
+    require!(!platform.params.agents_paused, MoshError::AgentsPaused);
     require!(launch.status == LaunchStatus::Live, MoshError::NotLive);
     require!(clock.slot > launch.last_public_trade_slot, MoshError::SameSlotTrade);
     let view = venue_view(launch, remaining)?;
     require!(!view.complete, MoshError::CurveComplete);
+    let wallet = match (&infos.executor, &infos.executor_tokens) {
+        (Some(e), Some(t)) => {
+            require!(platform.is_agent_executor(e.key), MoshError::ExecutorNotRegistered);
+            require_keys_eq!(t.key(), get_associated_token_address(e.key, &launch.mint), MoshError::InvalidVenueAccount);
+            Some(Wallet::open(e, t, infos)?)
+        }
+        (None, None) => {
+            require!(!platform.has_agent_executors(), MoshError::ExecutorRequired);
+            None
+        }
+        _ => return err!(MoshError::ExecutorRequired),
+    };
     let venue = VenueTrade {
         launch: &infos.launch,
         authority: &infos.authority,
         authority_seeds: seeds,
         mint: &infos.mint,
-        user_tokens: &infos.vault_tokens,
+        user_tokens: wallet.as_ref().map_or(&infos.vault_tokens, |w| w.tokens),
         payer: &infos.agent,
         token_program: &infos.token_program,
         system_program: &infos.system_program,
         graduated: launch.pump.graduated,
         remaining,
+        executor: wallet.as_ref().map(|w| w.info),
+        executor_base: std::cell::Cell::new(0),
         rent_owed: std::cell::Cell::new(0),
         donated: std::cell::Cell::new(0),
     };
-    Ok(Prepared { venue, view })
+    Ok(Prepared { venue, view, wallet })
+}
+
+/// An agent wallet around one trade. Its token account for the mint is created by the wallet
+/// when missing and closed back to it at the end (`close`), so the wallet pays no rent; one
+/// that already existed (anyone can create it) is left as found. `check` then requires the
+/// wallet to hold exactly the lamports and tokens it started the instruction with.
+struct Wallet<'a, 'info> {
+    info: &'a AccountInfo<'info>,
+    tokens: &'a AccountInfo<'info>,
+    lamports: u64,
+    /// Balance of the pre-existing token account; `None` when this instruction created it.
+    held: Option<u64>,
+}
+
+impl<'a, 'info> Wallet<'a, 'info> {
+    fn open(info: &'a AccountInfo<'info>, tokens: &'a AccountInfo<'info>, infos: &Infos<'info>) -> Result<Self> {
+        let lamports = info.lamports();
+        let held = if pump::is_token_account(tokens) {
+            Some(pump::token_amount(tokens)?)
+        } else {
+            associated_token::create_idempotent(CpiContext::new(
+                infos.ata_program.clone(),
+                associated_token::Create {
+                    payer: info.clone(),
+                    associated_token: tokens.clone(),
+                    authority: info.clone(),
+                    mint: infos.mint.clone(),
+                    system_program: infos.system_program.clone(),
+                    token_program: infos.token_program.clone(),
+                },
+            ))?;
+            None
+        };
+        Ok(Self { info, tokens, lamports, held })
+    }
+
+    /// Moves `amount` tokens between the wallet and the vault: to the vault after a buy (the
+    /// wallet signs), to the wallet before a sell (the pump authority signs).
+    fn transfer(&self, infos: &Infos<'info>, seeds: &[&[u8]], amount: u64, to_vault: bool) -> Result<()> {
+        let (from, to, authority) = if to_vault {
+            (self.tokens, &infos.vault_tokens, self.info)
+        } else {
+            (&infos.vault_tokens, self.tokens, &infos.authority)
+        };
+        token_interface::transfer_checked(
+            CpiContext::new_with_signer(
+                infos.token_program.clone(),
+                TransferChecked { from: from.clone(), mint: infos.mint.clone(), to: to.clone(), authority: authority.clone() },
+                &[seeds],
+            ),
+            amount,
+            TOKEN_DECIMALS,
+        )
+    }
+
+    /// Closes the token account this instruction created, its rent back to the wallet.
+    fn close(&self, infos: &Infos<'info>) -> Result<()> {
+        if self.held.is_some() {
+            return Ok(());
+        }
+        token::close_account(CpiContext::new(
+            infos.token_program.clone(),
+            CloseAccount { account: self.tokens.clone(), destination: self.info.clone(), authority: self.info.clone() },
+        ))
+    }
+
+    /// The wallet keeps no value: same lamports and tokens as before the instruction.
+    fn check(&self) -> Result<()> {
+        let tokens_kept = match self.held {
+            Some(held) => pump::token_amount(self.tokens)? == held,
+            None => self.tokens.lamports() == 0,
+        };
+        require!(self.info.lamports() == self.lamports && tokens_kept, MoshError::ExecutorNotSettled);
+        Ok(())
+    }
 }
 
 struct Infos<'info> {
@@ -87,6 +194,9 @@ struct Infos<'info> {
     agent: AccountInfo<'info>,
     token_program: AccountInfo<'info>,
     system_program: AccountInfo<'info>,
+    ata_program: AccountInfo<'info>,
+    executor: Option<AccountInfo<'info>>,
+    executor_tokens: Option<AccountInfo<'info>>,
 }
 
 impl<'info> Infos<'info> {
@@ -99,6 +209,9 @@ impl<'info> Infos<'info> {
             agent: accounts.agent.to_account_info(),
             token_program: accounts.token_program.to_account_info(),
             system_program: accounts.system_program.to_account_info(),
+            ata_program: accounts.associated_token_program.to_account_info(),
+            executor: accounts.executor.as_ref().map(|e| e.to_account_info()),
+            executor_tokens: accounts.executor_tokens.as_ref().map(|t| t.to_account_info()),
         }
     }
 }
@@ -118,7 +231,7 @@ pub fn agent_buy_pump<'info>(
     let bump = [ctx.accounts.launch.pump.authority_bump];
     let seeds: &[&[u8]] = &[PUMP_AUTHORITY_SEED, launch_key.as_ref(), &bump];
     let infos = Infos::of(&ctx.accounts);
-    let Prepared { venue, view } = prepare(&ctx.accounts, ctx.remaining_accounts, &infos, seeds, &clock)?;
+    let Prepared { venue, view, wallet } = prepare(&ctx.accounts, ctx.remaining_accounts, &infos, seeds, &clock)?;
 
     let launch = &mut ctx.accounts.launch;
     let terms = launch.terms;
@@ -137,7 +250,14 @@ pub fn agent_buy_pump<'info>(
     require!(before <= ceiling, MoshError::AgentBuyNotDip);
 
     let (spent, tokens) = venue.buy(sol_in, min_tokens_out)?;
+    if let Some(w) = &wallet {
+        w.transfer(&infos, seeds, tokens, true)?;
+        w.close(&infos)?;
+    }
     venue.settle()?;
+    if let Some(w) = &wallet {
+        w.check()?;
+    }
     require!(tokens > 0 && spent > 0, MoshError::ZeroAmount);
     require!(spent <= sol_in, MoshError::InsufficientLiquidity);
     require!(tokens >= min_tokens_out, MoshError::Slippage);
@@ -169,7 +289,7 @@ pub fn agent_buy_pump<'info>(
     emit!(Trade {
         launch: launch_key,
         mint: ctx.accounts.mint.key(),
-        trader: ctx.accounts.agent.key(),
+        trader: wallet.as_ref().map_or(ctx.accounts.agent.key(), |w| w.info.key()),
         is_buy: true,
         is_agent: true,
         sol_amount: spent,
@@ -201,7 +321,7 @@ pub fn agent_sell_pump<'info>(
     let bump = [ctx.accounts.launch.pump.authority_bump];
     let seeds: &[&[u8]] = &[PUMP_AUTHORITY_SEED, launch_key.as_ref(), &bump];
     let infos = Infos::of(&ctx.accounts);
-    let Prepared { venue, view } = prepare(&ctx.accounts, ctx.remaining_accounts, &infos, seeds, &clock)?;
+    let Prepared { venue, view, wallet } = prepare(&ctx.accounts, ctx.remaining_accounts, &infos, seeds, &clock)?;
 
     let launch = &mut ctx.accounts.launch;
     let terms = launch.terms;
@@ -218,8 +338,17 @@ pub fn agent_sell_pump<'info>(
     let floor = launch.ema_price / BPS as u128 * (BPS + terms.agent_band_bps as u64) as u128;
     require!(before >= floor, MoshError::AgentSellNotRally);
 
+    if let Some(w) = &wallet {
+        w.transfer(&infos, seeds, tokens_in, false)?;
+    }
     let (sol, sold) = venue.sell(tokens_in, min_sol_out)?;
+    if let Some(w) = &wallet {
+        w.close(&infos)?;
+    }
     venue.settle()?;
+    if let Some(w) = &wallet {
+        w.check()?;
+    }
     require!(sol > 0 && sold == tokens_in, MoshError::ZeroAmount);
     require!(sol >= min_sol_out, MoshError::Slippage);
 
@@ -249,7 +378,7 @@ pub fn agent_sell_pump<'info>(
     emit!(Trade {
         launch: launch_key,
         mint: mint_key,
-        trader: ctx.accounts.agent.key(),
+        trader: wallet.as_ref().map_or(ctx.accounts.agent.key(), |w| w.info.key()),
         is_buy: false,
         is_agent: true,
         sol_amount: sol,

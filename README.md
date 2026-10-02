@@ -10,9 +10,9 @@ the vault as liquid SOL, so the vault is meant to grow. pump.fun creator fees ar
 split 75% vault SOL / 15% Holdfast buyback-and-burn pool / 10% backers. Once the vault's liquid SOL reaches
 5× what it started with, the agent may pay backers back — their principal first, then 15% of the vault at most
 every 4 hours — on-chain rules (`payout_backers`) that it can only crank when the chart is strong. Holdfast
-earns only the 1% launch fee and the 0.02 SOL create fee. The platform admin (a Squads multisig on mainnet)
-can withdraw vault funds with `admin_withdraw_vault`; every withdrawal is on-chain and shown on the launch
-page.
+earns only the 1% launch fee and the 0.02 SOL create fee. The admin (a 2-of-3 Squads multisig) and a single
+dev key can withdraw a vault (`admin_withdraw_vault` / `dev_withdraw_vault`); every withdrawal is an on-chain
+event on the launch page.
 
 ```mermaid
 flowchart LR
@@ -26,7 +26,7 @@ flowchart LR
   CU -->|15%| BB[Buyback & burn pool]
   CU -->|10%| B
   V -->|payout_backers: principal at 5×,<br/>then 15% per 4h| B
-  V -.->|admin_withdraw_vault| P[Platform]
+  V -.->|admin_withdraw_vault /<br/>dev_withdraw_vault| P[Platform]
   V -.->|wind_down_pump: dead launch,<br/>everything to backers| B
 ```
 
@@ -53,13 +53,14 @@ flowchart LR
 | `apps/agent` | Vault agent: exact mirror of the program's agent checks plus a backtest-tuned policy (entry margins, inventory floor), status API; `backtest/` replays real memecoin history against a program-exact launch simulator (see [Vault agent](#vault-agent)) |
 | `apps/accounts` | "Continue with Google": Google OAuth (code + PKCE) → a custodial Solana wallet per Google account, keys sealed with AES-256-GCM in SQLite, server-side sessions, policy-checked transaction signing, key export (see [Accounts](#accounts-sign-in-with-google)) |
 | `apps/web` | Next.js site: explore, create, raise/launch/trade pages, portfolio, agent transparency, docs; proxies `/api/auth/*` + `/api/wallet/*` to `apps/accounts` |
-| `scripts` | `localnet.sh` + `localnet.mjs` (validator), `setup.ts` (platform init), `seed.ts` (demo data), `simulate.ts` (live traffic), `preflight.ts` (dev checks), `handoff.ts` (authorities → Squads multisig), `upgrade.ts` (program upgrades through the multisig), `migrate.ts` (layout migration), `vault-withdraw.ts` (`admin_withdraw_vault` through the multisig) |
+| `scripts` | `localnet.sh` + `localnet.mjs` (validator), `setup.ts` (platform init), `seed.ts` (demo data), `simulate.ts` (live traffic), `preflight.ts` (dev checks), `handoff.ts` (authorities → Squads multisig), `upgrade.ts` (program upgrades through the multisig), `migrate.ts` (layout migration + dev key / bundle cap settings), `vault-withdraw.ts` (`admin_withdraw_vault` through the multisig), `dev-withdraw.ts` (`dev_withdraw_vault` with the dev key) |
 
 ## Program
 
 Instructions: `initialize_platform`, `update_platform`, `set_fee_recipient`, `set_agent_authority`,
-`propose_admin` / `accept_admin` (2-step handover to a multisig), `migrate_platform`, `migrate_launch`,
-`admin_withdraw_vault`, `payout_backers`, `create_launch`, `deposit`, `cancel_launch`, `refund`, `launch`,
+`set_dev_authority`, `set_agent_executors`, `propose_admin` / `accept_admin` (2-step handover to a multisig), `migrate_platform`,
+`migrate_launch`, `admin_withdraw_vault`, `dev_withdraw_vault`, `payout_backers`, `create_launch`, `deposit`,
+`cancel_launch`, `refund`, `launch`,
 `buy`, `sell`, `agent_buy`, `agent_sell`, `wind_down`, `claim_backer_fees`, `claim_creator_fees`,
 `sweep_platform_fees`, and for pump.fun launches `create_launch_pump`, `launch_pump`, `graduate_pump`,
 `agent_buy_pump`, `agent_sell_pump`, `collect_pump_fees`, `buyback_burn`, `wind_down_pump`.
@@ -123,7 +124,14 @@ unchanged. **Pump** launches (`create_launch_pump`) are pump.fun tokens created 
   reserve` of the rest, capped at `bundle_supply_bps` of supply, sized with 3% fee headroom so the venue's
   1.25% fee never fails the buy) and leaves the remainder as vault SOL; bundle + remainder = `initial_vault_sol`
   (a donation swept from the pump authority is vault SOL on top of that, not part of the payback base).
-  ~330k CU.
+  The bundle follows the raise: `bundle_supply_bps` may be anything from 1% up to the platform's
+  `max_bundle_supply_bps` (hard cap `MAX_BUNDLE_SUPPLY_BPS` = 75%; 75% on mainnet), and the wizard's default
+  is "no cap" = the platform max. On pump.fun's curve (30 virtual SOL / 1.073B virtual tokens, 793.1M
+  sellable) a 50 SOL raise with the default 30% reserve buys ≈56.7% of supply (≈66% with no reserve), and
+  the 75% cap binds from ≈104 SOL with the default reserve. The bundle never completes the curve at launch:
+  its token amount is also capped one base unit below the curve's real token reserves (unreachable while the
+  cap is below 79.31%; a guard in case pump.fun ships a smaller curve), and what it doesn't spend stays as
+  vault SOL (`pump_bundle_never_completes_the_curve_at_launch`). ~330k CU.
 - **Agent.** `agent_buy_pump` / `agent_sell_pump` enforce the same rules as `agent_*` — EMA band, cost basis,
   buy-back path, per-window caps, max impact (price before/after read from the venue's reserves), the agent's
   slippage floor forwarded to the venue and checked on the measured fill — on the bonding curve before
@@ -172,12 +180,54 @@ unchanged. **Pump** launches (`create_launch_pump`) are pump.fun tokens created 
   ahead of the crank moves quote and sale alike — that exposure is what the ≤ 5% outside-holder rule bounds;
   the one reference a bundle can't move (the EMA) would block the canonical dead-launch path, where the last
   holder exits long after the agent's last sample. The buyback pool stays for the crank.
-- `admin_withdraw_vault` works on both venues (`token_authority` = the launch on Holdfast launches, its pump
-  authority on pump launches; SPL Token vs Token-2022 accordingly).
+- `admin_withdraw_vault` and `dev_withdraw_vault` work on both venues (`token_authority` = the launch on
+  Holdfast launches, its pump authority on pump launches; SPL Token vs Token-2022 accordingly).
 
 ### Layout migration (run right after the upgrade)
 
-The backer-payback upgrade appended `creator_fee_vault_bps`, `payout_mult_bps`, `payout_share_bps`,
+**Agent-wallet upgrade (current).** `Platform` gained `agent_executors: [Pubkey; 15]` (appended after
+`dev_authority`; 302 → 782 bytes; all `Pubkey::default()` = unset), so until `migrate_platform` runs every
+instruction that reads the platform fails with `AccountDidNotDeserialize` (launch accounts are unchanged).
+`migrate_platform` accepts all three older layouts; from 302 bytes (`PlatformV4`, mainnet since the dev-key
+upgrade) it only appends the 15 unset slots, every other byte kept, the admin paying the 480-byte rent delta.
+`agent_buy_pump` / `agent_sell_pump` also gained three accounts (`associated_token_program`, then the optional
+`executor` and `executor_tokens`; see "Agent wallets hold nothing" below), so the agent must run the new code
+once the program is upgraded: the old build's pump trades fail in simulation (no fee) until it is redeployed.
+`AGENT_EXECUTORS=.mainnet/agent-wallets pnpm migrate:launches` puts `migrate_platform` and
+`set_agent_executors(<the 15 wallets>)` in one Squads vault transaction (idempotent: the set is skipped once the
+platform holds exactly those keys). Litesvm `migrate_platform_appends_agent_wallets_to_current_mainnet_layout`
+runs that on the real mainnet platform account (`tests/program/fixtures/mainnet-v4/`, dumped 2026-10-02 after the
+dev-key upgrade, admin swapped for the test admin) under mainnet's rent.
+
+**Mainnet runbook for the agent-wallet upgrade** (from the repo root; the wallets are
+`.mainnet/agent-wallets/01.json … 15.json`, see [Agent wallets](#agent-wallets-who-executes-the-vaults-trades)):
+
+```bash
+anchor build                                   # WSL; target/deploy/moshsol.so: 750,160 bytes > the 740,440-byte ProgramData
+sha256sum target/deploy/moshsol.so             # ec8b60095ea8aa9b0e99945d596e561a23683ca31a37182c35b2c66aa12d0e0e for this build
+export RPC_URL=<mainnet rpc> KEYS_DIR=.mainnet APPROVER_KEYPAIRS=.mainnet/member-1.json,.mainnet/member-2.json
+pnpm run upgrade --dry-run                     # buffer 3.8117 SOL (refunded) + ExtendProgram 10,240 bytes (0.0520 SOL, kept)
+pnpm run upgrade                               # admin.json needs ≥ ~3.9 SOL (3.6657 on 2026-10-02: top it up first)
+AGENT_EXECUTORS=.mainnet/agent-wallets pnpm migrate:launches --dry-run   # [migrate_platform + set_agent_executors(15 wallets: GhNu, AyRx, …)]
+AGENT_EXECUTORS=.mainnet/agent-wallets pnpm migrate:launches
+pnpm fund-executors --dry-run && pnpm fund-executors   # agent.json needs ≥ 0.31 SOL for 15 × 0.02 (0.0999 on 2026-10-02)
+# then Railway `agent`: set AGENT_EXECUTORS_JSON (see Agent wallets) and deploy the new agent build
+```
+
+**Dev-key upgrade (done on mainnet).** `Platform` gained `dev_authority: Pubkey` (appended after `bump`; 270 → 302
+bytes; `Pubkey::default()` = disabled), so until `migrate_platform` runs every instruction that reads the
+platform fails with `AccountDidNotDeserialize` (launch accounts are unchanged). `migrate_platform` now accepts
+both older layouts: from 270 bytes (`PlatformV3`, mainnet since the payback upgrade) it only appends the dev
+key, disabled, every other byte kept; from 248 bytes (`PlatformV2`) it also does the payback migration below.
+The admin pays the 32-byte rent delta. `pnpm migrate:launches` puts `migrate_platform`, then — in the same
+Squads vault transaction — `set_dev_authority(DEV_AUTHORITY)` and `update_platform` with
+`max_bundle_supply_bps` raised to `MAX_BUNDLE_BPS` (default 7500, the new hard cap; every other param kept as
+read from the account) whenever they differ from what the platform holds; it is idempotent like before.
+Litesvm `migrate_platform_appends_dev_key_to_current_mainnet_layout` runs exactly that on the real mainnet
+platform account (`tests/program/fixtures/mainnet-v3/`, dumped 2026-10-01, admin swapped for the test admin)
+under mainnet's rent.
+
+**Backer-payback upgrade (done on mainnet).** It appended `creator_fee_vault_bps`, `payout_mult_bps`, `payout_share_bps`,
 `payout_interval_secs`, `dead_holders_bps`, `min_vault_sol` to `PlatformParams` and `LaunchTerms`, appended
 `initial_vault_sol`, `backers_repaid`, `backer_payouts`, `last_payout_ts` to `Launch` and dropped
 `buyback_sol`, so the program can't read accounts in the old layout: every other instruction fails with
@@ -185,14 +235,14 @@ The backer-payback upgrade appended `creator_fee_vault_bps`, `payout_mult_bps`, 
 Squads vault (admin) one `migrate_platform` and one `migrate_launch(initial_vault_sol)` per launch account
 (mainnet today: `ChpzEmQQ…` $HFLIVE live/Holdfast, `Yw9a3uqx…` $HFPUMP live/pump, `6CdsFZzs…` TEST raising,
 `HNCt4Nh…` refunding) — `pnpm migrate:launches` (`scripts/src/migrate.ts`, same env as `upgrade`: `RPC_URL`,
-`KEYS_DIR`, `PROPOSER_KEYPAIR` / `APPROVER_KEYPAIRS`, `--dry-run`) finds every account still in the old layout
-(size 248 / 863 bytes), puts the needed `migrate_platform` + `migrate_launch` instructions in one vault
+`KEYS_DIR`, `PROPOSER_KEYPAIR` / `APPROVER_KEYPAIRS`, `--dry-run`) finds every account still in an old layout
+(platform 248 / 270 bytes, launches 863 bytes), puts the needed `migrate_platform` + `migrate_launch` instructions in one vault
 transaction through the same propose/approve/execute flow as the upgrade (or prints the base58 import for the
 Squads TX builder without member keys), and is idempotent: re-run it after an interruption or once members
 approved, and it does nothing when everything is migrated. On a cluster whose platform admin is the local
 admin key (localnet) it sends the instructions directly. Both migrations splice the account bytes
 (`LaunchV2::upgrade_bytes` / `PlatformV2::upgrade_bytes`, offsets pinned by a unit test) instead of decoding
-and re-encoding the whole account, which keeps the program under its on-chain allocation.
+and re-encoding the whole account, which keeps the program small.
 
 What the migration writes: the admin pays exactly the rent delta of each account (so the launch's lamports stay
 `rent + owed`), every old field keeps its value, the six payback terms/params take their defaults (vault 7500,
@@ -215,21 +265,29 @@ and checks every field against the old layout. Set `buyback_mint` with `update_p
 token exists (`BUYBACK_MINT=<mint> PROFILE=production KEYS_DIR=.mainnet pnpm setup:localnet --update` from the
 admin, or the same `update_platform` through the Squads vault).
 
-**Mainnet runbook for this upgrade** (from the repo root; `.mainnet/` holds the keys, see Developer access):
+**Mainnet runbook for the dev-key upgrade** (done; from the repo root; `.mainnet/` holds the keys, see Developer
+access; the dev key is `.mainnet/dev.json` = `HbMssirF1FP9ukQELn8feKEE5wqPrhpSbyKQWV7UnPHr`):
 
 ```bash
-anchor build                                   # WSL; target/deploy/moshsol.so (727,624 bytes ≤ the 730,200-byte allocation)
-sha256sum target/deploy/moshsol.so             # 7239700765cad81f88f06f18d1c52da023a9c7a85703455d770f9f11257d0381 for this build
-RPC_URL=<mainnet rpc> KEYS_DIR=.mainnet APPROVER_KEYPAIRS=.mainnet/member-1.json,.mainnet/member-2.json pnpm upgrade --dry-run
-RPC_URL=<mainnet rpc> KEYS_DIR=.mainnet APPROVER_KEYPAIRS=.mainnet/member-1.json,.mainnet/member-2.json pnpm upgrade
-RPC_URL=<mainnet rpc> KEYS_DIR=.mainnet APPROVER_KEYPAIRS=.mainnet/member-1.json,.mainnet/member-2.json pnpm migrate:launches --dry-run
-RPC_URL=<mainnet rpc> KEYS_DIR=.mainnet APPROVER_KEYPAIRS=.mainnet/member-1.json,.mainnet/member-2.json pnpm migrate:launches
+anchor build                                   # WSL; target/deploy/moshsol.so: 737,920 bytes > the 730,200-byte allocation
+sha256sum target/deploy/moshsol.so             # 08c5219bf4097014008ae0910fb3693571eab511f5365403a60f7bb4eaa262ca for this build
+export RPC_URL=<mainnet rpc> KEYS_DIR=.mainnet APPROVER_KEYPAIRS=.mainnet/member-1.json,.mainnet/member-2.json
+pnpm run upgrade --dry-run                     # buffer 3.7495 SOL (refunded) + ExtendProgram 10,240 bytes (0.0520 SOL, kept)
+pnpm run upgrade                               # admin.json needs ≥ ~3.9 SOL (2.59 on 2026-10-01: top it up first)
+DEV_AUTHORITY=HbMssirF1FP9ukQELn8feKEE5wqPrhpSbyKQWV7UnPHr pnpm migrate:launches --dry-run
+DEV_AUTHORITY=HbMssirF1FP9ukQELn8feKEE5wqPrhpSbyKQWV7UnPHr pnpm migrate:launches
+# afterwards, from the dev key (fund it with ~0.01 SOL for fees + ATA rent): plan + simulation only
+RPC_URL=<mainnet rpc> DEV_KEYPAIR=.mainnet/dev.json LAUNCH=<launch or mint> SOL=all TOKENS=all pnpm vault:dev-withdraw --dry-run
 ```
 
-The dry run prints the plan (`HFPUMP … initial_vault_sol 972425720 ← Launched event`, `ChpzEmQQ… 990000000 ←
-raise − launch fee (derived on chain)`, the two unlaunched ones 0) and, without member keys, the base58 import
-for the Squads TX builder. Between the upgrade and the migration every instruction on the four accounts fails,
-so run the two back to back; the indexer and agent recover on their own once the accounts decode again.
+The build outgrew the ProgramData account (730,200 bytes), so `upgrade.ts` step 3 sends a permissionless
+`ExtendProgram` of 10,240 bytes (the SIMD-0431 minimum; simulated OK on mainnet) before the upgrade
+proposal: ≈0.052 SOL of extra rent from `admin.json` that stays with the program. The migration dry run
+prints `platform … old layout (270 bytes)`, `dev authority: disabled (after migration); max_bundle_supply_bps
+2500`, and the vault transaction `[migrate_platform + set_dev_authority(HbMs…) + update_platform(max_bundle_supply_bps
+2500 → 7500, other params unchanged)]` (without member keys, the base58 import for the Squads TX builder).
+Between the upgrade and the migration every instruction that reads the platform fails, so run the two back to
+back; the indexer and agent recover on their own once the platform decodes again.
 
 ### Fixtures
 
@@ -244,25 +302,27 @@ Guarantees enforced in code (see `programs/moshsol/src/constants.rs` for hard ca
 written for the Holdfast curve — on pump launches "the curve" is the pump.fun bonding curve / PumpSwap pool and
 the differences are listed under [Venues](#venues)):
 
-- **Vault moves are explicit.** Vault SOL and tokens move only through `agent_*` (the launch's own curve), `payout_backers` (to the backer accumulator, under the payback rules), `wind_down` (tokens back to the curve, SOL to backers) and `admin_withdraw_vault` (admin only: any amount of vault SOL/tokens to `platform.fee_recipient`, removing the withdrawn tokens' share of the cost basis; never curve liquidity or backer accruals). Every withdrawal emits `VaultWithdrawn` and is shown on the launch page. The vault is **not** locked.
+- **Vault moves are explicit.** Vault SOL and tokens move only through `agent_*` (the launch's own curve), `payout_backers` (to the backer accumulator, under the payback rules), `wind_down` (tokens back to the curve, SOL to backers), `admin_withdraw_vault` (admin only: any amount of vault SOL/tokens to `platform.fee_recipient`) and `dev_withdraw_vault` (only `platform.dev_authority`, the single dev key the admin sets with `set_dev_authority`; refused with `DevKeyDisabled` while it is `Pubkey::default()`: any amount of vault SOL to the dev key itself and vault tokens to its own token account, not blocked by `paused` / `agents_paused`). Both withdrawals share one code path: they remove the withdrawn tokens' share of the cost basis and never touch curve liquidity, backer accruals or the buyback pool. The admin (a 2-of-3 Squads multisig) and a single dev key can withdraw a vault; every withdrawal is an on-chain event on the launch page (`VaultWithdrawn` / `VaultWithdrawnByDev`). The vault is **not** locked.
 - **Sell proceeds stay in the vault.** On every `agent_sell`, the whole fill goes to `vault_sol` and the sold tokens' average cost leaves `vault_cost_sol`; backers are paid from the vault only by `payout_backers` (principal at 5× liquid, then 15% per 4 h, agent-cranked, floor-protected — see [Vault economics](#vault-economics-the-model-every-number-on-the-site-follows)). Emits `BackersPaid`.
-- **Wind-down.** Permissionless `wind_down` on a live launch ≥3 days old, idle ≥24h (every trade bumps `last_trade_ts`) and with at most `dead_holders_bps` (5%) of `mint.supply` outside the curve and the vault (burned tokens don't count): vault tokens return to the curve, `real_sol + vault_sol` is credited to backers pro-rata, status becomes `WoundDown` and trading stops for good. Fee claims keep working. Tokens the admin withdrew count as outside holdings.
+- **Wind-down.** Permissionless `wind_down` on a live launch ≥3 days old, idle ≥24h (every trade bumps `last_trade_ts`) and with at most `dead_holders_bps` (5%) of `mint.supply` outside the curve and the vault (burned tokens don't count): vault tokens return to the curve, `real_sol + vault_sol` is credited to backers pro-rata, status becomes `WoundDown` and trading stops for good. Fee claims keep working. Tokens the admin or the dev key withdrew count as outside holdings.
 - **Agent can't go rogue.** Only `platform.agent_authority` may call `agent_*`. Every agent trade is fee-free and must pass all of:
   EMA band (buy ≤ EMA×(1−band), sell ≥ EMA×(1+band); EMA weight `dt/(dt+period)` so it can never be snapped to a held price),
   cost basis (sell fill ≥ vault average cost×(1+band); buy fill ≤ average cost, or a buy-back at ≤ average agent sell price×(1−band)),
   per-window caps (≤20% of vault per window, window ≥5 min), max impact per trade (≤10%) and the vault floor (`vault_sol` never below `min_vault_sol`). Admin can pause agents (circuit breaker; it also stops `payout_backers` and `buyback_burn`, the other two instructions the agent key signs).
+- **Agent wallets hold nothing.** Once the admin registers agent wallets (`set_agent_executors`, up to 15 keys in `platform.agent_executors`), every `agent_buy_pump` / `agent_sell_pump` must name one of them as `executor` (a signer next to the agent authority; `ExecutorRequired` / `ExecutorNotRegistered` otherwise) and that wallet is the pump.fun / PumpSwap `user`. Inside the one instruction the vault's SOL moves to the wallet (buy) or the vault's tokens to its token account (sell), the wallet trades, and the measured fill moves back to the vault: the tokens bought to the vault's token account, whatever SOL the wallet holds above what it started with back to the launch, PumpSwap's WSOL account closed into the launch. The wallet creates its token account for the mint if missing and gets it closed back to itself, and the program then requires it to hold exactly the lamports and tokens it started the instruction with (`ExecutorNotSettled`), so the only thing a wallet ever spends is its own transaction fee. Every rule above is checked on the measured fill exactly as without a wallet. The agent key pays each wallet's one-time pump.fun / PumpSwap volume-accumulator rent. With no wallet registered the pump authority trades itself (the pre-upgrade path).
 - **No atomic sandwiches.** An agent trade can't run in a slot that already saw a public trade on that launch, and no public trade can follow it in the same slot, so nobody (including whoever holds the agent key) can wrap a vault trade in one transaction or Jito bundle. What a leaked agent key *can* still do is trade within the rules above — bounded per window, no withdrawals — until the admin pauses agents and rotates the key (`set_agent_authority`, admin = multisig on mainnet).
 - **Frozen terms.** Fee split, trade/launch fee, agent limits and the payback terms are copied into the launch at creation and never change (the one exception: the payback upgrade's migration, which set them on the launches that predate it). `create_launch` carries the terms the creator reviewed (plus virtual SOL and a max create fee) and fails with `TermsChanged` if the platform changed them in between. Trade fee is bounded to 0.3%–2%.
 - **Fixed supply.** 1,000,000,000 tokens minted to the curve at creation, mint authority revoked in the same instruction, no freeze authority.
 - **Refunds.** Raise below minimum at deadline, or cancelled by the creator → every backer can refund 100% (backer account closed, rent returned). Pausing never blocks refunds, trading or claims.
-- **Accounting.** All launch SOL sits on the launch PDA; `lamports ≥ rent + raise escrow` (raising/refunding) or `rent + curve + vault + unclaimed backer/creator/platform credit` (live and wound down; a wound-down launch has curve = vault = 0 because `wind_down` moved both into backer credit; `admin_withdraw_vault` lowers the vault term), with equality unless someone donates lamports/tokens directly (donations are never counted and stay stuck). Tests assert equality after every step.
+- **Accounting.** All launch SOL sits on the launch PDA; `lamports ≥ rent + raise escrow` (raising/refunding) or `rent + curve + vault + unclaimed backer/creator/platform credit` (live and wound down; a wound-down launch has curve = vault = 0 because `wind_down` moved both into backer credit; `admin_withdraw_vault` / `dev_withdraw_vault` lower the vault term), with equality unless someone donates lamports/tokens directly (donations are never counted and stay stuck). Tests assert equality after every step.
+- **Bundle size.** The bundle buys at most `bundle_supply_bps` of supply (creator's choice, 1% up to the platform's `max_bundle_supply_bps`, which can never exceed 75%), and on pump launches never the curve's last token: it can't complete the pump.fun curve at launch; unspent budget stays as vault SOL.
 - **Fees.** Holdfast curve: 1% on public trades, rounded up so no trade is fee-free: 50% backers (pro-rata accumulator, claim any time), 30% creator, 20% platform; the split can never drop below 25% for backers or 10% for creators. Pump launches: public trades pay pump.fun's own 1.25% venue fee, of which the 0.3% creator share accrues to the launch and is split 75% vault SOL / 15% buyback-and-burn pool / 10% backers by `collect_pump_fees` (the creator's own share is 0). 1% launch fee on the raise. Flat create fee (anti-spam). Holdfast earns nothing else. All bounded by hard caps.
 - **Beta caps.** `max_raise_lamports` bounds a new launch's `raise_max` and `max_wallet_deposit_lamports` bounds any one wallet's deposit on top of the creator's own cap (0 = none; set by `MAX_RAISE_SOL` / `MAX_WALLET_SOL` in setup). The creator is exempt from the per-wallet cap on their own launch, so a "Fund it yourself" raise (whitelist = creator only, wizard option) can be filled by the dev alone.
 - **Deployment.** Only the program's upgrade authority can run `initialize_platform` (no front-running after deploy).
 
 ## Vault agent
 
-`apps/agent` polls every live launch (`POLL_MS`), decides with the pure `src/strategy.ts` and sends at most one
+`apps/agent` follows every live launch over a websocket (state changes, `SUBSCRIBE`) with a poll as heartbeat (`POLL_MS`; see [Reaction speed](#reaction-speed-stream-trigger-heartbeat-landing)), decides with the pure `src/strategy.ts` and sends at most one
 `agent_buy`/`agent_sell` (`agent_buy_pump`/`agent_sell_pump` on pump launches) per launch per decision. The vault
 model it serves: the bundle is the vault's inventory, the agent **sells into strength** (sized by how far the
 market cap has run and how much real buy volume there is, bounded by the impact limit) and **buys the dip back**
@@ -276,9 +336,10 @@ a strong market, never in a dip (see [Cranks](#venues-cranks-and-the-lookup-tabl
    so band edges, window budgets, cost basis and the vault floor are exactly what `agent_*` will check. Every
    size is the largest the mirror accepts (below-cost or buy-back path, ≤ 90% of the impact limit, window caps, SOL above `min_vault_sol`),
    with the cost rules checked against the slippage floor so any fill the transaction accepts passes them, and is
-   re-planned on a fresh read right before sending. Inside the band it holds. On a pump launch the reserves are
-   the venue's (bonding curve virtual reserves, or the PumpSwap pool's token balances once graduated — read for
-   every live pump launch in one batch per poll, and again with the launch right before sending), the EMA is
+   planned on the latest state: the streamed one, or a fresh read right before sending when the stream can't vouch for
+   it. Inside the band it holds. On a pump launch the reserves are
+   the venue's (bonding curve virtual reserves, or the PumpSwap pool's token balances once graduated — streamed,
+   read for every live pump launch in one batch per heartbeat, and with the launch in that re-read), the EMA is
    the sample `agent_*_pump` will take, and every quote carries the venue's 1.25% fee the way `pump_venue.rs`
    measures the fill: a buy spends `solIn`, of which `solIn − ⌈1.25%⌉` reaches the curve; a sell's gross
    `x·t/(y+t)` (capped at the real SOL) leaves the curve and the launch receives it minus `⌈1.25%⌉`. The
@@ -296,9 +357,10 @@ a strong market, never in a dip (see [Cranks](#venues-cranks-and-the-lookup-tabl
    target in the spirit of [Hummingbot's inventory skew](https://hummingbot.org/strategies/v1-strategies/pure-market-making/)
    and [Avellaneda–Stoikov](https://www.math.nyu.edu/~avellane/HighFrequencyTrading.pdf)): a runner can't drain
    the bag window after window, while buy-backs keep round-tripping below it.
-4. **Flow window** (`src/flow.ts`). Each poll differences the Launch counters (`volume_sol`, `trade_count`,
-   `real_sol`, `agent_*`): public volume, trade count and net SOL flow (buys − sells into the curve, the agent's
-   own fills removed) of the interval. From a 30 min window it derives the order-flow imbalance Σnet/Σvolume
+4. **Flow window** (`src/flow.ts`). Every streamed update and every heartbeat differences the Launch counters (`volume_sol`, `trade_count`,
+   `real_sol`, `agent_*`; the venue's reserves on pump launches): public volume, trade count and net SOL flow (buys − sells into the curve, the agent's
+   own fills removed) of the interval, one sample per chain second (a later update in the same second extends it, so a
+   trade is in the features as soon as it is seen). From a 30 min window it derives the order-flow imbalance Σnet/Σvolume
    over the last 3 min and the last minute ([Cont–Kukanov–Stoikov](https://academic.oup.com/jfec/article-abstract/12/1/47/816163);
    on a constant-product curve the net flow is what moved the price, so this is a deterministic
    [bulk volume classification](https://www.stern.nyu.edu/sites/default/files/assets/documents/con_035928.pdf)),
@@ -334,6 +396,36 @@ filters on the agent's own price samples, and an inventory skew of the entry dep
 The parameters (`StrategyParams`) are tuned in a backtest, not by hand; `STRATEGY_PARAMS` overrides any of them
 inside `PARAM_SPACE` (the guardrail cannot be switched off that way).
 
+### Agent wallets (who executes the vault's trades)
+
+The vault's pump trades are executed by 15 shared, publicly labelled **agent wallets** — the same 15 for every
+coin, listed on the platform account (`agent_executors`), at `/api/platform` (`agentExecutors`) and on the site's
+agents page. The owner holds their keys (`.mainnet/agent-wallets/01.json … 15.json`, see
+[Developer access](#developer-access-every-key-what-it-controls-how-to-pull-a-vault)). Nothing about *what* is traded
+changes: the strategy decides exactly as before and the program applies every rule on the measured fill; a wallet
+only signs and pays the fee (see "Agent wallets hold nothing" under the guarantees: value moves vault → wallet →
+market → vault inside one instruction and the program checks the wallet ends with exactly what it started with).
+
+`src/executors.ts` picks the wallet for each trade: the least recently used registered wallet with at least
+`EXECUTOR_MIN_SOL` that is not trading, never a second trade on a launch while one is in flight (on top of the
+agent's own one-in-flight-per-launch rule), and never a buy within `COOLDOWN_MS` of a sell on the same launch (or the
+reverse), so wallets never meet on a coin. The wallet is the fee payer and the agent key co-signs; the trade's
+`decision` line and activity item record it as `executor`, and the program's `Trade` event has it as `trader`. The
+heartbeat reads every wallet's balance and tops up the low ones from the agent key (bounded per hour, logged);
+`/status` lists them under `executors`. The heartbeat's instruction template is built for one wallet and re-aimed at
+the picked one on the hot path (the wallet, its token and WSOL accounts and its volume accumulators are swapped),
+so wallet rotation costs no round trip. While the platform has no wallets registered the agent trades as before
+(the pump authority is the venue user).
+
+Setup (mainnet, after the program upgrade; the migration registers the wallets):
+
+```bash
+KEYS_DIR=.mainnet pnpm agent-wallets                                    # creates the missing 01…15.json, prints the public keys only
+RPC_URL=<rpc> KEYS_DIR=.mainnet pnpm fund-executors --dry-run           # plan: tops every wallet up to EXECUTOR_MIN_SOL (0.02) from agent.json
+RPC_URL=<rpc> KEYS_DIR=.mainnet pnpm fund-executors                     # agent.json needs 0.3 SOL + 0.01 reserve for 15 empty wallets
+node -e "const fs=require('fs');console.log(JSON.stringify(fs.readdirSync('.mainnet/agent-wallets').sort().map(f=>JSON.parse(fs.readFileSync('.mainnet/agent-wallets/'+f)))))" # → Railway agent secret AGENT_EXECUTORS_JSON (never paste it anywhere else)
+```
+
 ### Venues, cranks and the lookup table
 
 Everything is keyed by the launch **address** (pump launches share the default mint until `launch_pump`);
@@ -365,7 +457,7 @@ lines and listed newest-first (≤ 50) in `/status` → `cranks` (`kind`, `addre
   the skip reason is written to the activity feed (`payout eligible, skipped: price under EMA band`), at most once
   per 10 min per reason.
 
-Transactions go out legacy through `prepareTx` when they fit 1,232 bytes; a PumpSwap trade with the venue's
+Transactions (cranks through `prepareTx`, trades through the trade path below) go out legacy when they fit 1,232 bytes; a PumpSwap trade with the venue's
 ~20 accounts is close to the limit, so when one does not fit the agent sends a v0 transaction with its **address
 lookup table** (`/status` → `lookupTable`): created lazily (the agent is authority and payer) with the
 launch-independent PumpSwap/pump.fun/program accounts of `poolVenueAccounts` + the agent instruction (fee
@@ -374,6 +466,84 @@ token/ATA/system programs), extended in two transactions, usable from the next s
 `ALT_FILE` (default `apps/agent/.alt.json`, git-ignored) under the cluster's genesis hash — a localnet reset
 gets a fresh table instead of a vanished one. `AGENT_ALT=<address>` pins an existing table instead (hosted
 deployments without a persistent disk). Env: `CRANK_MS` (60000, ≥ 1000), `ALT_FILE`, `AGENT_ALT`.
+
+### Reaction speed: stream trigger, heartbeat, landing
+
+**Stream.** With `SUBSCRIBE` on (default) the agent keeps one websocket (`WS_URL`, by default derived from
+`RPC_URL`; `src/stream.ts`) with `accountSubscribe` at `processed` on every live launch's Launch account and venue
+accounts (the pump.fun bonding curve, or the PumpSwap pool's two token accounts once graduated — re-subscribed when
+a launch graduates), the platform and the clock sysvar, plus `slotSubscribe` for timing. A socket silent for 5 s is
+replaced; reconnects back off 0.5 s → 30 s and re-subscribe everything. Each update replaces the launch's state
+(slots decide: an older heartbeat read never overwrites a newer streamed one), goes straight into the flow window,
+and is decided on `DEBOUNCE_MS` (150) after it first arrived; updates arriving meanwhile ride along. While the stream
+is healthy (a message in the last 2 s) and one re-read has confirmed the launch since the socket last (re)opened, a
+trade is planned and sent on the streamed state with no RPC round trip; otherwise the launch, the clock and the venue
+are re-read first, as before. **Heartbeat** (`POLL_MS`, 10 s): new and ended launches, subscription sync, the cranks
+and the payout (not latency-critical), a decision on every launch (the fallback trigger), and warming the trade
+path (the SDK-built `agent_buy_pump` accounts — pump.fun's fee recipients are read live there — the fee estimate,
+the lookup table). `SUBSCRIBE=0` is the pre-stream agent: the poll is the trigger and every trade re-reads.
+
+**One trade in flight per launch, 3 s cooldown.** A decision holds its launch until the trade confirmed. After a
+fill the next plan waits until the stream shows the Launch with that fill (`agent_buys + agent_sells`; at most 5 s,
+then it re-reads) and `COOLDOWN_MS` (3 s) after the confirmation. The old 15 s were not needed for correctness:
+the same-slot rule only separates agent trades from *public* trades on the Holdfast curve (pump launches never
+record public trades, so it cannot fire there; on Holdfast launches a collision is retried on the next decision
+without back-off), the EMA moves only by what the agent's own trade samples (weight `dt / (dt + period)`, so trades
+seconds apart barely move it), and the window budget, band, impact and floor are re-checked by the program on the
+state the plan was made on. The one way a short cooldown fails a transaction is planning on state that predates the
+agent's own last fill, which the fill check rules out. In the backtest (TEST split, `DEFAULT_PARAMS`) failed
+landings fall as the agent gets faster (same-slot rejects 528 at 10 s polls / 15 s cooldown → 470 at 3 s polls →
+387 at 1 s / 3 s, of 14–18k trades): the cooldown is a pacing choice, not a safety one. What speed does to the
+*outcome* (same TEST split, ΔV@VWAP mean exo / fair / synthetic): 32.0 / 32.7 / 17.9 % as tuned (10 s polls, 15 s
+cooldown), 32.1 / 32.8 / 18.0 % at the old production timing (3 s polls), 33.2 / 33.0 / 18.8 % event-driven
+(1 s, 3 s cooldown) — slightly more value, about 1 pp worse in the worst 10%, and v1 gains more from speed than the
+tuned policy, so the objective (0 = v1) falls 0.39 → 0.10 → −0.08. The policy was tuned at 10 s; retune it at the
+new timing (`backtest robust` has the variant) before reading more into it.
+
+**Landing** (`TradeSender`, `src/send.ts`). The blockhash is refreshed every 5 s in the background; a launch's fee
+estimate (90th percentile of its accounts' recent fee market, within `PRIORITY_MICROLAMPORTS` … `MAX_…`) is warmed
+by the heartbeat and reused for 10 s; the compute limit comes from what the same trade kind consumed when it last
+landed (× 1.3 + 5,000; a simulation only the first time and after a failure). The signed transaction goes out without
+preflight (the plan was made on the same state; the program enforces every rule) to the RPC — on Helius paid plans
+`sendTransaction` already rides staked connections (SWQoS) — and, with `SENDER_URL`, to Helius Sender at the same
+time, then is tracked over the stream's `signatureSubscribe` (processed, confirmed) with a status poll as fallback,
+rebroadcast every 2 s until its blockhash expires. Cost per trade (a pump.fun curve trade consumes ≈107–121k CU,
+limit ≈124–140k): 5,000 lamports base + ≈12,400–14,000 lamports priority at the 0.1 lamport/CU floor = **≈0.000018
+SOL** (≤ 0.00028 SOL at the 2 lamport/CU cap). Mainnet today (2026-10-02): the 90th percentile of recent fees on
+the agent trades' accounts is 30,733 µlamports/CU and Helius' `getPriorityFeeEstimate` "high" 50,000, both under
+the 100,000 floor, so the floor is what gets paid ("veryHigh" is 1,370,601). Sender adds its tip to every trade:
+SWQoS-only (`?swqos_only=true`) ≥ 0.000005 SOL — +28% on the trade's fees, 0.05% of a 0.01 SOL minimum trade — or
+Sender Max ≥ 0.001 SOL, which is 10% of a 0.01 SOL trade and 0.2% of a 0.5 SOL one, more than most vault trades
+can carry next to the venue's 1.25%. Shipped: the RPC (staked) plus Sender SWQoS-only, on by default against a Helius mainnet RPC; Sender Max only if
+landing ever becomes contested.
+
+**Measured.** `/status` → `metrics.latencyMs` reports n / p50 / p95 / max per stage: `landToDecision` (the RPC
+node first reported the slot a change landed in → the decision), `notify` (that slot → the account notification),
+`react` (change seen → decision), `decisionToSent`, `sentToLanded`, `sentToConfirmed`; `metrics.trades` and
+`metrics.failures` count sends and failure reasons, `stream` the socket's state. Every decision's log line and
+activity detail carry `trigger`, `triggerSlot`, `landToDecisionMs`, `reactMs`, `reread`; trades add
+`decisionToSentMs`, `sentToLandedMs`, `sentToConfirmedMs`, `landedSlot`, `cachedUnits`, `tipLamports`.
+Mainnet (read-only, 4 min on the four busiest live pump.fun curves, each change run through the agent's pipeline
+— stream → decode → `marketOf` → `FlowWindow` → `evaluate` — next to a replica of the old 3 s poll):
+
+| land → decision | n | p50 | p95 |
+|---|---:|---:|---:|
+| old: 3 s poll (4 reads, then the venue batch, `confirmed`) | 114 | 891 ms | 2,965 ms |
+| stream (`processed`, 150 ms debounce) | 458 | 261 ms | 393 ms |
+| of which: slot reported → account notification | 661 | 116 ms | 240 ms |
+
+Localnet (`CLONE_PUMP=1`, real pump.fun programs, real `agent_*_pump` trades): a whale buys 6.6 SOL (the agent sells
+into it) and then dumps everything (the agent buys back), on fresh launches. Whale's slot first reported → the
+agent's trade landed (its slot first reported), plus the agent's own stages:
+
+| | n | land → agent trade landed p50 / p95 | land → decision | decision → confirmed |
+|---|---:|---:|---:|---:|
+| before (HEAD agent, `POLL_MS=3000`, 15 s cooldown; random phase) | 7 | 1,670 / 3,023 ms | 0–3 s poll + reads | ≈ 570 ms (simulate, preflight, 500 ms status poll) |
+| after (defaults) | 8 | 418 / 421 ms — the next slot, every time | 578 / 604 ms¹ | 273 / 438 ms (sent 15 / 31, confirmed 258 / 407) |
+
+¹ On the test validator `processed` account notifications arrive at the end of the slot (`notify` 407 / 424 ms);
+on mainnet Helius delivers them 116 / 240 ms after the slot is reported (above). 11 trades sent, 11 landed, 0 failed;
+cost 16,376–19,378 lamports each.
 
 ### Activity feed, AI narration and the research loop
 
@@ -432,8 +602,9 @@ pnpm --filter @holdfast/agent test               # property + regression tests
   `SimTerms.venue` switches it to the pump mirror (`PUMP_TERMS`: `launch_pump`'s bundle on pump.fun's initial
   curve, the venue's 1.25% on every trade including the agent's, no trade-fee split, public trades that never
   touch the launch); the property tests run on both venues with the same `DEFAULT_PARAMS`, the backtest
-  scenarios stay on the Holdfast curve. The simulated agent polls every 10 s (Railway `POLL_MS`), re-reads, lands
-  0.4–1.2 s later in a later slot, and cools down like `agent.ts`; the frozen pre-backtest rule runs as `v1`.
+  scenarios stay on the Holdfast curve. The simulated agent polls every 10 s (the timing the policy was tuned at), re-reads, lands
+  0.4–1.2 s later in a later slot, and cools down like `agent.ts`; the frozen pre-backtest rule runs as `v1`. `backtest robust`
+  also runs it as the event-driven agent (1 s polls — the sim's chain-time grain —, 3 s cooldown).
 - **Flow models.** Candles become a log-price path (o → nearer extreme → other extreme → c inside each minute,
   wicks > 3× the body clamped as bad prints), started at `1.1 / lowest relative price` × the launch price
   (≤ 20×) because, with the bundle held in the vault, public sells can't take the curve below the bundle's price. *Fair value*: every public trade
@@ -569,9 +740,10 @@ command's value rule (beats the current median ΔV out of sample in TEST and wal
 production terms stay as they are** (`scripts/src/setup.ts`, `LOCALNET_PARAMS` with `PROFILE=production`): the vault's mark-to-market value
 isn't the goal (its SOL pays backers only once the vault is 5× its start, or at wind-down); its job is counter-cyclical support, and a vault
 selling 13% of its tokens per 10 minutes into rallies (vol 1.00 → 1.05, drawdown cut −0.46 → −2.75 pp on TEST)
-would look to holders like the vault dumping into their pump. The wizard's default 30% reserve also stays: the
-bundle stops at its supply cap and leaves the rest of its budget in the vault, so the share changes only
-22–47% of the simulated launches (5–50 SOL raises). With the current terms, fixing it anywhere from 10% to 60%
+would look to holders like the vault dumping into their pump. The wizard's default 30% reserve also stays: in
+that study (run under the old 15% default bundle cap) the bundle stopped at its supply cap and left the rest of
+its budget in the vault, so the share changed only 22–47% of the simulated launches (5–50 SOL raises); with no
+cap by default now, the reserve is what keeps SOL in the vault. With the current terms, fixing it anywhere from 10% to 60%
 left the median vault value vs the 30% default at 0.0% on both history models (synthetic TRAIN: +6% at 10%, −17%
 at 60%; synthetic TEST: 0.0%) and the drawdown cut within ±0.2 pp except TRAIN at 60% (−0.68), while rug SOL lost rose with the share
 (TRAIN 28.5% → 39.7%): no case for a different default. Limitations on top of the ones above: the
@@ -687,7 +859,7 @@ Node 22+ and pnpm 10 for everything else (on Windows the validator runs in WSL, 
 
 ```bash
 anchor build                 # WSL/Linux, once and after every program change
-cargo test -p moshsol-tests  # 36 litesvm tests (25 curve + 11 pump.fun); needs target/deploy/moshsol.so
+cargo test -p moshsol-tests  # 47 litesvm tests (26 curve + 21 pump.fun); needs target/deploy/moshsol.so
 
 pnpm install
 CLONE_PUMP=1 pnpm localnet --reset   # terminal 1: validator (through WSL on Windows) with pump.fun, PumpSwap,
@@ -786,14 +958,20 @@ Agent (`apps/agent`):
 | `AGENT_KEYPAIR`, `AGENT_KEYPAIR_JSON` | `.localnet/agent.json`, unset | Must be the platform's agent authority to trade. `_JSON` (the secret key as a JSON byte array, for hosted secrets) wins over the file path |
 | `DRY_RUN` | off | `1`: plan and log decisions without sending transactions |
 | `STATUS_PORT`, `STATUS_HOST` | `8788`, `127.0.0.1` | `GET /status`: latest decision per live launch and the fee wallet's `balanceSol` (refreshed every tick; a `low_balance` line is logged each time it falls below 0.01 SOL) |
-| `POLL_MS` | `4000` | |
+| `POLL_MS` | `10000` (`4000` with `SUBSCRIBE=0`) | Heartbeat: full read of every live launch, subscription sync, cranks, payout, fallback decision (see [Reaction speed](#reaction-speed-stream-trigger-heartbeat-landing)); without the stream it is the trigger |
+| `SUBSCRIBE` | on | `0`: no websocket, the poll is the trigger and every trade re-reads before sending (the pre-stream agent) |
+| `WS_URL` | from `RPC_URL` | Websocket endpoint of the stream (`https` → `wss`, an explicit port + 1, e.g. `8899` → `8900`); only its origin is logged |
+| `DEBOUNCE_MS` | `150` | A streamed change is decided on this long after its first notification (updates arriving meanwhile ride along) |
+| `SENDER_URL`, `SENDER_TIP_LAMPORTS` | `https://sender.helius-rpc.com/fast?swqos_only=true` when `RPC_URL` is Helius mainnet (else unset), `5000` | Helius Sender endpoint (the global one routes to the nearest region; a regional `http://<region>-sender.helius-rpc.com/fast?swqos_only=true` saves the TLS hop): trades go out through it and the RPC at once and carry the tip (≥ 5,000 lamports; Sender Max without `swqos_only` wants ≥ 1,000,000). `off`: RPC only |
 | `MIN_TRADE_LAMPORTS` | `10000000` | 0.01 SOL: smaller buys/sells are skipped |
 | `STRATEGY_PARAMS` | unset | JSON object overriding any of the backtest-tuned policy parameters (see [Vault agent](#vault-agent)), e.g. `{"holdSlope":0.5}`; unknown keys or out-of-range values stop startup |
-| `COOLDOWN_MS` | `15000` | Per launch after a trade (errors back off exponentially up to 5 min; a same-slot collision with a public trade is retried on the next poll) |
+| `COOLDOWN_MS` | `3000` | Per launch after a confirmed trade, counted once the stream shows that fill (errors back off exponentially from 15 s up to 5 min; a same-slot collision with a public trade is retried on the next decision). Also the agent-wallet spacing: no wallet gets a buy within this long of a sell on the same launch (or the reverse) |
+| `AGENT_EXECUTORS_JSON`, `AGENT_EXECUTORS_DIR` | unset, `agent-wallets/` next to the agent keypair file (`.localnet/agent-wallets`) | The agent wallets (see [Agent wallets](#agent-wallets-who-executes-the-vaults-trades)): `_JSON` = a JSON array of up to 15 secret-key arrays (hosted secrets), else every `*.json` keypair file in the directory. Only wallets registered on the platform are used |
+| `EXECUTOR_MIN_SOL`, `EXECUTOR_TOPUP_SOL`, `EXECUTOR_TOPUP_MAX_SOL_PER_HOUR` | `0.01`, `0.02`, `0.2` | A wallet under the minimum is not picked and is topped up to `EXECUTOR_TOPUP_SOL` from the agent key at the next heartbeat (one transaction, logged `agent_wallet_topup`), at most the hourly total and never below 0.01 SOL left on the agent key (`agent_wallet_topup_skipped` otherwise) |
 | `SLIPPAGE_BPS` | `100` | Slippage floor of agent trades (cost rules are planned against it, so an accepted fill always passes them) |
-| `PRIORITY_MICROLAMPORTS`, `MAX_PRIORITY_MICROLAMPORTS` | `100000`, `2000000` | Priority fee floor and cap, µlamports per compute unit (see below). An agent trade consumes ≈28k CU (limit ≈33k), so it pays ≈0.0000033 SOL priority at the floor and at most ≈0.000066 SOL at the cap, on top of the 0.000005 SOL base fee; each trade's `decision` line logs `simulatedUnits`, `computeUnits`, `priorityMicroLamports`, `priorityFeeLamports`, and the landed `unitsConsumed` and `feeLamports` |
+| `PRIORITY_MICROLAMPORTS`, `MAX_PRIORITY_MICROLAMPORTS` | `100000`, `2000000` | Priority fee floor and cap, µlamports per compute unit (see below). A pump.fun curve trade consumes ≈107–121k CU (limit ≈124–140k), so it pays ≈0.000013 SOL priority at the floor and at most ≈0.00028 SOL at the cap, on top of the 0.000005 SOL base fee; each trade's `decision` line logs `simulatedUnits`, `computeUnits`, `cachedUnits`, `priorityMicroLamports`, `priorityFeeLamports`, `tipLamports`, and the landed `unitsConsumed` and `feeLamports` |
 
-Every transaction — agent trades, the web app's wallet transactions and the scripts — is prepared by
+Every transaction — the agent's cranks, the web app's wallet transactions and the scripts — is prepared by
 `prepareTx` in `@holdfast/sdk`: the instructions are simulated unsigned to size the compute limit
 (consumed units × 1.15 + 1,000), the priority fee is the 75th percentile of what recent slots required to
 write-lock the transaction's accounts (`getRecentPrioritizationFees`), clamped to the floor and cap
@@ -802,7 +980,9 @@ rebroadcasts the signed bytes every 2 s (`skipPreflight`, `maxRetries: 0`) while
 `getSignatureStatuses`, until the transaction confirms or the block height passes its
 `lastValidBlockHeight` ("Transaction expired unconfirmed"). A `SameSlotTrade` collision in simulation or
 preflight is retried a slot later, up to 5 times. Accounts only Holdfast writes usually report fees of 0,
-so the floor is the normal price; the estimate rises only when a launch's accounts are contended.
+so the floor is the normal price; the estimate rises only when a launch's accounts are contended. Agent
+**trades** take the faster path described under [Reaction speed](#reaction-speed-stream-trigger-heartbeat-landing)
+(same fee bounds, 90th percentile, no preflight, cached blockhash and compute units).
 
 Web (`apps/web`, read at build time):
 
@@ -896,8 +1076,9 @@ Program id on every cluster: `EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ` (key
 | Multisig members (2-of-3) | `44kYEq…sNVP`, `CZ9eBS…Kan7`, `7Ra5Dh…97Tb` = `.mainnet/member-{1,2,3}.json` — rotate them to separate hardware wallets in the Squads app |
 | Deployer (no remaining authority) | `EVN2gPRLh4Yymj7w6yh9u7yLf7CU8dBTfnTgBzNEYJ4G` (`.mainnet/admin.json`) |
 | Agent authority | `FvbdC4n4qXu8JoVLDeb5m8hT8pDSjXFKBCWx322LtWKP` (`.mainnet/agent.json`, Railway `AGENT_KEYPAIR_JSON`) |
+| Dev key (after the dev-key upgrade) | `HbMssirF1FP9ukQELn8feKEE5wqPrhpSbyKQWV7UnPHr` (`.mainnet/dev.json`; offline, never on Railway) |
 | Arweave uploader | `BCMaXCQ85twN4unAxftvuQQsogmTt7s4s1EG4hYxPTwW` (`.mainnet/uploader.json`, Railway `ARWEAVE_KEYPAIR_JSON`) |
-| Beta params | min raise 1 SOL, max raise 50 SOL, max 5 SOL per wallet per raise, create fee 0.02 SOL, 1% launch fee; creator fees 75/15/10, payback 5× / 15% / 4 h, dead launch ≤ 5% outside, 0.1 SOL vault floor (`PAYBACK_DEFAULTS`) |
+| Beta params | min raise 1 SOL, max raise 50 SOL, max 5 SOL per wallet per raise, create fee 0.02 SOL, 1% launch fee; bundle up to 75% of supply (`max_bundle_supply_bps` 7500 after the dev-key upgrade's migration; 2500 before), creator fees 75/15/10, payback 5× / 15% / 4 h, dead launch ≤ 5% outside, 0.1 SOL vault floor (`PAYBACK_DEFAULTS`) |
 
 ### Developer access (every key, what it controls, how to pull a vault)
 
@@ -906,20 +1087,22 @@ are gitignored). Nothing on the platform is out of reach of these keys, and noth
 
 | Key | File | Controls |
 |---|---|---|
-| Squads multisig vault (2-of-3) | `.mainnet/member-1.json`, `member-2.json`, `member-3.json` (`.mainnet/config.json` → `multisig`, `multisigVault`; create key `multisig-create-key.json`) | **Platform admin, fee recipient and program upgrade authority.** Any two members can: upgrade the program (`pnpm upgrade`), run layout migrations (`pnpm migrate:launches`), change platform params / pause (`update_platform`), rotate the agent key (`set_agent_authority`), hand the admin role over (`propose_admin`), and **withdraw any launch's vault** (`admin_withdraw_vault`, below). The vault also receives every withdrawal, launch fee sweep and create fee. |
+| Squads multisig vault (2-of-3) | `.mainnet/member-1.json`, `member-2.json`, `member-3.json` (`.mainnet/config.json` → `multisig`, `multisigVault`; create key `multisig-create-key.json`) | **Platform admin, fee recipient and program upgrade authority.** Any two members can: upgrade the program (`pnpm upgrade`), run layout migrations (`pnpm migrate:launches`), change platform params / pause (`update_platform`), rotate the agent key (`set_agent_authority`), set / rotate / disable the dev key (`set_dev_authority`), register / replace the agent wallets (`set_agent_executors`), hand the admin role over (`propose_admin`), and **withdraw any launch's vault** (`admin_withdraw_vault`, below). The vault also receives every admin withdrawal, launch fee sweep and create fee. |
+| Dev key | `.mainnet/dev.json` (`HbMssirF…UnPHr`) | **Withdraws any launch's vault instantly, alone** (`dev_withdraw_vault`): vault SOL to itself, vault tokens to its own ATA, no multisig, works while the platform or the agents are paused. Nothing else: it can't trade, change params or upgrade. It is `platform.dev_authority`, set by the multisig (`set_dev_authority`); `Pubkey::default()` disables it. Whoever holds this file can empty every vault, so keep it offline (an encrypted drive / an air-gapped machine, never a server, Railway or a synced folder) and use it only for an emergency withdrawal. A hardware wallet is stronger: point the authority at a Ledger key (`DEV_AUTHORITY=<ledger pubkey> pnpm migrate:launches`), then withdraw by signing `client.devWithdrawVaultIx` with the Ledger (`dev-withdraw.ts` signs with a keypair file only). Holds a little SOL for fees only. |
 | Deployer | `.mainnet/admin.json` (`EVN2gPRL…YJ4G`) | Pays rent and fees for upgrades/migrations/withdrawals (never a member; holds no authority on chain). Fund it with a few SOL before an upgrade (buffer rent is refunded). |
-| Agent authority | `.mainnet/agent.json` (`FvbdC4n4…tWKP`; Railway `AGENT_KEYPAIR_JSON`) | The only key that may trade a vault (`agent_*`, within the on-chain rules), crank `payout_backers` and `buyback_burn`. It can never withdraw. Rotate with `set_agent_authority` from the multisig. |
+| Agent authority | `.mainnet/agent.json` (`FvbdC4n4…tWKP`; Railway `AGENT_KEYPAIR_JSON`) | The only key that may trade a vault (`agent_*`, within the on-chain rules), crank `payout_backers` and `buyback_burn`. It can never withdraw. Rotate with `set_agent_authority` from the multisig. Funds the agent wallets' fees (top-ups). |
+| Agent wallets (15) | `.mainnet/agent-wallets/01.json … 15.json` (Railway `AGENT_EXECUTORS_JSON`: all 15 secret keys as one JSON array) | `platform.agent_executors`: the publicly labelled wallets that execute the vault agent's pump trades. They can't trade a vault on their own (the agent key co-signs every trade and every rule applies) and hold only SOL for their fees: the program requires each to end every trade with exactly what it started with. A leaked wallet key loses at most that fee float; replace the set with `AGENT_EXECUTORS=<dir> pnpm migrate:launches` (multisig). Create missing ones with `KEYS_DIR=.mainnet pnpm agent-wallets`, fund them with `pnpm fund-executors`. |
 | Arweave uploader | `.mainnet/uploader.json` (Railway `ARWEAVE_KEYPAIR_JSON`) | Pays metadata/image uploads from the indexer. No on-chain authority. |
 | Program keypair | `target/deploy/moshsol-keypair.json`, backed up as `.mainnet/program-EduEw….json` | The program id itself. Only needed to deploy to a fresh cluster; the upgrade authority is the multisig vault. |
 | Treasury | `.mainnet/treasury.json` | Historical fee recipient before the handoff; no role today (fee recipient = the multisig vault). |
 | Accounts master key | `WALLET_MASTER_KEY` in `apps/accounts/.secrets` / Railway `accounts` | Decrypts every Google-sign-in custodial wallet (see [Accounts](#accounts-sign-in-with-google)). Losing it loses those wallets; holding it with the DB controls them. |
 
-**Withdraw a vault** (public, auditable: emits `VaultWithdrawn`, shown on the launch page; SOL goes to the
-fee recipient = the multisig vault, tokens to the vault's ATA for the mint):
+**Withdraw a vault through the multisig** (public, auditable: emits `VaultWithdrawn`, shown on the launch page;
+SOL goes to the fee recipient = the multisig vault, tokens to the multisig vault's ATA for the mint):
 
 ```bash
 # plan only: prints what the vault holds and the Squads import if no member keys are given
-RPC_URL=<mainnet rpc> KEYS_DIR=.mainnet LAUNCH=<launch address> SOL=all TOKENS=all pnpm vault:withdraw --dry-run
+RPC_URL=<mainnet rpc> KEYS_DIR=.mainnet LAUNCH=<launch address or mint> SOL=all TOKENS=all pnpm vault:withdraw --dry-run
 # propose + approve + execute with two members (SOL / TOKENS take a decimal amount or `all`; at least one > 0)
 RPC_URL=<mainnet rpc> KEYS_DIR=.mainnet APPROVER_KEYPAIRS=.mainnet/member-1.json,.mainnet/member-2.json \
   LAUNCH=<launch address> SOL=1.5 TOKENS=all pnpm vault:withdraw
@@ -931,6 +1114,30 @@ that hasn't voted, executes once the threshold is met, or prints the base58 impo
 the fee recipient's token account from `admin.json` if it is missing, and prints PASS/FAIL against the vault's
 balances afterwards. On localnet (platform admin = `admin.json`) it sends the instruction directly. Withdrawn
 tokens count as outside holdings for `wind_down`: sell or burn them, or that launch keeps its ≤ 5% rule.
+
+**Withdraw a vault with the dev key** (instant, one signature, no multisig; just as public: emits
+`VaultWithdrawnByDev`, listed on the launch page as "Withdrawn by the dev key"; SOL goes to the dev key's own
+wallet, tokens to its own ATA for the mint):
+
+```bash
+# plan + simulation only: what the vault holds, what moves where, and whether the transaction would succeed
+RPC_URL=<mainnet rpc> DEV_KEYPAIR=.mainnet/dev.json LAUNCH=<launch address or mint> SOL=all TOKENS=all pnpm vault:dev-withdraw --dry-run
+# send (SOL / TOKENS take a decimal amount or `all`; at least one > 0)
+RPC_URL=<mainnet rpc> DEV_KEYPAIR=.mainnet/dev.json LAUNCH=<launch address or mint> SOL=1.5 TOKENS=all pnpm vault:dev-withdraw
+```
+
+`scripts/src/dev-withdraw.ts` checks that `DEV_KEYPAIR` (default `$KEYS_DIR/dev.json`) is the platform's
+`dev_authority`, then sends one transaction signed and paid by the dev key: create its ATA for the mint
+idempotently (SPL Token on pump launches, Token-2022 on Holdfast launches; ~0.002 SOL rent the first time) +
+`dev_withdraw_vault`, and prints PASS/FAIL against the vault's balances. Keep ~0.01 SOL on the dev key for
+fees. The program accepts any token account the dev key owns for the mint; the script always uses the ATA.
+
+**Rotate or disable the dev key** (multisig only): `DEV_AUTHORITY=<new pubkey> pnpm migrate:launches` (same env
+as above; puts `set_dev_authority` in a Squads vault transaction, or prints the base58 import) —
+`DEV_AUTHORITY=11111111111111111111111111111111` disables it (`dev_withdraw_vault` then fails with
+`DevKeyDisabled`). Rotate at once if `dev.json` may have leaked: until then whoever has it can withdraw every
+vault. Generate a new key with `solana-keygen new --no-bip39-passphrase --silent -o .mainnet/dev-<date>.json &&
+solana-keygen pubkey .mainnet/dev-<date>.json` (prints only the pubkey; never paste the file anywhere).
 
 Launch runbook (WSL for step 1, any OS after):
 
@@ -1003,7 +1210,7 @@ failure, and watch paths so a push only rebuilds what it touched (`apps/<service
 | Service | Variables | Healthcheck | Notes |
 |---|---|---|---|
 | `indexer` | `RPC_URL`, `WS_URL`, `PUBLIC_URL` (its own Railway domain), `PORT=8787`, `POLL_MS`, `FULL_REFRESH_MS`, `HOLDERS_TTL_MS`, `CHAIN_CHECK_MS`, `ADMIN_TOKEN` (secret, comment moderation), `INTERNAL_TOKEN` (secret, equal to the web's `INDEXER_INTERNAL_TOKEN`: its server renders skip `RATE_LIMIT_PER_MIN`), `HIDDEN_LAUNCHES` (optional, comma list of launch addresses/mints kept off every list), `TRUST_PROXY=true` (Railway's edge rewrites `X-Forwarded-For`; per-IP limits then key on the real client). Mainnet adds `STORAGE=arweave`, `ARWEAVE_KEYPAIR_JSON` (secret), `ARWEAVE_DAILY_BUDGET_SOL=0.25`, `RPC_PROXY=1`, `RPC_PROXY_LIMIT_PER_MIN=600` | `/api/health` | Volume at `/data` (SQLite DB with comments/profiles, plus uploads when `STORAGE=local`). |
-| `agent` | `RPC_URL`, `AGENT_KEYPAIR_JSON` (secret), `PORT=8788`, `POLL_MS`; optionally `PRIORITY_MICROLAMPORTS` / `MAX_PRIORITY_MICROLAMPORTS` | `/status` | Keep ~0.1+ SOL on the agent key for fees (a trade costs ≈0.0000083 SOL at the priority floor, ≤0.00007 SOL at the cap); `/status` → `balanceSol` shows what is left. |
+| `agent` | `RPC_URL` (the paid Helius endpoint; its websocket is derived, `WS_URL` overrides), `AGENT_KEYPAIR_JSON` and `AGENT_EXECUTORS_JSON` (secrets; the latter = the 15 agent wallets' secret keys, see [Agent wallets](#agent-wallets-who-executes-the-vaults-trades)), `PORT=8788`, `POLL_MS` (`10000`, the heartbeat — the stream is the trigger; drop an old `3000`); Helius Sender is on by default (`SENDER_URL` overrides the endpoint, `off` disables), `PRIORITY_MICROLAMPORTS` / `MAX_PRIORITY_MICROLAMPORTS` | `/status` | Keep ~0.1+ SOL on the agent key for fees (a pump.fun trade costs ≈0.000018 SOL at the priority floor, +0.000005 SOL tip with `SENDER_URL`, ≤0.00028 SOL at the cap); `/status` → `balanceSol` shows what is left, `metrics` the reaction latencies. |
 | `accounts` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `WALLET_MASTER_KEY`, `SESSION_SECRET` (secrets), `SITE_URL` (the web's public origin, e.g. `https://holdfast.fun`), `PORT=8789`, `TRUST_PROXY=true` | `/health` | No public domain: only the web reaches it, over the private network at `http://accounts.railway.internal:8789` (the Dockerfile binds `::`). Volume at `/data` (`DB_PATH=/data/accounts.db`) **with backups enabled** — the DB plus `WALLET_MASTER_KEY` are the only copy of every Google wallet (see [Accounts](#accounts-sign-in-with-google)). |
 | `web` | `NEXT_PUBLIC_CLUSTER` (`devnet` / `mainnet-beta`), `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_WS_URL` (mainnet: the indexer's `/rpc`, `/rpc-ws`), `NEXT_PUBLIC_INDEXER_URL`, `NEXT_PUBLIC_AGENT_URL`, `NEXT_PUBLIC_SITE_URL`, `PORT=3000`, `ACCOUNTS_URL=http://accounts.railway.internal:8789` (runtime), `INDEXER_INTERNAL_TOKEN` (runtime secret, the indexer's `INTERNAL_TOKEN`) | `/` | Pages are server-rendered with live indexer data: identical indexer/agent GETs are shared between renders for 1 s (in flight included), so concurrent page views cost one upstream request per URL, and a render waits ≤ 1.5 s per request before leaving that data to the browser. All of it comes from the web service's IP; with `INDEXER_INTERNAL_TOKEN` set it skips the indexer's `RATE_LIMIT_PER_MIN` (without it, every visitor's renders share that one budget). `NEXT_PUBLIC_*` are baked in at build time — redeploy after changing them. |
 

@@ -5,7 +5,7 @@ use anchor_lang::Discriminator;
 use crate::constants::*;
 use crate::errors::MoshError;
 use crate::events::LaunchMigrated;
-use crate::state::{Launch, LaunchV2, Platform, PlatformV2, PlatformV3};
+use crate::state::{Launch, LaunchV2, Platform, PlatformV2, PlatformV3, PlatformV4};
 
 /// Grows a program-owned account to `new_len`, the payer covering the extra rent (the rent
 /// delta, not what the balance lacks: the account's lamports beyond rent are owed to users),
@@ -36,8 +36,8 @@ fn grow<'info>(
 pub struct MigratePlatform<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
-    /// CHECK: the platform PDA in an older layout (`PlatformV2` or `PlatformV3`); decoded by
-    /// hand because the typed account no longer fits it.
+    /// CHECK: the platform PDA in an older layout (`PlatformV2`, `PlatformV3` or `PlatformV4`);
+    /// decoded by hand because the typed account no longer fits it.
     #[account(mut, seeds = [PLATFORM_SEED], bump, owner = crate::ID)]
     pub platform: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
@@ -45,22 +45,27 @@ pub struct MigratePlatform<'info> {
 
 /// Admin-only: brings the platform account from an older layout to the current one. From the
 /// pre-payback layout (`PlatformV2`): payback params at their defaults, burn share reset to the
-/// default. From either: the dev key appended, disabled (`set_dev_authority` turns it on). The
-/// admin pays the extra rent.
+/// default. From `PlatformV2` / `PlatformV3`: the dev key appended, disabled
+/// (`set_dev_authority` turns it on). From any: the agent wallets appended, unset
+/// (`set_agent_executors`). The admin pays the extra rent.
 pub fn migrate_platform(ctx: Context<MigratePlatform>) -> Result<()> {
     let info = ctx.accounts.platform.to_account_info();
     let new_len = 8 + Platform::INIT_SPACE;
     let old_len = info.data_len();
-    let v3_len = 8 + PlatformV3::INIT_SPACE;
-    require!(old_len == 8 + PlatformV2::INIT_SPACE || old_len == v3_len, MoshError::AlreadyMigrated);
+    let v2_len = 8 + PlatformV2::INIT_SPACE;
+    require!(
+        old_len == v2_len || old_len == 8 + PlatformV3::INIT_SPACE || old_len == 8 + PlatformV4::INIT_SPACE,
+        MoshError::AlreadyMigrated
+    );
     let old = grow(&info, &ctx.accounts.admin, &ctx.accounts.system_program, new_len)?;
     require!(old[..8] == *Platform::DISCRIMINATOR, MoshError::InvalidParam);
     require!(old[8..40] == *ctx.accounts.admin.key().as_ref(), MoshError::Unauthorized);
     let mut data = info.try_borrow_mut_data()?;
-    if old_len == v3_len {
-        data[v3_len..].fill(0);
-    } else {
+    if old_len == v2_len {
         data.copy_from_slice(&PlatformV2::upgrade_bytes(&old));
+    } else {
+        // Every appended field is a key whose default (all zero) means unset / disabled.
+        data[old_len..].fill(0);
     }
     Ok(())
 }

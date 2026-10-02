@@ -261,6 +261,8 @@ export interface PlatformInfo {
   agentAuthority: string;
   /** The dev key (`dev_withdraw_vault`: withdraws a vault to its own wallet); null while disabled. */
   devAuthority: string | null;
+  /** The shared agent wallets ("Holdfast agent wallet") that execute the vault agent's pump trades; empty while unset. */
+  agentExecutors: string[];
   launchCount: number;
   params: {
     tradeFeeBps: number;

@@ -94,4 +94,10 @@ pub enum MoshError {
     VaultFloor,
     #[msg("No dev key is set on the platform (set_dev_authority)")]
     DevKeyDisabled,
+    #[msg("The executor is not one of the platform's agent wallets")]
+    ExecutorNotRegistered,
+    #[msg("Agent wallets are set: the trade must go through one (executor)")]
+    ExecutorRequired,
+    #[msg("The agent wallet must end the trade with exactly the lamports and tokens it started with")]
+    ExecutorNotSettled,
 }

@@ -1,11 +1,15 @@
 /**
  * Layout migrations and the platform settings that ride with them (README "Layout migration"), all in
  * one Squads vault transaction signed by the platform admin (the multisig vault):
- * - `migrate_platform` when the platform is in an older layout: 248 bytes (pre-payback, `PlatformV2`) or
- *   270 bytes (before `dev_authority`, `PlatformV3`); the current layout is 302 bytes.
+ * - `migrate_platform` when the platform is in an older layout: 248 bytes (pre-payback, `PlatformV2`),
+ *   270 bytes (before `dev_authority`, `PlatformV3`) or 302 bytes (before `agent_executors`,
+ *   `PlatformV4`); the current layout is 782 bytes.
  * - one `migrate_launch(initial_vault_sol)` per launch still in the pre-payback layout (863 bytes).
  * - `set_dev_authority(DEV_AUTHORITY)` when `DEV_AUTHORITY=<pubkey>` is set and differs from the
  *   platform's (`DEV_AUTHORITY=11111111111111111111111111111111` disables the dev key).
+ * - `set_agent_executors` with the agent wallets in `AGENT_EXECUTORS=<dir>` (keypair files, e.g.
+ *   `.mainnet/agent-wallets`; only the public keys are read) when they differ from the platform's;
+ *   `AGENT_EXECUTORS=none` unsets them.
  * - `update_platform` raising `max_bundle_supply_bps` to `MAX_BUNDLE_BPS` (default the program's hard cap,
  *   7500 = 75%; `MAX_BUNDLE_BPS=keep` leaves it) when it differs; every other param is kept as is.
  * Idempotent: already-migrated accounts and settings already in place are skipped (the program's own
@@ -30,26 +34,38 @@
  */
 import { Connection, PublicKey, type TransactionInstruction } from "@solana/web3.js";
 import * as multisig from "@sqds/multisig";
-import { LIMITS, PROGRAM_ID, platformPda, type MoshClient, type PlatformAccount } from "@holdfast/sdk";
+import { AGENT_EXECUTOR_SLOTS, LIMITS, PROGRAM_ID, agentExecutorsOf, platformPda, type MoshClient, type PlatformAccount } from "@holdfast/sdk";
 import path from "node:path";
-import { LOCALNET_DIR, RPC_URL, clientFor, send } from "./common";
+import { LOCALNET_DIR, RPC_URL, agentWallets, clientFor, send } from "./common";
 import { DRY_RUN, done, fail, readConfig, readKeypair, readVaultSigners, runVaultTransaction, squadsUrl, todo } from "./squads";
 
-/** Platform sizes (with discriminator): `8 + PlatformV2 / PlatformV3 / Platform::INIT_SPACE`. */
+/** Platform sizes (with discriminator): `8 + PlatformV2 / PlatformV3 / PlatformV4 / Platform::INIT_SPACE`. */
 const PLATFORM_V2_LEN = 248;
 const PLATFORM_V3_LEN = 270;
-const PLATFORM_LEN = 302;
+const PLATFORM_V4_LEN = 302;
+const PLATFORM_LEN = 782;
 /** Launch size before the payback upgrade: `8 + LaunchV2::INIT_SPACE`. */
 const OLD_LAUNCH_LEN = 863;
 
 /**
- * The platform as it will read once migrated: the current layout as is, the 270-byte layout with the
- * appended dev key at its migrated value (disabled); null for the 248-byte layout (params change too).
+ * The platform as it will read once migrated: the current layout as is, the 270- and 302-byte layouts
+ * with the appended keys at their migrated values (dev key disabled, agent wallets unset); null for the
+ * 248-byte layout (params change too).
  */
 function decodePlatform(client: MoshClient, data: Buffer): PlatformAccount | null {
   if (data.length === PLATFORM_V2_LEN) return null;
-  const full = data.length === PLATFORM_V3_LEN ? Buffer.concat([data, Buffer.alloc(PLATFORM_LEN - PLATFORM_V3_LEN)]) : data;
+  const full = data.length < PLATFORM_LEN ? Buffer.concat([data, Buffer.alloc(PLATFORM_LEN - data.length)]) : data;
   return client.program.coder.accounts.decode<PlatformAccount>("platform", full);
+}
+
+/** `AGENT_EXECUTORS`: the wallets' public keys from a keypair directory, `[]` for `none`, null when unset. */
+function agentExecutorsArg(): PublicKey[] | null {
+  const raw = process.env.AGENT_EXECUTORS?.trim();
+  if (!raw) return null;
+  if (raw === "none") return [];
+  const keys = agentWallets(raw).map((k) => k.publicKey);
+  if (keys.length === 0 || keys.length > AGENT_EXECUTOR_SLOTS) fail(`AGENT_EXECUTORS=${raw} holds ${keys.length} keypairs; 1 to ${AGENT_EXECUTOR_SLOTS} expected`);
+  return keys;
 }
 
 function devAuthorityArg(): PublicKey | null {
@@ -137,25 +153,33 @@ async function main() {
   });
   const oldLaunches = launches.filter((l) => l.account.data.length === OLD_LAUNCH_LEN);
   const platformLen = platformInfo.data.length;
-  if (![PLATFORM_V2_LEN, PLATFORM_V3_LEN, PLATFORM_LEN].includes(platformLen)) fail(`platform is ${platformLen} bytes: not a layout this script knows`);
+  if (![PLATFORM_V2_LEN, PLATFORM_V3_LEN, PLATFORM_V4_LEN, PLATFORM_LEN].includes(platformLen)) fail(`platform is ${platformLen} bytes: not a layout this script knows`);
   const platformOld = platformLen !== PLATFORM_LEN;
   const current = decodePlatform(client, platformInfo.data);
   const devAuthority = devAuthorityArg();
+  const executors = agentExecutorsArg();
   const maxBundle = maxBundleArg();
 
   console.log(`platform ${platform.toBase58()}: ${platformOld ? `old layout (${platformLen} bytes)` : "current layout"}, admin ${platformAdmin.toBase58()}`);
   if (current) {
     const dev = current.devAuthority.equals(PublicKey.default) ? "disabled" : current.devAuthority.toBase58();
+    const wallets = agentExecutorsOf(current);
     console.log(`dev authority: ${dev}${platformOld ? " (after migration)" : ""}; max_bundle_supply_bps ${current.params.maxBundleSupplyBps}`);
+    console.log(`agent wallets: ${wallets.length ? wallets.map(String).join(", ") : "unset"}${platformOld ? " (after migration)" : ""}`);
   }
   console.log(`launches: ${launches.length}, in the old layout: ${oldLaunches.length}`);
 
   const settings: { label: string; ix: TransactionInstruction }[] = [];
   if (!current) {
-    if (devAuthority || maxBundle !== null) todo("settings", "set the dev key / bundle cap on a re-run once this migration executed (pre-payback layout)");
+    if (devAuthority || executors || maxBundle !== null) todo("settings", "set the dev key / agent wallets / bundle cap on a re-run once this migration executed (pre-payback layout)");
   } else {
     if (devAuthority && !devAuthority.equals(current.devAuthority)) {
       settings.push({ label: `set_dev_authority(${devAuthority.toBase58()})`, ix: await client.setDevAuthorityIx(platformAdmin, devAuthority) });
+    }
+    const have = agentExecutorsOf(current);
+    if (executors && (executors.length !== have.length || executors.some((k, i) => !k.equals(have[i]!)))) {
+      const label = executors.length ? `set_agent_executors(${executors.length} wallets: ${executors.map((k) => k.toBase58().slice(0, 4)).join(", ")})` : "set_agent_executors(unset)";
+      settings.push({ label, ix: await client.setAgentExecutorsIx(platformAdmin, executors) });
     }
     if (maxBundle !== null && maxBundle !== current.params.maxBundleSupplyBps) {
       settings.push({
@@ -234,6 +258,10 @@ async function main() {
   const now = after && after.data.length === PLATFORM_LEN ? decodePlatform(client, after.data) : null;
   const rows: [string, boolean][] = [[`platform layout ${now ? "current" : "still old"}`, !!now]];
   if (devAuthority) rows.push([`dev authority ${now?.devAuthority.toBase58() ?? "?"}`, !!now?.devAuthority.equals(devAuthority)]);
+  if (executors) {
+    const set = now ? agentExecutorsOf(now) : [];
+    rows.push([`agent wallets ${set.length}/${executors.length}`, !!now && set.length === executors.length && executors.every((k, i) => k.equals(set[i]!))]);
+  }
   if (maxBundle !== null) rows.push([`max_bundle_supply_bps ${now?.params.maxBundleSupplyBps ?? "?"}`, now?.params.maxBundleSupplyBps === maxBundle]);
   console.log("");
   for (const [what, ok] of rows) console.log(`${ok ? "PASS" : "FAIL"}  ${what}`);

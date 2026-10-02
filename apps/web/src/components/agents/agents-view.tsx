@@ -8,13 +8,14 @@ import { useNow } from "@/lib/hooks";
 import { launchHref } from "@/lib/launch";
 import { useAgents, useAgentStatus, useLaunches, usePlatform } from "@/lib/queries";
 import { useAgentHeartbeat } from "@/lib/status";
-import type { AgentDecision, LaunchSummary } from "@/lib/types";
+import type { AgentDecision, LaunchSummary, PlatformInfo } from "@/lib/types";
 import { Address } from "../ui/address";
 import { Chip, StatusDot } from "../ui/chip";
 import { cn } from "../ui/cn";
 import { formatCountdown } from "../ui/countdown";
 import { EmptyState, ErrorState } from "../ui/empty-state";
 import { Table, TD, TH, THead, TR } from "../ui/table";
+import { AgentWalletChip, AgentWallets } from "./agent-wallets";
 import { DecisionLog, useDecisionLog } from "./decision-log";
 import { vaultHealth } from "./health";
 import { ResearchNotes } from "./research";
@@ -99,7 +100,7 @@ function StatusRow({ now }: { now: number }) {
   );
 }
 
-function AgentTrades({ now }: { now: number }) {
+function AgentTrades({ now, platform }: { now: number; platform: PlatformInfo | undefined }) {
   const agents = useAgents();
   const rows = agents.data?.recent ?? [];
   if (agents.isError && !agents.data) {
@@ -128,30 +129,40 @@ function AgentTrades({ now }: { now: number }) {
           <TH align="right">SOL</TH>
           <TH align="right">Tokens</TH>
           <TH align="right">Price</TH>
+          <TH>Wallet</TH>
           <TH align="right">Tx</TH>
         </THead>
         <tbody>
-          {rows.map((t) => (
-            <TR key={`${t.signature}:${t.mint}:${t.isBuy ? "b" : "s"}`} agent>
-              <TD className="text-ink-3">{timeAgo(t.timestamp, now)}</TD>
-              <TD>
-                <Link href={launchHref(t)} className="ui text-ink hover:underline hover:decoration-ink-3/60 hover:underline-offset-2">
-                  ${t.symbol}
-                </Link>
-              </TD>
-              <TD className={t.isBuy ? "text-up" : "text-down"}>{t.isBuy ? "Bought dip" : "Sold rally"}</TD>
-              <TD align="right">{fmtLamports(t.solAmount)}</TD>
-              <TD align="right" className="text-ink-2">
-                {fmtTokens(t.tokenAmount)}
-              </TD>
-              <TD align="right" className="text-ink-2">
-                {fmtPrice(t.priceSol)}
-              </TD>
-              <TD align="right">
-                <Address address={t.signature} kind="tx" copy={false} className="justify-end" />
-              </TD>
-            </TR>
-          ))}
+          {rows.map((t) => {
+            const wallet = (platform?.agentExecutors.indexOf(t.trader) ?? -1) + 1;
+            return (
+              <TR key={`${t.signature}:${t.mint}:${t.isBuy ? "b" : "s"}`} agent>
+                <TD className="text-ink-3">{timeAgo(t.timestamp, now)}</TD>
+                <TD>
+                  <Link href={launchHref(t)} className="ui text-ink hover:underline hover:decoration-ink-3/60 hover:underline-offset-2">
+                    ${t.symbol}
+                  </Link>
+                </TD>
+                <TD className={t.isBuy ? "text-up" : "text-down"}>{t.isBuy ? "Bought dip" : "Sold rally"}</TD>
+                <TD align="right">{fmtLamports(t.solAmount)}</TD>
+                <TD align="right" className="text-ink-2">
+                  {fmtTokens(t.tokenAmount)}
+                </TD>
+                <TD align="right" className="text-ink-2">
+                  {fmtPrice(t.priceSol)}
+                </TD>
+                <TD>
+                  <span className="inline-flex items-center gap-2">
+                    <Address address={t.trader} copy={false} />
+                    {wallet ? <AgentWalletChip n={wallet} /> : null}
+                  </span>
+                </TD>
+                <TD align="right">
+                  <Address address={t.signature} kind="tx" copy={false} className="justify-end" />
+                </TD>
+              </TR>
+            );
+          })}
         </tbody>
       </Table>
     </div>
@@ -221,6 +232,15 @@ export function AgentsView({ aside }: { aside: ReactNode }) {
         <RulesSheet platform={platform.data} launches={liveLaunches} />
       </Section>
 
+      <Section
+        id="wallets"
+        title="Agent wallets"
+        className="order-4 lg:order-none"
+        aside={<span className="small text-ink-3">From the platform account</span>}
+      >
+        <AgentWallets platform={platform.data} />
+      </Section>
+
       <Section id="health" title="Vault health" className="order-2 lg:order-none">
         {agents.isError && !agents.data ? (
           <ErrorState onRetry={() => void agents.refetch()} retrying={agents.isFetching}>
@@ -249,7 +269,7 @@ export function AgentsView({ aside }: { aside: ReactNode }) {
       </Section>
 
       <Section id="trades" title="Agent trades" className="order-5 lg:order-none">
-        <AgentTrades now={now} />
+        <AgentTrades now={now} platform={platform.data} />
       </Section>
 
       <Section

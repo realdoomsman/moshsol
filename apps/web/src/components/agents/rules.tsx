@@ -76,6 +76,11 @@ function rows(t: AgentTerms, platform: PlatformInfo, scope: string): RuleRow[] {
       by: "Platform account",
     },
     {
+      rule: "Agent wallets",
+      value: platform.agentExecutors.length ? `${platform.agentExecutors.length} registered` : "None set",
+      by: "Platform account",
+    },
+    {
       rule: "Dev key",
       value: platform.devAuthority ? <Address address={platform.devAuthority} className="justify-start" /> : "None set",
       by: "Platform account",

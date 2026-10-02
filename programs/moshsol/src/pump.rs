@@ -35,7 +35,8 @@ const IX_COLLECT_CREATOR_FEE: [u8; 8] = [20, 22, 86, 123, 198, 28, 219, 132];
 const IX_AMM_BUY_EXACT_QUOTE_IN: [u8; 8] = [198, 46, 21, 82, 180, 217, 232, 112];
 const IX_AMM_SELL: [u8; 8] = [51, 230, 133, 164, 1, 127, 131, 173];
 const IX_AMM_COLLECT_COIN_CREATOR_FEE: [u8; 8] = [160, 57, 89, 42, 181, 139, 43, 66];
-const IX_AMM_INIT_USER_VOLUME_ACCUMULATOR: [u8; 8] = [94, 6, 202, 115, 255, 96, 232, 183];
+/// Same name, hence the same discriminator, on pump.fun and PumpSwap.
+const IX_INIT_USER_VOLUME_ACCUMULATOR: [u8; 8] = [94, 6, 202, 115, 255, 96, 232, 183];
 
 // ---------------- PDAs ----------------
 
@@ -335,43 +336,42 @@ pub fn curve_trade<'info>(
     Ok(())
 }
 
-/// PumpSwap creates a buyer's volume accumulator on first use with the buyer paying its rent;
-/// that would come out of the launch's SOL, so the signer fronting rent creates it first
-/// (once per pump authority) when it is missing — missing meaning not owned by PumpSwap, as
-/// anyone can send lamports to the address (PumpSwap's init tops a funded address up).
-pub fn ensure_pool_volume_accumulator<'info>(
+/// pump.fun and PumpSwap create a buyer's volume accumulator on its first buy with the buyer
+/// paying the rent; that would come out of the launch's SOL (or an agent wallet's own balance),
+/// so the signer fronting rent creates it first (once per buyer and venue) when it is missing —
+/// missing meaning not owned by the venue, as anyone can send lamports to the address (the
+/// venue's init tops a funded address up). `r` is the `curve` layout, or `pool` if `graduated`.
+pub fn ensure_volume_accumulator<'info>(
     user: &AccountInfo<'info>,
     payer: &AccountInfo<'info>,
     system_program: &AccountInfo<'info>,
     r: &[AccountInfo<'info>],
+    graduated: bool,
 ) -> Result<()> {
-    let uva = &r[pool::USER_VOLUME_ACCUMULATOR];
-    if *uva.owner == PUMP_AMM_PROGRAM_ID {
+    let (program_id, uva, event_authority, program) = if graduated {
+        (PUMP_AMM_PROGRAM_ID, &r[pool::USER_VOLUME_ACCUMULATOR], &r[pool::EVENT_AUTHORITY], &r[pool::PROGRAM])
+    } else {
+        (PUMP_PROGRAM_ID, &r[curve::USER_VOLUME_ACCUMULATOR], &r[curve::EVENT_AUTHORITY], &r[curve::PROGRAM])
+    };
+    if *uva.owner == program_id {
         return Ok(());
     }
-    require_keys_eq!(r[pool::PROGRAM].key(), PUMP_AMM_PROGRAM_ID, MoshError::InvalidVenueAccount);
+    require_keys_eq!(program.key(), program_id, MoshError::InvalidVenueAccount);
     let ix = Instruction {
-        program_id: PUMP_AMM_PROGRAM_ID,
+        program_id,
         accounts: vec![
             AccountMeta::new(payer.key(), true),
             AccountMeta::new_readonly(user.key(), false),
             AccountMeta::new(uva.key(), false),
             AccountMeta::new_readonly(system_program.key(), false),
-            AccountMeta::new_readonly(r[pool::EVENT_AUTHORITY].key(), false),
-            AccountMeta::new_readonly(PUMP_AMM_PROGRAM_ID, false),
+            AccountMeta::new_readonly(event_authority.key(), false),
+            AccountMeta::new_readonly(program_id, false),
         ],
-        data: IX_AMM_INIT_USER_VOLUME_ACCUMULATOR.to_vec(),
+        data: IX_INIT_USER_VOLUME_ACCUMULATOR.to_vec(),
     };
     anchor_lang::solana_program::program::invoke(
         &ix,
-        &[
-            payer.clone(),
-            user.clone(),
-            uva.clone(),
-            system_program.clone(),
-            r[pool::EVENT_AUTHORITY].clone(),
-            r[pool::PROGRAM].clone(),
-        ],
+        &[payer.clone(), user.clone(), uva.clone(), system_program.clone(), event_authority.clone(), program.clone()],
     )?;
     Ok(())
 }

@@ -9,14 +9,17 @@ import { useState } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens, fmtUsd, solUsdOf } from "@/lib/format";
 import { useDebounced } from "@/lib/hooks";
 import { launchId } from "@/lib/launch";
-import { tradeKey, useTradeFeed, type PagedFeed } from "@/lib/queries";
+import { tradeKey, usePlatform, useTradeFeed, type PagedFeed } from "@/lib/queries";
 import type { TradeFilter } from "@/lib/query-options";
 import type { LaunchSummary, TradeRow } from "@/lib/types";
+import { AgentWalletChip } from "../agents/agent-wallets";
 import { AgentGlyph } from "../brand/glyphs";
+import { Address } from "../ui/address";
 import { Button } from "../ui/button";
 import { Chip, RoleChip } from "../ui/chip";
 import { cn } from "../ui/cn";
 import { EmptyState, ErrorState } from "../ui/empty-state";
+import { Identicon } from "../ui/identicon";
 import { Skeleton } from "../ui/skeleton";
 import { LoadMore, Table, TableMessage, TD, TH, THead, TR } from "../ui/table";
 import { Segmented } from "../ui/tabs";
@@ -81,12 +84,31 @@ function TypeCell({ t }: { t: TradeRow }) {
   );
 }
 
-function MakerCell({ t, roles, onFilter }: { t: TradeRow; roles: LaunchRoles; onFilter: (wallet: string) => void }) {
+function MakerCell({
+  t,
+  roles,
+  agentWallets,
+  onFilter,
+}: {
+  t: TradeRow;
+  roles: LaunchRoles;
+  agentWallets: string[];
+  onFilter: (wallet: string) => void;
+}) {
   const share = roles.shares.get(t.trader);
+  // Agent trades executed by a Holdfast agent wallet: the wallet with its explorer link, numbered as on /agents.
+  const wallet = t.isAgent ? agentWallets.indexOf(t.trader) + 1 : 0;
   return (
     <span className="inline-flex items-center gap-2">
-      <WalletLink wallet={t.trader} onFilter={() => onFilter(t.trader)} />
-      {t.isAgent ? <RoleChip role="agent" /> : null}
+      {wallet ? (
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <Identicon address={t.trader} size={20} />
+          <Address address={t.trader} copy={false} />
+        </span>
+      ) : (
+        <WalletLink wallet={t.trader} onFilter={() => onFilter(t.trader)} />
+      )}
+      {wallet ? <AgentWalletChip n={wallet} /> : t.isAgent ? <RoleChip role="agent" /> : null}
       {t.trader === roles.creator ? <RoleChip role="creator" /> : null}
       {share !== undefined ? <RoleChip role="backer" detail={shareDetail(share)} /> : null}
       <button
@@ -155,6 +177,7 @@ export function TradesTab({
   const minSolDebounced = useDebounced(filters.minSol, 400);
   const minSol = Number(minSolDebounced) > 0 ? Number(minSolDebounced) : 0;
   const feed = useTradeFeed(launchId(l), toQuery(filters, roles, me, minSol));
+  const agentWallets = usePlatform().data?.agentExecutors ?? [];
   const fresh = useFreshKeys(feed.headKeys);
   const [makerDraft, setMakerDraft] = useState("");
   const makerInvalid = makerDraft.trim() !== "" && !isAddress(makerDraft.trim());
@@ -334,7 +357,7 @@ export function TradesTab({
                     {solUsd === null ? fmtSolValue(t.priceSol * SUPPLY) : fmtUsd(t.priceSol * SUPPLY * solUsd)}
                   </TD>
                   <TD>
-                    <MakerCell t={t} roles={roles} onFilter={pickMaker} />
+                    <MakerCell t={t} roles={roles} agentWallets={agentWallets} onFilter={pickMaker} />
                   </TD>
                   <TD>
                     <TxLink signature={t.signature} />

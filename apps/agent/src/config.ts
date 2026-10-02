@@ -5,19 +5,45 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNarratorConfig, type NarratorConfig } from "./narrate";
 import { loadResearchConfig, type ResearchConfig } from "./research";
+import { wsUrlOf } from "./stream";
+import type { ExecutorSource } from "./executors";
 import { DEFAULT_PARAMS, withParams, type StrategyParams } from "./strategy";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+/** Helius Sender, global endpoint, SWQoS-only tier (minimum tip 5,000 lamports). */
+const DEFAULT_SENDER_URL = "https://sender.helius-rpc.com/fast?swqos_only=true";
 
 export interface AgentConfig {
   rpcUrl: string;
   /** Where the agent authority keypair comes from: inline JSON (AGENT_KEYPAIR_JSON) or a file path. */
   keypairSource: { kind: "env"; json: string } | { kind: "file"; path: string };
+  /**
+   * The agent wallets (`platform.agentExecutors`) that execute pump trades: `AGENT_EXECUTORS_JSON` (JSON array of
+   * secret-key arrays), else the keypair files in `AGENT_EXECUTORS_DIR` (default: `agent-wallets/` next to the
+   * agent keypair file).
+   */
+  executorSource: ExecutorSource;
+  /** Below this a wallet is not picked and gets topped up from the agent key (`EXECUTOR_MIN_SOL`). */
+  executorMinLamports: number;
+  /** Top-ups bring a low wallet to this (`EXECUTOR_TOPUP_SOL`)… */
+  executorTopUpLamports: number;
+  /** …and send at most this much per rolling hour in total (`EXECUTOR_TOPUP_MAX_SOL_PER_HOUR`). */
+  executorTopUpMaxPerHourLamports: number;
+  /** Heartbeat poll: the full read of every live launch (fallback trigger, cranks, new launches). */
   pollMs: number;
   statusPort: number;
   statusHost: string;
   dryRun: boolean;
+  /** Event-driven trigger (`SUBSCRIBE`, on unless `0`): websocket subscriptions to every live launch and its venue. */
+  subscribe: boolean;
+  /** Websocket endpoint (`WS_URL`; default derived from `RPC_URL`: https → wss, explicit port + 1). */
+  wsUrl: string;
+  /** A change is evaluated this long after its first notification; changes arriving meanwhile ride along. */
+  debounceMs: number;
+  /** Per launch after a landed trade (and only once the stream shows that fill). */
   cooldownMs: number;
+  /** Helius Sender (`SENDER_URL`, `SENDER_TIP_LAMPORTS`): trades also go out through it, carrying the tip; null = RPC only. */
+  sender: { url: string; tipLamports: number } | null;
   minTradeLamports: bigint;
   /** Policy parameters: backtest-tuned defaults, optionally overridden by `STRATEGY_PARAMS` (JSON object). */
   strategy: StrategyParams;
@@ -81,21 +107,48 @@ export function loadConfig(): AgentConfig {
     throw new Error(`MAX_PRIORITY_MICROLAMPORTS (${priorityCap}) must be ≥ PRIORITY_MICROLAMPORTS (${priorityFloor})`);
   }
   const keypair = process.env.AGENT_KEYPAIR?.trim() || ".localnet/agent.json";
+  const executorsJson = process.env.AGENT_EXECUTORS_JSON?.trim();
+  const executorsDir = process.env.AGENT_EXECUTORS_DIR?.trim() || path.join(path.dirname(keypair), "agent-wallets");
+  const sol = (name: string, fallback: number) => {
+    const raw = process.env[name]?.trim();
+    const v = raw ? Number(raw) : fallback;
+    if (!Number.isFinite(v) || v < 0 || v > 10) throw new Error(`${name} must be a SOL amount in [0, 10], got ${raw}`);
+    return Math.round(v * 1e9);
+  };
+  const executorMinLamports = sol("EXECUTOR_MIN_SOL", 0.01);
+  const executorTopUpLamports = sol("EXECUTOR_TOPUP_SOL", 0.02);
+  if (executorTopUpLamports < executorMinLamports) throw new Error("EXECUTOR_TOPUP_SOL must be ≥ EXECUTOR_MIN_SOL");
   const keypairJson = process.env.AGENT_KEYPAIR_JSON?.trim();
   const dryRun = (process.env.DRY_RUN ?? "").trim().toLowerCase();
+  const rpcUrl = process.env.RPC_URL?.trim() || "http://127.0.0.1:8899";
+  const subscribe = (process.env.SUBSCRIBE ?? "").trim() !== "0";
+  // Helius Sender (SWQoS-only tier, 0.000005 SOL tip) is on by default against a Helius mainnet RPC: its global HTTPS
+  // endpoint routes to the nearest region. `SENDER_URL=off` sends through the RPC alone; tip accounts are mainnet-only.
+  const senderEnv = process.env.SENDER_URL?.trim();
+  const heliusMainnet = new URL(rpcUrl).hostname === "mainnet.helius-rpc.com";
+  const senderUrl = senderEnv === "off" ? undefined : senderEnv || (heliusMainnet ? DEFAULT_SENDER_URL : undefined);
   return {
-    rpcUrl: process.env.RPC_URL?.trim() || "http://127.0.0.1:8899",
+    rpcUrl,
     // Hosted deployments pass the secret inline; locally a file path resolves from the repo root
     // (`pnpm --filter` runs scripts with cwd = apps/agent).
     keypairSource: keypairJson
       ? { kind: "env", json: keypairJson }
       : { kind: "file", path: path.resolve(REPO_ROOT, keypair) },
-    pollMs: int("POLL_MS", 4000, 250, 3_600_000),
+    executorSource: executorsJson ? { kind: "env", json: executorsJson } : { kind: "dir", path: path.resolve(REPO_ROOT, executorsDir) },
+    executorMinLamports,
+    executorTopUpLamports,
+    executorTopUpMaxPerHourLamports: sol("EXECUTOR_TOPUP_MAX_SOL_PER_HOUR", 0.2),
+    // With the stream the poll is only a heartbeat; without it, it is the trigger.
+    pollMs: int("POLL_MS", subscribe ? 10_000 : 4_000, 250, 3_600_000),
     // PaaS hosts (Railway, Render, …) assign PORT; STATUS_PORT wins when both are set.
     statusPort: int("STATUS_PORT", int("PORT", 8788, 0, 65_535), 0, 65_535),
     statusHost: process.env.STATUS_HOST?.trim() || (process.env.PORT ? "0.0.0.0" : "127.0.0.1"),
     dryRun: dryRun === "1" || dryRun === "true" || dryRun === "yes",
-    cooldownMs: int("COOLDOWN_MS", 15_000, 0, 86_400_000),
+    subscribe,
+    wsUrl: process.env.WS_URL?.trim() || wsUrlOf(rpcUrl),
+    debounceMs: int("DEBOUNCE_MS", 150, 0, 5_000),
+    cooldownMs: int("COOLDOWN_MS", 3_000, 0, 86_400_000),
+    sender: senderUrl ? { url: senderUrl, tipLamports: int("SENDER_TIP_LAMPORTS", 5_000, 5_000, 100_000_000) } : null,
     // 0.01 SOL: below this a vault trade barely moves price and mostly adds noise to the tape.
     minTradeLamports: BigInt(int("MIN_TRADE_LAMPORTS", 10_000_000, 1, Number.MAX_SAFE_INTEGER)),
     strategy: strategyParams(),

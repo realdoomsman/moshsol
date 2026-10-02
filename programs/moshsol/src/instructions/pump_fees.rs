@@ -323,6 +323,8 @@ pub fn buyback_burn<'info>(
         system_program: &system_program,
         graduated,
         remaining: r,
+        executor: None,
+        executor_base: std::cell::Cell::new(0),
         rent_owed: std::cell::Cell::new(0),
         donated: std::cell::Cell::new(0),
     };

@@ -3,6 +3,8 @@ import http from "node:http";
 import type { LaunchVenue } from "@holdfast/sdk";
 import type { ActivityItem } from "./activity";
 import type { FlowFeatures } from "./flow";
+import type { MetricsSnapshot } from "./metrics";
+import type { StreamStats } from "./stream";
 
 /** One entry of `GET /status` → `decisions` (see the Agent status API contract). */
 export interface Decision {
@@ -62,6 +64,12 @@ export interface StatusSnapshot {
   decisions: Decision[];
   /** Recent crank attempts, newest first. */
   cranks: CrankAttempt[];
+  /** The websocket behind the event-driven trigger (null with `SUBSCRIBE=0`). */
+  stream: StreamStats | null;
+  /** Reaction latencies (n, p50, p95, max ms per stage) and trade send outcomes (src/metrics.ts). */
+  metrics: MetricsSnapshot;
+  /** The registered agent wallets (`platform.agentExecutors`): held here or not, balance, last use, launch in flight. */
+  executors: { key: string; loaded: boolean; sol: number | null; lastUsedAt: number | null; trading: string | null }[];
 }
 
 const CORS = {

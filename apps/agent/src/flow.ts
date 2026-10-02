@@ -90,15 +90,28 @@ interface Counters {
 
 const LAMPORTS = 1e9;
 
+/** What the window reads of a launch: the venue reserves (spot) and the cumulative Launch counters. */
+export type FlowInput = Pick<
+  MarketState,
+  "virtualSol" | "realSol" | "tokenReserve" | "volumeSol" | "tradeCount" | "agentSolSpent" | "agentSolReceived" | "agentBuys" | "agentSells" | "lastTradeTs"
+>;
+
 function median(xs: number[]): number {
   const s = [...xs].sort((a, b) => a - b);
   const mid = s.length >> 1;
   return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
 }
 
-/** Rolling per-launch flow window; `observe` once per poll, in chain time. */
+/**
+ * Rolling per-launch flow window, in chain time. `observe` at least once per poll; observing more often (every
+ * account update of the subscription) only refines it: one sample per chain second at most, a later
+ * observation in the same second extends that second's sample in place, so a trade is in the features as soon
+ * as it is seen and the sums come out the same as one observation at the end of the second.
+ */
 export class FlowWindow {
   private last: { t: number; c: Counters; price: number } | null = null;
+  /** What the latest sample is measured from (the observation before its second), while that sample is open. */
+  private open: { c: Counters; price: number } | null = null;
   private readonly samples: FlowSample[] = [];
   /** Per minute bucket over the last FLOW_DAY_SECS: activity (SOL) and the highest spot seen. */
   private readonly daily = new Map<number, { activity: number; high: number }>();
@@ -108,7 +121,7 @@ export class FlowWindow {
   /** Chain time of the poll that first saw the agent's latest fill; null until the window saw one. */
   private agentTradeAt: number | null = null;
 
-  observe(m: MarketState, now: bigint): FlowFeatures {
+  observe(m: FlowInput, now: bigint): FlowFeatures {
     const t = Number(now);
     const price = Number(m.virtualSol + m.realSol) / Number(m.tokenReserve);
     const c: Counters = {
@@ -127,24 +140,15 @@ export class FlowWindow {
       const bucket = this.daily.get(minute) ?? { activity: 0, high: 0 };
       if (price > bucket.high) bucket.high = price;
       if (last !== null) {
-        const spent = c.agentSolSpent - last.c.agentSolSpent;
-        const received = c.agentSolReceived - last.c.agentSolReceived;
-        // Public buys add their net to real_sol and their gross to volume; sells take their gross from real_sol
-        // and add it to volume; the agent's own fills are in both and come out through the agent_* counters.
-        const gross = Number(c.volumeSol - last.c.volumeSol - spent - received) / LAMPORTS;
-        const net = Number(c.realSol - last.c.realSol - spent + received) / LAMPORTS;
-        // On a pump launch public volume never reaches the Launch counters: the price-implied |net| is its lower bound
-        // (otherwise imbalance and the volume ratio stay 0 / 1 there and no flow gate — the payout's included — can ever fire).
-        const volume = Math.max(0, gross, Math.abs(net));
-        const trades = c.tradeCount - last.c.tradeCount - (c.agentBuys - last.c.agentBuys) - (c.agentSells - last.c.agentSells);
-        this.samples.push({ t, dt: t - last.t, volume, net, trades: Math.max(0, trades), price: Math.sqrt(last.price * price) });
+        const sample = this.sample(last, c, t, t - last.t, price);
+        this.samples.push(sample);
+        this.open = { c: last.c, price: last.price };
         const cutoff = t - FLOW_LONG_SECS;
         let drop = 0;
         while (drop < this.samples.length && this.samples[drop]!.t <= cutoff) drop++;
         if (drop > 0) this.samples.splice(0, drop);
-        if (c.agentBuys !== last.c.agentBuys || c.agentSells !== last.c.agentSells) this.agentTradeAt = t;
-        bucket.activity += volume;
-        this.dailySum += volume;
+        bucket.activity += sample.volume;
+        this.dailySum += sample.volume;
       }
       this.daily.set(minute, bucket);
       const dayCutoff = minute - FLOW_DAY_SECS / 60;
@@ -154,8 +158,34 @@ export class FlowWindow {
         this.dailySum -= v.activity;
       }
       this.last = { t, c, price };
+    } else if (t === last.t && this.open !== null && this.samples.at(-1)?.t === t) {
+      // Same chain second as the open sample: re-measure it from its start to these counters.
+      const prev = this.samples.at(-1)!;
+      const sample = this.sample(this.open, c, t, prev.dt, price);
+      this.samples[this.samples.length - 1] = sample;
+      const bucket = this.daily.get(Math.floor(t / 60))!;
+      if (price > bucket.high) bucket.high = price;
+      bucket.activity += sample.volume - prev.volume;
+      this.dailySum += sample.volume - prev.volume;
+      this.last = { t, c, price };
     }
     return this.features(t, price, Math.max(0, t - Number(m.lastTradeTs)));
+  }
+
+  /** The public flow between the counters `from` and `c`, attributed to the interval of length `dt` ending at `t`. */
+  private sample(from: { c: Counters; price: number }, c: Counters, t: number, dt: number, price: number): FlowSample {
+    const spent = c.agentSolSpent - from.c.agentSolSpent;
+    const received = c.agentSolReceived - from.c.agentSolReceived;
+    // Public buys add their net to real_sol and their gross to volume; sells take their gross from real_sol
+    // and add it to volume; the agent's own fills are in both and come out through the agent_* counters.
+    const gross = Number(c.volumeSol - from.c.volumeSol - spent - received) / LAMPORTS;
+    const net = Number(c.realSol - from.c.realSol - spent + received) / LAMPORTS;
+    // On a pump launch public volume never reaches the Launch counters: the price-implied |net| is its lower bound
+    // (otherwise imbalance and the volume ratio stay 0 / 1 there and no flow gate — the payout's included — can ever fire).
+    const volume = Math.max(0, gross, Math.abs(net));
+    const trades = c.tradeCount - from.c.tradeCount - (c.agentBuys - from.c.agentBuys) - (c.agentSells - from.c.agentSells);
+    if (c.agentBuys !== from.c.agentBuys || c.agentSells !== from.c.agentSells) this.agentTradeAt = t;
+    return { t, dt, volume, net, trades: Math.max(0, trades), price: Math.sqrt(from.price * price) };
   }
 
   private features(t: number, price: number, sinceTradeSecs: number): FlowFeatures {

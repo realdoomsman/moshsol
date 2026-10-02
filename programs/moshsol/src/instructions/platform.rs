@@ -64,6 +64,7 @@ pub fn initialize_platform(
     p.launch_count = 0;
     p.bump = ctx.bumps.platform;
     p.dev_authority = Pubkey::default();
+    p.agent_executors = [Pubkey::default(); 15];
     Ok(())
 }
 
@@ -87,6 +88,19 @@ pub fn set_agent_authority(ctx: Context<AdminOnly>, agent_authority: Pubkey) -> 
 /// `dev_withdraw_vault`.
 pub fn set_dev_authority(ctx: Context<AdminOnly>, dev_authority: Pubkey) -> Result<()> {
     ctx.accounts.platform.dev_authority = dev_authority;
+    Ok(())
+}
+
+/// Sets, replaces or (all `Pubkey::default()`) unsets the agent wallets that execute the vault
+/// agent's pump trades. A registered key may appear once.
+pub fn set_agent_executors(ctx: Context<AdminOnly>, executors: [Pubkey; 15]) -> Result<()> {
+    for (i, k) in executors.iter().enumerate() {
+        require!(
+            *k == Pubkey::default() || !executors[..i].contains(k),
+            MoshError::InvalidParam
+        );
+    }
+    ctx.accounts.platform.agent_executors = executors;
     Ok(())
 }
 

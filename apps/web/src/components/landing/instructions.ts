@@ -111,16 +111,16 @@ function known(s: PumpSplit): Record<string, Known> {
     },
     agent_buy_pump: {
       group: "Vault agent",
-      caller: "Agent authority",
-      moves: "Vault SOL → pump.fun; tokens → vault",
-      description: `Buys back dips on pump.fun with the vault's SOL: only at least the band under the EMA, at or below the vault's average cost (or a buy-back below the average sell), within the window budget and impact limit, and never below the vault's ${s.minVaultSol} SOL floor.`,
+      caller: "Agent authority + an agent wallet",
+      moves: "Vault SOL → agent wallet → pump.fun; tokens → vault",
+      description: `Buys back dips on pump.fun with the vault's SOL: only at least the band under the EMA, at or below the vault's average cost (or a buy-back below the average sell), within the window budget and impact limit, and never below the vault's ${s.minVaultSol} SOL floor. One of the platform's agent wallets executes it and must end the instruction with exactly what it started with.`,
     },
     agent_sell_pump: {
       group: "Vault agent",
-      caller: "Agent authority",
-      moves: "Vault tokens → pump.fun; all SOL → vault",
+      caller: "Agent authority + an agent wallet",
+      moves: "Vault tokens → agent wallet → pump.fun; all SOL → vault",
       description:
-        "Sells slowly into strength on pump.fun: only at least the band over the EMA, at a fill of at least the vault's average cost plus the band, within the window budget and impact limit. Every lamport it receives stays in the vault as liquid SOL.",
+        "Sells slowly into strength on pump.fun: only at least the band over the EMA, at a fill of at least the vault's average cost plus the band, within the window budget and impact limit. Every lamport it receives stays in the vault as liquid SOL; the agent wallet that executes it must end the instruction with exactly what it started with.",
     },
     agent_buy: {
       group: "Vault agent",
@@ -222,6 +222,12 @@ function known(s: PumpSplit): Record<string, Known> {
       caller: "Admin",
       moves: "Nothing — which key may call the agent instructions",
       description: "Rotates the vault agent's key. Whoever holds it can still only call the agent buy and sell instructions, payout_backers and buyback_burn.",
+    },
+    set_agent_executors: {
+      group: "Platform admin",
+      caller: "Admin",
+      moves: "Nothing — which wallets execute the agent's pump trades",
+      description: "Sets, replaces or (with default pubkeys) unsets the 15 shared agent wallets. Unset, each vault's pump authority trades directly.",
     },
     set_dev_authority: {
       group: "Platform admin",

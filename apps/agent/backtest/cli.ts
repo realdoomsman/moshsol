@@ -14,13 +14,18 @@
  *   pnpm --filter @holdfast/agent backtest support      vault model without profit share: the previous policy vs the low-volume
  *                                                       support mode (tuned on walk-forward TRAIN) and vs support + sell ramp retuned,
  *                                                       on TRAIN, TEST and walk-forward TEST
+ *   pnpm --filter @holdfast/agent backtest speed        the event-driven agent (1 s reaction): tune clip granularity, margins, base
+ *                                                       sell allowance and the per-launch cooldown on walk-forward TRAIN, read out
+ *                                                       candidates on walk-forward TEST and TEST (objective, worst 10% vs v1,
+ *                                                       fills/h, agent share of volume), pick the most active one that passes
  *
  * Flags: --params <JSON object or file> (policy to evaluate/ablate/start from; default DEFAULT_PARAMS),
  * --random <n> (200) and --gens <n> (25) for training and the terms search, --freeze <feature,…> (train with
  * those features switched off, see FEATURES), --terms <JSON object or file> (terms search baseline; default
  * PRODUCTION_TERMS), --rug-budget <pp> (10: extra rug SOL loss a pick may add, pp of the starting vault SOL),
  * --reserves <bps,…> (reserve sweep), --sweep <sol,…> (guardrail base allowance sweep; 0.25,0.5,1,2,3),
- * --workers <n> (CPUs − 2).
+ * --tuned <file> (speed: read a previous search result, results/speed-tuned.json, instead of searching),
+ * --cooldowns <s,…> (speed: fallback spacing sweep; 5,8,10,15,20,30), --workers <n> (CPUs − 2).
  * Every command prints markdown and writes it plus a JSON summary to apps/agent/backtest/results/.
  */
 import fs from "node:fs";
@@ -40,11 +45,12 @@ import {
   summary,
   syntheticSpecs,
   table,
+  versus,
   walkForward,
   type ModelStats,
 } from "./evaluate";
 import { mean, type Score } from "./metrics";
-import { SearchSpace, cmaes, randomSearch } from "./optimize";
+import { SearchSpace, cmaes, randomSearch, type Fitness } from "./optimize";
 import { SimPool } from "./pool";
 import { PRODUCTION_TERMS } from "./program";
 import { loadIndex, type PoolEntry, type ScenarioSpec } from "./scenarios";
@@ -203,18 +209,9 @@ function compareCurrent(ev: Evaluator, label: string, specs: ScenarioSpec[], nam
   return compareNamed(ev, label, specs, [["current", CURRENT], ...named]);
 }
 
-/**
- * Tunes the keys of the features not in `frozen`. Frozen features are switched off (ablation / `--freeze`) or,
- * with `pin`, kept at `start`'s values (the support command tunes a few knobs around a fixed policy).
- */
-async function tune(ev: Evaluator, specs: ScenarioSpec[], start: StrategyParams, label: string, frozen: string[], pin = false): Promise<StrategyParams> {
-  const fitness = ev.fitness(specs);
-  const fixedKeys = new Set(frozen.flatMap((f) => FEATURES[f]!.keys));
-  const fix = (p: StrategyParams): StrategyParams =>
-    pin ? ({ ...p, ...Object.fromEntries([...fixedKeys].map((k) => [k, start[k]])) } as StrategyParams) : without(p, frozen);
-  const space = new SearchSpace(PARAM_SPACE, tunableKeys(frozen), fix(start));
+/** Seeded random search (`--random`), then CMA-ES (`--gens`) from its best point; the best trial and the evaluation counts. */
+async function search<K extends string, P extends Record<K, number>>(space: SearchSpace<K, P>, seeds: P[], fitness: Fitness<P>, label: string) {
   const t0 = Date.now();
-  const seeds = [start, DEFAULT_PARAMS, CURRENT].map(fix);
   const random = await randomSearch(space, intFlag("random", 200), seeds, fitness, mulberry32(7));
   console.log(`[${label}] random search: best ${random[0]!.score.toFixed(3)} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
   const trials = await cmaes(space, random[0]!.params, fitness, {
@@ -224,15 +221,204 @@ async function tune(ev: Evaluator, specs: ScenarioSpec[], start: StrategyParams,
     onGeneration: (g, best, sigma) =>
       console.log(`[${label}] CMA-ES gen ${g + 1}: best ${best.score.toFixed(3)} σ ${sigma.toFixed(3)} (${((Date.now() - t0) / 1000).toFixed(0)} s)`),
   });
-  const best = trials[0]!.score >= random[0]!.score ? trials[0]! : random[0]!;
+  const best = trials[0] && trials[0].score >= random[0]!.score ? trials[0] : random[0]!;
+  return { best, random: random.length, cma: trials.length };
+}
+
+/**
+ * Tunes the keys of the features not in `frozen`. Frozen features are switched off (ablation / `--freeze`) or,
+ * with `pin`, kept at `start`'s values (the support command tunes a few knobs around a fixed policy).
+ */
+async function tune(ev: Evaluator, specs: ScenarioSpec[], start: StrategyParams, label: string, frozen: string[], pin = false): Promise<StrategyParams> {
+  const fixedKeys = new Set(frozen.flatMap((f) => FEATURES[f]!.keys));
+  const fix = (p: StrategyParams): StrategyParams =>
+    pin ? ({ ...p, ...Object.fromEntries([...fixedKeys].map((k) => [k, start[k]])) } as StrategyParams) : without(p, frozen);
+  const space = new SearchSpace(PARAM_SPACE, tunableKeys(frozen), fix(start));
+  const { best, random, cma } = await search(space, [start, DEFAULT_PARAMS, CURRENT].map(fix), ev.fitness(specs), label);
   say(
     `\n${label}: ${space.keys.length} tuned parameters${frozen.length ? ` (${pin ? "pinned" : "switched off"}: ${frozen.join(", ")})` : ""}, ` +
-      `${random.length} random + ${trials.length} CMA-ES evaluations, best objective ${best.score.toFixed(3)}\n`,
+      `${random} random + ${cma} CMA-ES evaluations, best objective ${best.score.toFixed(3)}\n`,
   );
   say("```json");
   say(fmtParams(best.params));
   say("```");
   return best.params;
+}
+
+/** The event-driven agent (SUBSCRIBE): decides ~0.3 s after a trade lands (1 s is the sim's chain-time grain; `rereadMs` = DEBOUNCE_MS). */
+const EVENT_SIM = { pollMs: 1_000, rereadMs: 150 } satisfies Partial<SimOptions>;
+
+/** Per-launch spacing between agent trades (`COOLDOWN_MS`, s) the speed search picks from. */
+const COOLDOWN_GRID = [0, 1, 2, 3, 5, 8, 10, 15, 20, 30];
+
+/** Policy knobs the speed search tunes: clip granularity, entry margins and the sell guardrail's base allowance. */
+const SPEED_KEYS: ParamKey[] = ["buyClipShare", "sellClipShare", "clipSpacingSecs", "buyMarginBps", "sellMarginBps", "baseSellSol"];
+
+/** Objective at least this on both held-out splits (the policy's as-trained level at 10 s polls / 15 s cooldown). */
+const SPEED_GATE = 0.39;
+
+/** A speed-search point: the policy plus the cooldown as an index into COOLDOWN_GRID. */
+type Timed = StrategyParams & { cooldown: number };
+
+interface Paced {
+  params: StrategyParams;
+  /** Cooldown at the event-driven timing; undefined = DEFAULT_SIM (the timing the policy was trained at). */
+  cooldownMs?: number;
+}
+
+function untimed({ cooldown, ...params }: Timed): Paced {
+  return { params, cooldownMs: COOLDOWN_GRID[cooldown]! * 1_000 };
+}
+
+/**
+ * `backtest speed`: the policy at the event-driven timing. Tunes SPEED_KEYS and the per-launch cooldown on walk-forward
+ * TRAIN only (`--tuned <file>` reads a previous result instead), then reads out every candidate on walk-forward TEST and
+ * TEST: the objective (0 = v1 at the same timing), worst 10% vs v1, trades per hour and the agent's share of volume.
+ * Selection: the most active candidate with objective ≥ SPEED_GATE on both splits and no model's worst 10% below v1's;
+ * if none, the smallest `--cooldowns` spacing of `--params` that clears SPEED_GATE on both.
+ */
+async function speedCommand(pool: SimPool, entries: PoolEntry[], testSpecs: ScenarioSpec[], params: StrategyParams) {
+  const evaluators = new Map<number | undefined, Evaluator>();
+  const at = (cooldownMs?: number): Evaluator => {
+    let ev = evaluators.get(cooldownMs);
+    if (!ev) evaluators.set(cooldownMs, (ev = new Evaluator(pool, cooldownMs === undefined ? undefined : { ...EVENT_SIM, cooldownMs })));
+    return ev;
+  };
+  const { wfTrain, wfTest } = walkForward(entries, say);
+  const tunedFile = flag("tuned");
+  let tuned: Paced;
+  if (tunedFile) {
+    const parsed = JSON.parse(fs.readFileSync(tunedFile, "utf8")) as { params: Record<string, unknown>; cooldownMs: number };
+    tuned = { params: withParams(DEFAULT_PARAMS, parsed.params), cooldownMs: parsed.cooldownMs };
+  } else {
+    const start: Timed = { ...params, cooldown: COOLDOWN_GRID.indexOf(3) };
+    const space = new SearchSpace<ParamKey | "cooldown", Timed>(
+      { ...PARAM_SPACE, cooldown: { lo: 0, hi: COOLDOWN_GRID.length - 1, int: true } },
+      [...SPEED_KEYS, "cooldown"],
+      start,
+    );
+    // One evaluator per cooldown (v1 runs at the same timing); the batch is queued at once across them.
+    const fitness: Fitness<Timed> = async (batch) => {
+      const scores: number[] = [];
+      const groups = new Map<number, number[]>();
+      batch.forEach((t, i) => groups.set(t.cooldown, [...(groups.get(t.cooldown) ?? []), i]));
+      await Promise.all(
+        [...groups].map(async ([cooldown, idx]) => {
+          const s = await at(COOLDOWN_GRID[cooldown]! * 1_000).fitness(wfTrain)(idx.map((i) => untimed(batch[i]!).params));
+          idx.forEach((i, j) => (scores[i] = s[j]!));
+        }),
+      );
+      return scores;
+    };
+    const seeds: Timed[] = [
+      start,
+      { ...start, buyClipShare: 0.25, sellClipShare: 0.25 },
+      { ...start, cooldown: COOLDOWN_GRID.indexOf(15) },
+    ];
+    const { best, random, cma } = await search(space, seeds, fitness, "speed (walk-forward TRAIN)");
+    tuned = untimed(best.params);
+    say(
+      `\nspeed search on walk-forward TRAIN at the event-driven timing: ${SPEED_KEYS.join(", ")} + cooldown (${COOLDOWN_GRID.join("/")} s), ` +
+        `${random} random + ${cma} CMA-ES evaluations, best objective ${best.score.toFixed(3)} at ${tuned.cooldownMs! / 1_000} s cooldown\n`,
+    );
+    say(`\`\`\`json\n${fmtParams(tuned.params)}\n\`\`\``);
+    fs.mkdirSync(RESULTS_DIR, { recursive: true });
+    fs.writeFileSync(path.join(RESULTS_DIR, "speed-tuned.json"), `${JSON.stringify(tuned, null, 2)}\n`);
+  }
+
+  const splits: [string, ScenarioSpec[]][] = [
+    ["WF TEST", wfTest],
+    ["TEST", testSpecs],
+  ];
+  const ref = at(3_000);
+  const refV1 = await Promise.all(splits.map(async ([, specs]) => modelStats(ref, specs, await ref.runs(specs, { kind: "v1" }))));
+  const fmtModels = (stats: Record<string, ModelStats>, pick: (s: ModelStats) => number, d = 1) =>
+    Object.values(stats)
+      .map((s) => pick(s).toFixed(d))
+      .join(" / ");
+  const overall = (stats: Record<string, ModelStats>, pick: (s: ModelStats) => number) => {
+    const all = Object.values(stats);
+    return all.reduce((sum, s) => sum + pick(s) * s.n, 0) / all.reduce((sum, s) => sum + s.n, 0);
+  };
+  interface Row {
+    name: string;
+    paced: Paced;
+    objective: number[];
+    vsV1At3s: number[];
+    tailOk: boolean;
+    tradesPerHour: number;
+    stats: Record<string, ModelStats>[];
+    v1: Record<string, ModelStats>[];
+  }
+  const rows: Row[] = [];
+  say(`\nheld-out read-out at the event-driven timing (${EVENT_SIM.pollMs / 1_000} s polls, ${EVENT_SIM.rereadMs} ms re-read); per split: objective (0 = v1 at the same timing) and vs v1 at 1 s / 3 s,`);
+  say("ΔV@VWAP mean and worst-10% ΔV % per model (exo / fair / synthetic) with v1's worst 10% at the same timing, agent fills per hour, agent share of traded SOL %\n");
+  say("| candidate | cooldown | split | objective | vs v1 @ 3 s | ΔV@VWAP mean % | worst-10% ΔV % | v1 worst-10% % | fills / h | agent share of volume % |");
+  say("|---|---:|---|---:|---:|---|---|---|---:|---:|");
+  const read = async (name: string, paced: Paced): Promise<Row> => {
+    const ev = at(paced.cooldownMs);
+    const row: Row = { name, paced, objective: [], vsV1At3s: [], tailOk: true, tradesPerHour: 0, stats: [], v1: [] };
+    for (const [i, [label, specs]] of splits.entries()) {
+      const runs = await ev.runs(specs, { kind: "tuned", params: paced.params });
+      const stats = modelStats(ev, specs, runs);
+      const v1 = modelStats(ev, specs, await ev.runs(specs, { kind: "v1" }));
+      row.objective.push(ev.score(specs, runs).score);
+      row.vsV1At3s.push(versus(stats, refV1[i]!));
+      row.tailOk &&= Object.keys(stats).every((m) => stats[m]!.dvTail >= v1[m]!.dvTail);
+      row.tradesPerHour += overall(stats, (s) => s.tradesPerHour) / splits.length;
+      row.stats.push(stats);
+      row.v1.push(v1);
+      say(
+        `| ${i === 0 ? name : ""} | ${paced.cooldownMs === undefined ? "as trained" : `${paced.cooldownMs / 1_000} s`} | ${label} | ${row.objective[i]!.toFixed(3)} | ${row.vsV1At3s[i]!.toFixed(3)} | ` +
+          `${fmtModels(stats, (s) => s.dvMean)} | ${fmtModels(stats, (s) => s.dvTail)} | ${fmtModels(v1, (s) => s.dvTail)} | ` +
+          `${overall(stats, (s) => s.tradesPerHour).toFixed(2)} | ${overall(stats, (s) => s.volumeShare).toFixed(2)} |`,
+      );
+    }
+    rows.push(row);
+    return row;
+  };
+  const passes = (r: Row) => r.objective.every((o) => o >= SPEED_GATE);
+
+  await read("as trained: --params at 10 s polls, 15 s cooldown", { params });
+  const named: [string, StrategyParams][] = [
+    ["--params", params],
+    ["clips ≤ 50%", withParams(params, { buyClipShare: 0.5, sellClipShare: 0.5 })],
+    ["clips ≤ 25%", withParams(params, { buyClipShare: 0.25, sellClipShare: 0.25 })],
+    ["clips ≤ 10%", withParams(params, { buyClipShare: 0.1, sellClipShare: 0.1 })],
+    ["clips ≤ 25%, ≥ 15 s apart", withParams(params, { buyClipShare: 0.25, sellClipShare: 0.25, clipSpacingSecs: 15 })],
+    ["clips ≤ 25%, ≥ 60 s apart", withParams(params, { buyClipShare: 0.25, sellClipShare: 0.25, clipSpacingSecs: 60 })],
+  ];
+  const candidates: Row[] = [];
+  for (const [name, p] of named) candidates.push(await read(name, { params: p, cooldownMs: 3_000 }));
+  candidates.push(await read("tuned (walk-forward TRAIN)", tuned));
+  const eligible = candidates.filter((r) => passes(r) && r.tailOk).sort((a, b) => b.tradesPerHour - a.tradesPerHour);
+
+  // Fallback: --params with a longer per-launch spacing, smallest first, up to the first that clears the gate.
+  const cooldowns = (flag("cooldowns") ?? "5,8,10,15,20,30").split(",").map((s) => Number(s.trim()) * 1_000);
+  let fallback: Row | undefined;
+  for (const cooldownMs of cooldowns) {
+    const r = await read("--params, longer cooldown", { params, cooldownMs });
+    if (passes(r)) {
+      fallback = r;
+      break;
+    }
+  }
+  const best = (rs: Row[]) => rs.reduce((a, r) => (Math.min(...r.objective) > Math.min(...a.objective) ? r : a));
+  const pick = eligible[0] ?? fallback ?? best(rows.filter((r) => r.paced.cooldownMs !== undefined));
+  say(
+    `\nselected: ${pick.name} at ${pick.paced.cooldownMs! / 1_000} s cooldown — ` +
+      (eligible[0]
+        ? `the most active candidate (${pick.tradesPerHour.toFixed(2)} fills/h) with objective ≥ ${SPEED_GATE} on both held-out splits and no worst 10% below v1's`
+        : fallback
+          ? `no candidate cleared the gate with v1's worst 10% kept; the smallest per-launch spacing that restores objective ≥ ${SPEED_GATE} on both held-out splits`
+          : `GATE FAILED: nothing reached ${SPEED_GATE} on both held-out splits; highest held-out minimum`),
+  );
+  say(`\`\`\`json\n${fmtParams(pick.paced.params)}\n\`\`\``);
+  save("speed", {
+    tuned,
+    selected: { name: pick.name, ...pick.paced, eligible: eligible.length > 0, fallback: !eligible[0] && fallback !== undefined },
+    rows: rows.map(({ name, paced, objective, vsV1At3s, tailOk, tradesPerHour, stats, v1 }) => ({ name, ...paced, objective, vsV1At3s, tailOk, tradesPerHour, stats, v1 })),
+  });
 }
 
 function termsFlag(): TermsPoint {
@@ -340,9 +526,9 @@ async function termsCommand(ev: Evaluator, entries: PoolEntry[], trainSpecs: Sce
 
 async function main(): Promise<void> {
   const cmd = process.argv[2];
-  if (!cmd || !["eval", "train", "walkforward", "ablate", "robust", "flow", "terms", "support"].includes(cmd)) {
+  if (!cmd || !["eval", "train", "walkforward", "ablate", "robust", "flow", "terms", "support", "speed"].includes(cmd)) {
     throw new Error(
-      "usage: backtest <eval|train|walkforward|ablate|robust|flow|terms|support> [--params <json|file>] [--terms <json|file>] [--random n] [--gens n] [--freeze f,…] [--rug-budget pp] [--reserves bps,…] [--sweep sol,…] [--workers n]",
+      "usage: backtest <eval|train|walkforward|ablate|robust|flow|terms|support|speed> [--params <json|file>] [--terms <json|file>] [--random n] [--gens n] [--freeze f,…] [--rug-budget pp] [--reserves bps,…] [--sweep sol,…] [--tuned file] [--cooldowns s,…] [--workers n]",
     );
   }
   const entries = loadIndex();
@@ -437,10 +623,13 @@ async function main(): Promise<void> {
       const sweep: Record<string, unknown> = {};
       for (const [label, specs] of splits) sweep[label] = await compareCurrent(ev, `guardrail — ${label}`, specs, levels);
       save("flow", { params, compared, sweep });
+    } else if (cmd === "speed") {
+      await speedCommand(pool, entries, testSpecs, params);
     } else if (cmd === "robust") {
       const variants: [string, Partial<SimOptions> | undefined, Partial<Extract<ScenarioSpec, { kind: "pool" }>>][] = [
         ["as trained (10 s polls, 0.4–1.2 s landing, 2 min fair-value half-life, candle volume ×1)", undefined, {}],
-        ["agent polls every 4 s (POLL_MS default)", { pollMs: 4_000 }, {}],
+        ["agent polls every 4 s (POLL_MS default with SUBSCRIBE=0)", { pollMs: 4_000 }, {}],
+        ["event-driven agent: ~1 s reaction, 3 s cooldown", { ...EVENT_SIM, cooldownMs: 3_000 }, {}],
         ["slow landing: 1.5–3 s after the re-read", { sendMsMin: 1_500, sendMsMax: 3_000 }, {}],
         ["fair value: 30 s half-life", undefined, { halfLifeMs: 30_000 }],
         ["fair value: 10 min half-life", undefined, { halfLifeMs: 600_000 }],

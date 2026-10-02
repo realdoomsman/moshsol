@@ -190,6 +190,8 @@ pub fn wind_down_pump<'info>(ctx: Context<'_, '_, 'info, 'info, WindDownPump<'in
         system_program: &system_program,
         graduated: ctx.accounts.launch.pump.graduated,
         remaining: r,
+        executor: None,
+        executor_base: std::cell::Cell::new(0),
         rent_owed: std::cell::Cell::new(0),
         donated: std::cell::Cell::new(0),
     };

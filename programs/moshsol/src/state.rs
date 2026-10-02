@@ -17,8 +17,26 @@ pub struct Platform {
     pub bump: u8,
     /// The owner's single dev key: may withdraw any vault (`dev_withdraw_vault`) to itself,
     /// without the admin multisig. `Pubkey::default()` = disabled. Set by the admin
-    /// (`set_dev_authority`). Appended last so the migration from `PlatformV3` is an append.
+    /// (`set_dev_authority`). Appended after `bump` (the migration from `PlatformV3`).
     pub dev_authority: Pubkey,
+    /// The shared, publicly labelled agent wallets that execute the vault agent's pump trades
+    /// (`agent_buy_pump` / `agent_sell_pump` take one as `executor`; value moves vault → wallet →
+    /// venue → vault inside the instruction). All `Pubkey::default()` = unset: the pump
+    /// authority trades itself. Set by the admin (`set_agent_executors`). Appended last so the
+    /// migration from `PlatformV4` is an append. (Literal length: the IDL needs a number.)
+    pub agent_executors: [Pubkey; 15],
+}
+
+impl Platform {
+    /// Whether `key` is one of the registered agent wallets.
+    pub fn is_agent_executor(&self, key: &Pubkey) -> bool {
+        *key != Pubkey::default() && self.agent_executors.contains(key)
+    }
+
+    /// Whether any agent wallet is registered (then every pump agent trade must use one).
+    pub fn has_agent_executors(&self) -> bool {
+        self.agent_executors.iter().any(|k| *k != Pubkey::default())
+    }
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
@@ -357,6 +375,21 @@ pub struct PlatformV3 {
     pub bump: u8,
 }
 
+/// `Platform` as laid out before `agent_executors` was appended (data after the discriminator;
+/// mainnet's platform since the dev-key upgrade, 302 bytes). Read by tests; `migrate_platform`
+/// only appends the unset executors.
+#[derive(AnchorDeserialize, InitSpace)]
+pub struct PlatformV4 {
+    pub admin: Pubkey,
+    pub pending_admin: Pubkey,
+    pub fee_recipient: Pubkey,
+    pub agent_authority: Pubkey,
+    pub params: PlatformParams,
+    pub launch_count: u64,
+    pub bump: u8,
+    pub dev_authority: Pubkey,
+}
+
 #[account]
 #[derive(InitSpace)]
 pub struct Launch {
@@ -676,9 +709,13 @@ mod layout_tests {
         assert_eq!((pl.params.burn_share_bps, pl.launch_count, pl.bump), (DEFAULT_BURN_SHARE_BPS, 5, 251));
         assert_eq!((pl.params.creator_fee_vault_bps, pl.params.min_vault_sol), (DEFAULT_CREATOR_FEE_VAULT_BPS, DEFAULT_MIN_VAULT_SOL));
         assert_eq!(pl.dev_authority, Pubkey::default());
-        // Mainnet's platform before the dev-key upgrade is 270 bytes; `migrate_platform` appends
-        // the 32-byte dev key to the end.
-        assert_eq!((8 + PlatformV3::INIT_SPACE, 8 + Platform::INIT_SPACE), (270, 302));
+        assert!(!pl.has_agent_executors());
+        // Mainnet's platform before the dev-key upgrade is 270 bytes, 302 since; each migration
+        // appends to the end (the dev key, then the 15 agent wallets).
+        assert_eq!(
+            (8 + PlatformV3::INIT_SPACE, 8 + PlatformV4::INIT_SPACE, 8 + Platform::INIT_SPACE),
+            (270, 302, 782)
+        );
     }
 }
 

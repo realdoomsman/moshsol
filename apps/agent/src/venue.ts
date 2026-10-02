@@ -1,15 +1,15 @@
-import { PublicKey, type AccountInfo } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
 import { bondingCurvePda, curveStateOf, decodeBondingCurve, poolBaseAta, poolQuoteAta, poolStateOf, type LaunchJson, type VenueState } from "@holdfast/sdk";
 
 /**
- * A pump launch's venue state from accounts read in a batch (`fetchVenueState` for one launch at a
- * time): the bonding curve before graduation, the pool's base and quote token accounts after.
+ * A pump launch's venue state from accounts read in a batch or delivered by the stream (`fetchVenueState` for
+ * one launch at a time): the bonding curve before graduation, the pool's base and quote token accounts after.
  */
 
 /** SPL token account layout: mint(32) owner(32) amount(u64). */
 const TOKEN_AMOUNT_OFFSET = 64;
 
-export function tokenAmount(info: AccountInfo<Buffer>): bigint {
+export function tokenAmount(info: { data: Buffer }): bigint {
   return info.data.readBigUInt64LE(TOKEN_AMOUNT_OFFSET);
 }
 
@@ -22,7 +22,7 @@ export function venueKeys(l: Pick<LaunchJson, "mint" | "pump">): PublicKey[] {
 }
 
 /** `fetchVenueState`'s decoding of the `venueKeys(l)` accounts; null when any is missing. */
-export function decodeVenue(l: Pick<LaunchJson, "mint" | "pump">, infos: (AccountInfo<Buffer> | null)[]): VenueState | null {
+export function decodeVenue(l: Pick<LaunchJson, "mint" | "pump">, infos: ({ data: Buffer } | null)[]): VenueState | null {
   if (!l.pump.graduated) {
     const [curve] = infos;
     if (!curve) return null;

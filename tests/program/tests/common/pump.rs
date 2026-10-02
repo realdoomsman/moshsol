@@ -124,17 +124,17 @@ pub fn curve_price_q64(c: &Curve) -> u128 {
     moshsol::math::price_q64(c.virtual_sol_reserves, c.virtual_token_reserves).unwrap()
 }
 
-/// Remaining accounts of a bonding-curve trade on `mint` (created by `creator`) by `launch`'s
-/// pump authority.
+/// Remaining accounts of a bonding-curve trade on `mint` (created by `creator`) by the venue
+/// `user` (a launch's pump authority or an agent wallet).
 pub fn curve_accounts(
     mint: &Pubkey,
     creator: &Pubkey,
-    launch: &Pubkey,
+    user: &Pubkey,
     fee_recipient: &Pubkey,
     buyback_fee_recipient: &Pubkey,
 ) -> Vec<AccountMeta> {
     let curve = pump::bonding_curve_pda(mint);
-    let user = pump_authority_pda(launch);
+    let user = *user;
     vec![
         AccountMeta::new_readonly(pump_global(), false),
         AccountMeta::new(*fee_recipient, false),
@@ -152,16 +152,16 @@ pub fn curve_accounts(
     ]
 }
 
-/// Remaining accounts of a PumpSwap trade by `launch`'s pump authority on `mint`'s pool.
+/// Remaining accounts of a PumpSwap trade by the venue `user` on `mint`'s pool.
 pub fn pool_accounts(
     mint: &Pubkey,
     coin_creator: &Pubkey,
-    launch: &Pubkey,
+    user: &Pubkey,
     protocol_fee_recipient: &Pubkey,
     buyback_fee_recipient: &Pubkey,
 ) -> Vec<AccountMeta> {
     let pool = pump::pool_pda(mint);
-    let user = pump_authority_pda(launch);
+    let user = *user;
     let cva = amm_creator_vault_authority(coin_creator);
     vec![
         AccountMeta::new(pool, false),
@@ -461,7 +461,7 @@ impl Env {
         (mint.pubkey(), res)
     }
 
-    fn pump_agent_accounts(&self, agent: &Pubkey, launch: &Pubkey) -> Vec<AccountMeta> {
+    fn pump_agent_accounts(&self, agent: &Pubkey, launch: &Pubkey, executor: Option<&Pubkey>) -> Vec<AccountMeta> {
         let l = self.launch_at(launch);
         let authority = pump_authority_pda(launch);
         let mut metas = moshsol::accounts::AgentTradePump {
@@ -473,26 +473,35 @@ impl Env {
             vault_tokens: spl_ata(&authority, &l.mint),
             token_program: TOKEN_ID,
             system_program: system_program::ID,
+            associated_token_program: ATA_ID,
+            executor: executor.copied(),
+            executor_tokens: executor.map(|e| spl_ata(e, &l.mint)),
         }
         .to_account_metas(None);
-        metas.extend(self.venue_accounts(launch));
+        metas.extend(self.venue_accounts_for(launch, &executor.copied().unwrap_or(authority)));
         metas
     }
 
-    /// The launch's current venue accounts (curve before graduation, pool after).
+    /// The launch's current venue accounts (curve before graduation, pool after), traded by
+    /// its pump authority.
     pub fn venue_accounts(&self, launch: &Pubkey) -> Vec<AccountMeta> {
+        self.venue_accounts_for(launch, &pump_authority_pda(launch))
+    }
+
+    /// The launch's current venue accounts with `user` as the venue user.
+    pub fn venue_accounts_for(&self, launch: &Pubkey, user: &Pubkey) -> Vec<AccountMeta> {
         let l = self.launch_at(launch);
         if l.pump.graduated {
-            pool_accounts(&l.mint, launch, launch, &self.amm_protocol_fee_recipient(), &self.buyback_fee_recipient())
+            pool_accounts(&l.mint, launch, user, &self.amm_protocol_fee_recipient(), &self.buyback_fee_recipient())
         } else {
-            curve_accounts(&l.mint, launch, launch, &self.pump_fee_recipient(), &self.buyback_fee_recipient())
+            curve_accounts(&l.mint, launch, user, &self.pump_fee_recipient(), &self.buyback_fee_recipient())
         }
     }
 
     pub fn agent_buy_pump_as(&mut self, agent: &Keypair, launch: &Pubkey, sol_in: u64, min_out: u64) -> TxResult {
         let ix = Instruction {
             program_id: moshsol::ID,
-            accounts: self.pump_agent_accounts(&agent.pubkey(), launch),
+            accounts: self.pump_agent_accounts(&agent.pubkey(), launch, None),
             data: moshsol::instruction::AgentBuyPump { sol_in, min_tokens_out: min_out }.data(),
         };
         self.send(&[ix], &[agent])
@@ -507,10 +516,32 @@ impl Env {
         let agent = self.agent.insecure_clone();
         let ix = Instruction {
             program_id: moshsol::ID,
-            accounts: self.pump_agent_accounts(&agent.pubkey(), launch),
+            accounts: self.pump_agent_accounts(&agent.pubkey(), launch, None),
             data: moshsol::instruction::AgentSellPump { tokens_in, min_sol_out: min_out }.data(),
         };
         self.send(&[ix], &[&agent])
+    }
+
+    /// `agent_buy_pump` through the agent wallet `executor` (fee payer), signed by the agent.
+    pub fn agent_buy_pump_via(&mut self, executor: &Keypair, launch: &Pubkey, sol_in: u64, min_out: u64) -> TxResult {
+        let agent = self.agent.insecure_clone();
+        let ix = Instruction {
+            program_id: moshsol::ID,
+            accounts: self.pump_agent_accounts(&agent.pubkey(), launch, Some(&executor.pubkey())),
+            data: moshsol::instruction::AgentBuyPump { sol_in, min_tokens_out: min_out }.data(),
+        };
+        self.send(&[ix], &[executor, &agent])
+    }
+
+    /// `agent_sell_pump` through the agent wallet `executor` (fee payer), signed by the agent.
+    pub fn agent_sell_pump_via(&mut self, executor: &Keypair, launch: &Pubkey, tokens_in: u64, min_out: u64) -> TxResult {
+        let agent = self.agent.insecure_clone();
+        let ix = Instruction {
+            program_id: moshsol::ID,
+            accounts: self.pump_agent_accounts(&agent.pubkey(), launch, Some(&executor.pubkey())),
+            data: moshsol::instruction::AgentSellPump { tokens_in, min_sol_out: min_out }.data(),
+        };
+        self.send(&[ix], &[executor, &agent])
     }
 
     pub fn collect_pump_fees(&mut self, cranker: &Keypair, launch: &Pubkey) -> TxResult {
@@ -574,7 +605,7 @@ impl Env {
             accounts.extend(pool_accounts(
                 buyback_mint,
                 &creator,
-                launch,
+                &pump_authority_pda(launch),
                 &self.amm_protocol_fee_recipient(),
                 &self.buyback_fee_recipient(),
             ));
@@ -583,7 +614,7 @@ impl Env {
             accounts.extend(curve_accounts(
                 buyback_mint,
                 &creator,
-                launch,
+                &pump_authority_pda(launch),
                 &self.pump_fee_recipient(),
                 &self.buyback_fee_recipient(),
             ));

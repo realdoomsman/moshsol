@@ -150,13 +150,15 @@ export function curveVenueAccounts(p: {
   mint: PublicKey;
   /** The mint's pump.fun creator (the launch for launch tokens). */
   creator: PublicKey;
-  /** The launch whose pump authority trades. */
+  /** The launch whose pump authority trades (unless `user` is given). */
   launch: PublicKey;
+  /** The venue user when it is not the launch's pump authority (an agent wallet). */
+  user?: PublicKey;
   config: PumpConfig;
   programId?: PublicKey;
 }): AccountMeta[] {
   const curve = bondingCurvePda(p.mint);
-  const user = pumpAuthorityPda(p.launch, p.programId);
+  const user = p.user ?? pumpAuthorityPda(p.launch, p.programId);
   return [
     w(pumpGlobalPda()),
     w(p.config.feeRecipient, true),
@@ -179,13 +181,15 @@ export function poolVenueAccounts(p: {
   mint: PublicKey;
   /** The launch (pool coin creator) for launch tokens; the buyback mint's own creator for buybacks. */
   coinCreator: PublicKey;
-  /** The launch whose pump authority trades. */
+  /** The launch whose pump authority trades (unless `user` is given). */
   launch: PublicKey;
+  /** The venue user when it is not the launch's pump authority (an agent wallet). */
+  user?: PublicKey;
   config: PumpConfig;
   programId?: PublicKey;
 }): AccountMeta[] {
   const pool = poolPda(p.mint);
-  const user = pumpAuthorityPda(p.launch, p.programId);
+  const user = p.user ?? pumpAuthorityPda(p.launch, p.programId);
   const creatorVaultAuthority = ammCreatorVaultAuthorityPda(p.coinCreator);
   return [
     w(pool, true),

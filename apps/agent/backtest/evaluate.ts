@@ -142,6 +142,9 @@ export interface ModelStats {
   plannedRejects: number;
   buys: number;
   sells: number;
+  /** Agent fills per hour, and the agent's share of the traded SOL (agent / (public + agent), %), means over runs. */
+  tradesPerHour: number;
+  volumeShare: number;
 }
 
 /** Mean of the lowest `OBJECTIVE.tailShare` of `xs`. */
@@ -173,14 +176,32 @@ export function modelStats(ev: Evaluator, specs: ScenarioSpec[], runs: RunResult
       plannedRejects: rs.reduce((sum, { c }) => sum + c.plannedRejects, 0),
       buys: mean(rs.map(({ c }) => c.buys)),
       sells: mean(rs.map(({ c }) => c.sells)),
+      tradesPerHour: mean(rs.map(({ r }) => ((r.agent?.buys ?? 0) + (r.agent?.sells ?? 0)) / Math.max(1 / 60, r.minutes / 60))),
+      volumeShare: mean(
+        rs.map(({ r }) => {
+          const agentSol = (r.agent?.solSpent ?? 0) + (r.agent?.solReceived ?? 0);
+          return agentSol > 0 ? (agentSol / (agentSol + r.publicVolumeSol)) * 100 : 0;
+        }),
+      ),
     };
   }
   return byModel;
 }
 
-/** Min over flow models of (S_m − S_m(ref)) / max(1, |S_m(ref)|): the objective's worst-model term with `ref` as its 0. */
+/** Per flow model: (S_m − S_m(ref)) / max(1, |S_m(ref)|), the objective's normalized model terms with `ref` as their 0. */
+function relative(stats: Record<string, ModelStats>, ref: Record<string, ModelStats>): number[] {
+  return Object.entries(stats).map(([m, s]) => (s.s - ref[m]!.s) / Math.max(1, Math.abs(ref[m]!.s)));
+}
+
+/** Min over flow models of `relative`: the objective's worst-model term with `ref` as its 0. */
 export function minVersus(stats: Record<string, ModelStats>, ref: Record<string, ModelStats>): number {
-  return Math.min(...Object.entries(stats).map(([m, s]) => (s.s - ref[m]!.s) / Math.max(1, Math.abs(ref[m]!.s))));
+  return Math.min(...relative(stats, ref));
+}
+
+/** The objective (metrics.ts `aggregate`: mean and worst model) with `ref` as its 0 instead of v1 at the same timing. */
+export function versus(stats: Record<string, ModelStats>, ref: Record<string, ModelStats>): number {
+  const rel = relative(stats, ref);
+  return 0.5 * mean(rel) + 0.5 * Math.min(...rel);
 }
 
 /** Markdown rows comparing policies per flow model (the first entry is the reference of the last column). */

@@ -657,6 +657,19 @@ impl Env {
         self.send(&[ix], &[signer])
     }
 
+    pub fn set_agent_executors(&mut self, signer: &Keypair, executors: [Pubkey; 15]) -> TxResult {
+        let ix = Instruction {
+            program_id: moshsol::ID,
+            accounts: moshsol::accounts::AdminOnly {
+                admin: signer.pubkey(),
+                platform: platform_pda(),
+            }
+            .to_account_metas(None),
+            data: moshsol::instruction::SetAgentExecutors { executors }.data(),
+        };
+        self.send(&[ix], &[signer])
+    }
+
     pub fn wind_down(&mut self, cranker: &Keypair, mint: &Pubkey) -> TxResult {
         let launch = launch_pda(mint);
         let ix = Instruction {

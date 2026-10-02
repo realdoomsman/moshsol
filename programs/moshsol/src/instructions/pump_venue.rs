@@ -80,14 +80,20 @@ pub fn venue_tokens<'info>(launch: &Launch, r: &[AccountInfo<'info>]) -> Result<
 }
 
 /// Everything a venue trade needs: the launch (where the SOL lives), its pump authority (the
-/// venue `user`, signing with `authority_seeds`), the token account the authority owns for
+/// venue `user`, signing with `authority_seeds`), the token account the venue `user` owns for
 /// `mint`, the signer that fronts transient rent, and the venue accounts. Call `settle` after
 /// the last CPI of the instruction: it returns fronted rent to the payer, a direct lamport
 /// move no later CPI would see. Every trade first sweeps whatever the authority already holds
 /// (anyone can send lamports to the PDA) into the launch and records it in `donated`, so the
 /// measured fill never includes it; the caller credits `donated` to the vault. The same goes
-/// for whatever a pre-existing WSOL account of the authority holds (anyone can create and fund
-/// it): it lands on the launch when the account is closed after the trade and is `donated`.
+/// for whatever a pre-existing WSOL account of the venue `user` holds (anyone can create and
+/// fund it): it lands on the launch when the account is closed after the trade and is `donated`.
+///
+/// With an `executor` (an agent wallet, a real signer) the executor is the venue `user` instead
+/// of the pump authority and `user_tokens` is its token account: the launch's SOL reaches it
+/// right before the venue call, and whatever it holds above what it had when the trade started
+/// goes back to the launch right after, so the fill is measured on the launch exactly as
+/// without one and the executor keeps nothing.
 pub struct VenueTrade<'a, 'info> {
     pub launch: &'a AccountInfo<'info>,
     pub authority: &'a AccountInfo<'info>,
@@ -99,6 +105,9 @@ pub struct VenueTrade<'a, 'info> {
     pub system_program: &'a AccountInfo<'info>,
     pub graduated: bool,
     pub remaining: &'a [AccountInfo<'info>],
+    pub executor: Option<&'a AccountInfo<'info>>,
+    /// The executor's lamports when the current trade started.
+    pub executor_base: Cell<u64>,
     /// Rent the payer fronted for a transient WSOL account, owed back by `settle`.
     pub rent_owed: Cell<u64>,
     /// Lamports found on the pump authority or on its pre-existing WSOL account before trading,
@@ -107,10 +116,15 @@ pub struct VenueTrade<'a, 'info> {
 }
 
 impl<'a, 'info> VenueTrade<'a, 'info> {
+    /// The venue `user`: the executor when there is one, else the pump authority.
+    fn user(&self) -> &'a AccountInfo<'info> {
+        self.executor.unwrap_or(self.authority)
+    }
+
     fn trader(&self) -> Trader<'a, 'info> {
         Trader {
             mint: self.mint,
-            user: self.authority,
+            user: self.user(),
             user_tokens: self.user_tokens,
             system_program: self.system_program,
             token_program: self.token_program,
@@ -118,16 +132,49 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
         }
     }
 
+    /// Starts a trade: sweeps the authority (`absorb`) and notes the executor's lamports.
+    fn begin(&self) -> Result<()> {
+        self.absorb()?;
+        if let Some(e) = self.executor {
+            self.executor_base.set(e.lamports());
+        }
+        Ok(())
+    }
+
+    /// After a bonding-curve call: everything the venue `user` holds beyond its starting
+    /// balance goes back to the launch (the pump authority starts empty; the executor's own
+    /// balance stays with it). Fails if the venue took more than the launch gave it.
+    fn return_to_launch(&self) -> Result<()> {
+        let Some(e) = self.executor else {
+            self.sweep()?;
+            return Ok(());
+        };
+        let extra = e
+            .lamports()
+            .checked_sub(self.executor_base.get())
+            .ok_or(MoshError::ExecutorNotSettled)?;
+        if extra > 0 {
+            system_program::transfer(
+                CpiContext::new(
+                    self.system_program.clone(),
+                    system_program::Transfer { from: e.clone(), to: self.launch.clone() },
+                ),
+                extra,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Spends up to `sol_in` lamports of the launch's SOL on the venue. Returns (lamports
     /// spent, tokens received), both measured.
     pub fn buy(&self, sol_in: u64, min_tokens_out: u64) -> Result<(u64, u64)> {
-        self.absorb()?;
+        self.begin()?;
         let sol_before = self.launch.lamports();
         let rent_before = self.rent_owed.get();
         let donated_before = self.donated.get();
         let tokens_before = pump::token_amount(self.user_tokens)?;
+        pump::ensure_volume_accumulator(self.user(), self.payer, self.system_program, self.remaining, self.graduated)?;
         if self.graduated {
-            pump::ensure_pool_volume_accumulator(self.authority, self.payer, self.system_program, self.remaining)?;
             self.open_wsol()?;
             self.launch.sub_lamports(sol_in)?;
             let wsol = &self.remaining[pump::pool::USER_WSOL];
@@ -146,7 +193,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
             self.close_wsol()?;
         } else {
             self.launch.sub_lamports(sol_in)?;
-            self.authority.add_lamports(sol_in)?;
+            self.user().add_lamports(sol_in)?;
             pump::curve_trade(
                 &self.trader(),
                 self.remaining,
@@ -154,7 +201,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
                 true,
                 self.authority_seeds,
             )?;
-            self.sweep()?;
+            self.return_to_launch()?;
         }
         // Rent a closed WSOL account dropped on the launch is the payer's, not a fill; what the
         // account held before the trade is donated, not a fill.
@@ -187,10 +234,10 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
         Ok((spent, tokens))
     }
 
-    /// Sells `tokens_in` of the authority's tokens into the venue; the proceeds land on the
+    /// Sells `tokens_in` of the venue `user`'s tokens into the venue; the proceeds land on the
     /// launch. Returns (lamports received, tokens sold), both measured.
     pub fn sell(&self, tokens_in: u64, min_sol_out: u64) -> Result<(u64, u64)> {
-        self.absorb()?;
+        self.begin()?;
         let sol_before = self.launch.lamports();
         let rent_before = self.rent_owed.get();
         let donated_before = self.donated.get();
@@ -213,7 +260,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
                 false,
                 self.authority_seeds,
             )?;
-            self.sweep()?;
+            self.return_to_launch()?;
         }
         let received = self.launch.lamports()
             - sol_before
@@ -223,7 +270,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
         Ok((received, sold))
     }
 
-    /// Makes sure the authority's WSOL ATA exists for a PumpSwap trade. Existence is decided
+    /// Makes sure the venue `user`'s WSOL ATA exists for a PumpSwap trade. Existence is decided
     /// by the account being a token account, not by its balance (anyone can send lamports to
     /// the address); whatever the payer fronts for it is measured and owed back by `settle`.
     /// An account that already exists (anyone can create and fund it) is used as is: every
@@ -234,7 +281,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
         let wsol = &r[pump::pool::USER_WSOL];
         require_keys_eq!(
             wsol.key(),
-            get_associated_token_address(self.authority.key, &pump::WSOL_MINT),
+            get_associated_token_address(self.user().key, &pump::WSOL_MINT),
             MoshError::InvalidVenueAccount
         );
         if pump::is_token_account(wsol) {
@@ -252,7 +299,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
             associated_token::Create {
                 payer: self.payer.clone(),
                 associated_token: wsol.clone(),
-                authority: self.authority.clone(),
+                authority: self.user().clone(),
                 mint: r[pump::pool::WSOL_MINT].clone(),
                 system_program: self.system_program.clone(),
                 token_program: self.token_program.clone(),
@@ -263,7 +310,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
     }
 
     /// Unwraps the WSOL account into the launch (its rent included; the payer's share of it is
-    /// in `rent_owed`).
+    /// in `rent_owed`). The pump authority signs with its seeds, an executor as a real signer.
     fn close_wsol(&self) -> Result<()> {
         let wsol = &self.remaining[pump::pool::USER_WSOL];
         token::close_account(CpiContext::new_with_signer(
@@ -271,7 +318,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
             CloseAccount {
                 account: wsol.clone(),
                 destination: self.launch.clone(),
-                authority: self.authority.clone(),
+                authority: self.user().clone(),
             },
             &[self.authority_seeds],
         ))

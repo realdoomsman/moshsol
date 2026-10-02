@@ -21,7 +21,9 @@
     "migrate:launches": "pnpm --filter @holdfast/scripts run migrate",
     "typecheck": "pnpm -r typecheck",
     "vault:withdraw": "pnpm --filter @holdfast/scripts run vault-withdraw",
-    "vault:dev-withdraw": "pnpm --filter @holdfast/scripts run dev-withdraw"
+    "vault:dev-withdraw": "pnpm --filter @holdfast/scripts run dev-withdraw",
+    "agent-wallets": "pnpm --filter @holdfast/scripts run agent-wallets",
+    "fund-executors": "pnpm --filter @holdfast/scripts run fund-executors"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"

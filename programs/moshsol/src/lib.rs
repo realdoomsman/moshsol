@@ -46,6 +46,12 @@ pub mod moshsol {
         platform::set_dev_authority(ctx, dev_authority)
     }
 
+    /// Sets, replaces or (all `Pubkey::default()`) unsets the 15 agent wallets that execute
+    /// the vault agent's pump trades.
+    pub fn set_agent_executors(ctx: Context<AdminOnly>, executors: [Pubkey; 15]) -> Result<()> {
+        platform::set_agent_executors(ctx, executors)
+    }
+
     pub fn propose_admin(ctx: Context<AdminOnly>, new_admin: Pubkey) -> Result<()> {
         platform::propose_admin(ctx, new_admin)
     }

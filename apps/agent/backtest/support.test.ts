@@ -31,7 +31,8 @@ function dipped(dipPct: number): { chain: Chain; now: bigint } {
 // clip of the normal size and waits out the spacing, a busy one gets the full buy; both pass the program mirror.
 test("support mode clips and spaces dip buys on a quiet launch and steps aside on a busy one", () => {
   const { chain, now } = dipped(0.06);
-  const support = withParams(DEFAULT_PARAMS, { supportVolumeMult: 2, supportClipShare: 0.25, supportSpacingSecs: 300 });
+  // General clipping off so the support clip is compared with the unclipped buy.
+  const support = withParams(DEFAULT_PARAMS, { supportVolumeMult: 2, supportClipShare: 0.25, supportSpacingSecs: 300, buyClipShare: 1, sellClipShare: 1 });
   const vaultSol = Number(chain.vaultSol) / 1e9;
   const quiet: FlowFeatures = { ...NEUTRAL_FLOW, volume24hSol: vaultSol * 0.5, sinceAgentTradeSecs: 3_600 };
   const busy: FlowFeatures = { ...NEUTRAL_FLOW, volume24hSol: vaultSol * 10, sinceAgentTradeSecs: 3_600 };

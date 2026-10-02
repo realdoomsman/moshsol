@@ -13,7 +13,9 @@
     "record:demos": "tsx src/record-demos.ts",
     "typecheck": "tsc --noEmit",
     "vault-withdraw": "tsx src/vault-withdraw.ts",
-    "dev-withdraw": "tsx src/dev-withdraw.ts"
+    "dev-withdraw": "tsx src/dev-withdraw.ts",
+    "agent-wallets": "tsx src/agent-wallets.ts",
+    "fund-executors": "tsx src/fund-executors.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { ActivityLog, type ActivityItem, type ActivityLaunch } from "../src/activity";
+import { Metrics } from "../src/metrics";
 import { Narrator } from "../src/narrate";
 import { startStatusServer, type StatusSnapshot } from "../src/status";
 
@@ -184,7 +185,7 @@ test("status server serves activity by mint or address and the research snapshot
   const logbook = new ActivityLog({ file: ":memory:", narrator: null });
   logbook.record(LAUNCH, item(1, "sell", "above band", { lamports: "10" }));
   logbook.record(LAUNCH, item(2, "hold", "inside band"));
-  const status = { agent: "A", dryRun: true, startedAt: 0, lastTickAt: null, tick: 0, balanceSol: null, lookupTable: null, decisions: [], cranks: [] } satisfies StatusSnapshot;
+  const status = { agent: "A", dryRun: true, startedAt: 0, lastTickAt: null, tick: 0, balanceSol: null, lookupTable: null, decisions: [], cranks: [], stream: null, metrics: new Metrics().snapshot(), executors: [] } satisfies StatusSnapshot;
   const research = { items: [], updatedAt: null, running: false, nextAt: 42 };
   const server = await startStatusServer("127.0.0.1", 0, { status: () => status, activity: (key) => logbook.items(key), research: () => research });
   const addr = server.address();
