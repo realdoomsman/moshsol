@@ -11,9 +11,13 @@ import type { MarketState } from "./strategy";
  * live agent cannot.
  */
 
-/** Flow horizons (s): the latest minute, the short window the gates look at, the long baseline window, the day the support mode looks at. */
+/**
+ * Flow horizons (s): the latest minute, the short window the gates (and the short VWAP) look at, the window of the
+ * recent high the sell pause measures drawdowns from, the long baseline window, the day the support mode looks at.
+ */
 export const FLOW_RECENT_SECS = 60;
 export const FLOW_SHORT_SECS = 180;
+export const FLOW_HIGH_SECS = 900;
 export const FLOW_LONG_SECS = 1_800;
 export const FLOW_DAY_SECS = 86_400;
 /** Minute volumes needed before the long window's median is used as the volume baseline. */
@@ -31,6 +35,8 @@ export interface FlowSample {
   trades: number;
   /** Spot the interval's volume is attributed to (lamports per base unit): geometric mean of both ends. */
   price: number;
+  /** Spot at the end of the interval (lamports per base unit). */
+  close: number;
 }
 
 export interface FlowFeatures {
@@ -48,6 +54,15 @@ export interface FlowFeatures {
   volumeRatioRecent: number;
   /** Spot vs the long window's volume-weighted average price, bps (0 without volume). */
   vwapDevBps: number;
+  /** Spot vs the short window's (FLOW_SHORT_SECS) volume-weighted average price, bps (0 without volume). */
+  vwapShortDevBps: number;
+  /** Spot vs the highest spot seen over the last FLOW_HIGH_SECS (0 = at the high, 0.5 = halved). */
+  drawdownHigh: number;
+  /**
+   * Net public SOL into the curve since that high (buys − sells, the agent's own fills removed; 0 at the high). On a
+   * constant-product curve a price under its high with this negative means the public sold it down, not the agent.
+   */
+  netSinceHighSol: number;
   /** Seconds since the last on-chain trade of any side. */
   sinceTradeSecs: number;
   /** Seconds since the agent's own last fill as seen through the `agent_*` counters; Infinity before the window saw one. */
@@ -72,6 +87,9 @@ export const NEUTRAL_FLOW: FlowFeatures = {
   volumeRatio: 1,
   volumeRatioRecent: 1,
   vwapDevBps: 0,
+  vwapShortDevBps: 0,
+  drawdownHigh: 0,
+  netSinceHighSol: 0,
   sinceTradeSecs: 0,
   sinceAgentTradeSecs: Infinity,
   volume24hSol: 0,
@@ -185,7 +203,7 @@ export class FlowWindow {
     const volume = Math.max(0, gross, Math.abs(net));
     const trades = c.tradeCount - from.c.tradeCount - (c.agentBuys - from.c.agentBuys) - (c.agentSells - from.c.agentSells);
     if (c.agentBuys !== from.c.agentBuys || c.agentSells !== from.c.agentSells) this.agentTradeAt = t;
-    return { t, dt, volume, net, trades: Math.max(0, trades), price: Math.sqrt(from.price * price) };
+    return { t, dt, volume, net, trades: Math.max(0, trades), price: Math.sqrt(from.price * price), close: price };
   }
 
   private features(t: number, price: number, sinceTradeSecs: number): FlowFeatures {
@@ -206,6 +224,10 @@ export class FlowWindow {
     let nRecent = 0;
     let vLong = 0;
     let pvLong = 0;
+    let pvShort = 0;
+    // Highest close of the high window and the public net flow of the samples after it.
+    let recentHigh = 0;
+    let netSinceHigh = 0;
     const minutes = new Map<number, number>();
     for (const x of s) {
       const age = t - x.t;
@@ -215,8 +237,17 @@ export class FlowWindow {
       minutes.set(minute, (minutes.get(minute) ?? 0) + x.volume);
       if (age < FLOW_SHORT_SECS) {
         vShort += x.volume;
+        pvShort += x.volume * x.price;
         nShort += x.net;
         trShort += x.trades;
+      }
+      if (age < FLOW_HIGH_SECS) {
+        if (x.close >= recentHigh) {
+          recentHigh = x.close;
+          netSinceHigh = 0;
+        } else {
+          netSinceHigh += x.net;
+        }
       }
       if (age < FLOW_RECENT_SECS) {
         vRecent += x.volume;
@@ -240,6 +271,9 @@ export class FlowWindow {
       volumeRatio: ratio(vShort, FLOW_SHORT_SECS),
       volumeRatioRecent: ratio(vRecent, FLOW_RECENT_SECS),
       vwapDevBps: vLong > 0 ? (price / (pvLong / vLong) - 1) * 10_000 : 0,
+      vwapShortDevBps: vShort > 0 ? (price / (pvShort / vShort) - 1) * 10_000 : 0,
+      drawdownHigh: recentHigh > price ? 1 - price / recentHigh : 0,
+      netSinceHighSol: recentHigh > price ? netSinceHigh : 0,
       sinceTradeSecs,
       sinceAgentTradeSecs,
       volume24hSol,
@@ -261,6 +295,9 @@ export function displayFlow(f: FlowFeatures): FlowFeatures {
     volumeRatio: r(f.volumeRatio, 2),
     volumeRatioRecent: r(f.volumeRatioRecent, 2),
     vwapDevBps: r(f.vwapDevBps, 0),
+    vwapShortDevBps: r(f.vwapShortDevBps, 0),
+    drawdownHigh: r(f.drawdownHigh, 3),
+    netSinceHighSol: r(f.netSinceHighSol, 4),
     sinceTradeSecs: f.sinceTradeSecs,
     sinceAgentTradeSecs: f.sinceAgentTradeSecs,
     volume24hSol: r(f.volume24hSol, 4),

@@ -219,7 +219,9 @@ pub fn default_pump_args() -> CreateLaunchPumpArgs {
 }
 
 impl Env {
-    /// Loads pump.fun, PumpSwap, the fee program, Metaplex token metadata and their config
+    /// Loads pump.fun, PumpSwap, the fee program, Metaplex token metadata, SPL Token and the
+    /// associated token account program as deployed on mainnet (SPL Token is p-token there,
+    /// which fails instructions litesvm's built-in spl-token 3.5 lets through) and their config
     /// accounts from the fixtures, funds the fee recipients (a system account can't receive a
     /// rent-paying balance) and sets the WSOL token accounts PumpSwap's protocol fee needs.
     pub fn with_pump(&mut self) {
@@ -228,6 +230,8 @@ impl Env {
             ("pump_amm", PUMP_AMM_PROGRAM_ID),
             ("pump_fee", PUMP_FEE_PROGRAM_ID),
             ("mpl_token_metadata", MPL_TOKEN_METADATA_ID),
+            ("spl_token", TOKEN_ID),
+            ("spl_associated_token_account", ATA_ID),
         ] {
             self.svm
                 .add_program_from_file(id, format!("{FIXTURES}/{name}.so"))

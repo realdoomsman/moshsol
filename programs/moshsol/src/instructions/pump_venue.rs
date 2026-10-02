@@ -5,11 +5,9 @@
 use std::cell::Cell;
 
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::instruction::AccountMeta;
-use anchor_lang::solana_program::program::invoke;
 use anchor_lang::system_program;
 use anchor_spl::associated_token::{self, get_associated_token_address};
-use anchor_spl::token::{self, spl_token, CloseAccount};
+use anchor_spl::token::{self, CloseAccount};
 
 use super::pay_out;
 use crate::errors::MoshError;
@@ -166,14 +164,20 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
         pump::ensure_volume_accumulator(self.user(), self.payer, self.system_program, self.remaining, self.graduated)?;
         if self.graduated {
             self.open_wsol()?;
-            self.launch.sub_lamports(sol_in)?;
+            // The SOL reaches the WSOL account from the venue `user` by a plain transfer and is
+            // wrapped by a `sync_native` carrying that account alone: SPL Token (p-token on
+            // mainnet) fails an instruction given any account it doesn't take.
+            self.fund(sol_in)?;
             let wsol = &self.remaining[pump::pool::USER_WSOL];
-            wsol.add_lamports(sol_in)?;
-            // The launch rides along so the runtime sees both sides of the move before the
-            // venue call (see `fund`; the token program ignores the extra account).
-            let mut sync = spl_token::instruction::sync_native(self.token_program.key, wsol.key)?;
-            sync.accounts.push(AccountMeta::new(self.launch.key(), false));
-            invoke(&sync, &[wsol.clone(), self.launch.clone()])?;
+            system_program::transfer(
+                CpiContext::new_with_signer(
+                    self.system_program.clone(),
+                    system_program::Transfer { from: self.user().clone(), to: wsol.clone() },
+                    &[self.authority_seeds],
+                ),
+                sol_in,
+            )?;
+            token::sync_native(CpiContext::new(self.token_program.clone(), token::SyncNative { account: wsol.clone() }))?;
             pump::pool_trade(
                 &self.trader(),
                 self.remaining,

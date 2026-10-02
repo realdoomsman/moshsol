@@ -16,9 +16,13 @@ function randomParams(r: Rng): StrategyParams {
 }
 
 const gauss = (r: Rng) => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
-const randomSizing = (r: Rng): Sizing => ({ minTradeLamports: BigInt(Math.floor(10 ** (5 + r() * 3))), slippageBps: Math.floor(r() * 300) });
+const randomSizing = (r: Rng): Sizing => ({
+  minTradeLamports: BigInt(Math.floor(10 ** (5 + r() * 3))),
+  minSellLamports: BigInt(Math.floor(10 ** (5 + r() * 3))),
+  slippageBps: Math.floor(r() * 300),
+});
 
-/** Flow features across their whole range (gates, margin cuts and the early-cap relief all fire somewhere). */
+/** Flow features across their whole range (gates, margin cuts and the sell pause all fire somewhere, and stay quiet often enough). */
 function randomFlow(r: Rng): FlowFeatures {
   if (r() < 0.2) return NEUTRAL_FLOW;
   const volumeSol = 10 ** (r() * 3 - 2);
@@ -32,6 +36,9 @@ function randomFlow(r: Rng): FlowFeatures {
     volumeRatio: 10 ** (r() * 2 - 1),
     volumeRatioRecent: 10 ** (r() * 2 - 1),
     vwapDevBps: 3_000 * (r() - 0.5),
+    vwapShortDevBps: 3_000 * (r() - 0.3),
+    drawdownHigh: r() < 0.5 ? 0 : r() * 0.9,
+    netSinceHighSol: volumeSol * (2 * r() - 1),
     sinceTradeSecs: Math.floor(r() * 600),
     sinceAgentTradeSecs: r() < 0.3 ? Infinity : Math.floor(r() * 3_600),
     volume24hSol: 10 ** (r() * 4 - 1),
@@ -116,10 +123,10 @@ function walks(terms: SimTerms): void {
 /** Lamports for about `sol` SOL. */
 const lam = (sol: number) => BigInt(Math.floor(sol * 1e9));
 
-// Arbitrary (not necessarily reachable) states right at the program's thresholds: vault cost,
-// average agent sell price and EMA each within a few % of spot, windows part-used or expired,
-// empty vault sides, small curves where the impact limit and `realSol` bind. On the pump venue the
-// token reserve stays above the curve's virtual offset (what pump.fun can still sell).
+// Arbitrary (not necessarily reachable) states right at the program's thresholds: vault cost (40% of the time within a
+// few % of spot, else spot at 1–20× it, where the sell ladder lets rallies sell), average agent sell price and EMA each
+// within a few % of spot, windows part-used or expired, empty vault sides, small curves where the impact limit and
+// `realSol` bind. On the pump venue the token reserve stays above the curve's virtual offset (what pump.fun can still sell).
 for (const terms of [PRODUCTION_TERMS, PUMP_TERMS]) {
   test(`policy never plans a trade the program rejects on arbitrary ${terms.venue} states`, () => arbitraryStates(terms));
 }
@@ -146,7 +153,7 @@ function arbitraryStates(t: SimTerms): void {
       tokenReserve,
       vaultSol,
       vaultTokens,
-      vaultCostSol: BigInt(Math.floor(Number(vaultTokens) * spot * Math.exp(0.04 * gauss(r)))),
+      vaultCostSol: BigInt(Math.floor(Number(vaultTokens) * spot * (r() < 0.4 ? Math.exp(0.04 * gauss(r)) : 10 ** (-1.3 * r())))),
       agentTokensSold: sold,
       agentSolReceived: received,
       windowStart: now - BigInt(Math.floor(r() * 2 * Number(t.windowSecs))),

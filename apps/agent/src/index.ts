@@ -43,6 +43,7 @@ log("started", {
   sender: cfg.sender ? { url: new URL(cfg.sender.url).origin, tipLamports: cfg.sender.tipLamports } : "off",
   cooldownMs: cfg.cooldownMs,
   minTradeLamports: cfg.minTradeLamports,
+  minSellLamports: cfg.minSellLamports,
   strategy: cfg.strategy,
   slippageBps: cfg.slippageBps,
   priorityFee: cfg.priorityFee,

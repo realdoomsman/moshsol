@@ -31,6 +31,8 @@ export interface SimOptions {
   cooldownMs: number;
   maxBackoffMs: number;
   sizing: Sizing;
+  /** Keep every landed agent fill in `AgentStats.fills` (replay tests; off in the backtest to keep results small). */
+  recordFills?: boolean;
 }
 
 /** apps/agent defaults, with the production poll interval (Railway `POLL_MS=10000`). */
@@ -42,7 +44,7 @@ export const DEFAULT_SIM: SimOptions = {
   confirmMs: 600,
   cooldownMs: 15_000,
   maxBackoffMs: 300_000,
-  sizing: { minTradeLamports: 10_000_000n, slippageBps: 100 },
+  sizing: { minTradeLamports: 10_000_000n, minSellLamports: 50_000_000n, slippageBps: 100 },
 };
 
 export type Rng = () => number;
@@ -236,6 +238,19 @@ export interface AgentStats {
   /** Sent trades that failed on landing (state or slot changed in flight). */
   landedRejects: Partial<Record<ProgramError, number>>;
   holds: Record<string, number>;
+  /** Landed fills, with `SimOptions.recordFills` only. */
+  fills?: SimFill[];
+}
+
+export interface SimFill {
+  /** Sim time (ms) the fill landed. */
+  t: number;
+  action: "buy" | "sell";
+  /** SOL spent (buy) or received (sell). */
+  sol: number;
+  /** Spot right before the fill, lamports per base unit. */
+  spot: number;
+  reason: string;
 }
 
 export interface RunResult {
@@ -299,6 +314,7 @@ class SimAgent {
     private readonly rng: Rng,
   ) {
     this.at = Math.floor(rng() * opt.pollMs);
+    if (opt.recordFills) this.stats.fills = [];
   }
 
   private decide(market: Market): Plan {
@@ -356,12 +372,15 @@ class SimAgent {
     }
     const plan = this.plan as Extract<Plan, { action: "buy" | "sell" }>;
     const c = market.chain;
+    const spot = market.spot();
     const res =
       plan.action === "buy"
         ? agentBuy(c, plan.amount, plan.minOut, market.now(), market.slot())
         : agentSell(c, plan.amount, plan.minOut, market.now(), market.slot());
     const confirmed = this.at + this.opt.confirmMs;
     if (res.ok) {
+      const sol = Number(plan.action === "buy" ? plan.amount : res.out) / 1e9;
+      s.fills?.push({ t: this.at, action: plan.action, sol, spot, reason: plan.reason });
       this.failures = 0;
       this.nextTradeAt = confirmed + this.opt.cooldownMs;
       if (plan.action === "buy") {

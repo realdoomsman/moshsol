@@ -116,8 +116,7 @@ export function VaultCard({
   const vsCost = zones.avgCost > 0 ? (l.priceSol / zones.avgCost - 1) * 100 : null;
   const rolled = now >= l.windowStart + l.terms.agentWindowSecs;
   const left = windowBudgets(l, now);
-  const buyCap = rolled ? left.buySol : BigInt(l.windowBuyCap);
-  const sellCap = rolled ? left.sellTokens : BigInt(l.windowSellCap);
+  const { buyCap, sellCap } = left;
   const buyUsed = rolled ? 0n : BigInt(l.windowSolSpent);
   const sold = rolled ? 0n : BigInt(l.windowTokensSold);
   const windowSecs = l.terms.agentWindowSecs;

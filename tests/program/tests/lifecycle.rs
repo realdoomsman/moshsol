@@ -437,12 +437,20 @@ fn agent_sells_rallies_above_cost_then_buys_back_below_avg_sell() {
     let floor = l.terms.min_vault_sol;
     assert_eq!(floor, DEFAULT_MIN_VAULT_SOL);
     assert_err(env.agent_buy(&mint, l.vault_sol - floor + 1, 0), MoshError::VaultFloor);
-    assert_err(env.agent_buy(&mint, l.window_buy_cap + 1, 0), MoshError::AgentWindowLimit);
-    // In clips under the impact cap until the window cap is used up.
-    let spend = l.window_buy_cap;
+    // The two rally sells of this window brought SOL in, and the window's buy cap grew with the
+    // vault: the proceeds can buy this dip now, not only from the next window.
+    assert_eq!(l.window_sol_spent, 0);
+    let limit = math::bps(l.vault_sol, l.terms.agent_buy_bps_per_window).unwrap();
+    assert!(limit > l.window_buy_cap, "the cap snapshotted at launch is outgrown");
+    assert_eq!(l.window_buy_limit().unwrap(), limit);
+    assert_err(env.agent_buy(&mint, limit + 1, 0), MoshError::AgentWindowLimit);
+    // In clips under the impact cap until the window cap is used up: each buy moves SOL from the
+    // vault to the window's spend and leaves the cap where it is.
+    let spend = limit;
     for i in 0..4 {
         let clip = if i == 3 { spend - 3 * (spend / 4) } else { spend / 4 };
         ok(env.agent_buy(&mint, clip, 1));
+        assert_eq!(env.launch(&mint).window_buy_limit().unwrap(), limit);
     }
     let l3 = env.launch(&mint);
     assert_eq!(l3.vault_sol, l.vault_sol - spend);

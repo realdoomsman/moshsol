@@ -175,6 +175,7 @@ export class Agent {
   ) {
     this.sizing = {
       minTradeLamports: cfg.minTradeLamports,
+      minSellLamports: cfg.minSellLamports,
       slippageBps: cfg.slippageBps,
     };
     this.strategy = cfg.strategy;

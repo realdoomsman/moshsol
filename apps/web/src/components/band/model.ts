@@ -3,7 +3,7 @@
  * page and the docs. Everything is derived from indexer rows and the launch's frozen `terms` with
  * the SDK's curve maths (`spotPrice`, `bps`) — no typed limits.
  */
-import { bps, compact, fmtSol, lamportsToSol, spotPrice, tokensToUi, type CurveState, type LaunchJson } from "@holdfast/sdk";
+import { bps, compact, fmtSol, lamportsToSol, spotPrice, tokensToUi, windowBuyCap, type CurveState, type LaunchJson } from "@holdfast/sdk";
 import type { AgentDecision, LaunchSummary, TradeRow } from "@/lib/types";
 
 /** "2%" / "0.5%" from basis points. */
@@ -132,23 +132,26 @@ export const decisionDeviation = (d: Pick<AgentDecision, "priceSol" | "emaSol">)
 // ---------------------------------------------------------------------------------------------
 // Window budgets
 
-/** Window budgets as the program will see them now (`roll_window`). */
-export function windowBudgets(l: LaunchJson, nowSec: number): { buySol: bigint; sellTokens: bigint; resetsAt: number } {
+/**
+ * Window budgets as the program will see them now: `roll_window`, then the buy cap growing with the vault's SOL
+ * (`windowBuyCap`). Caps and what is left of them; a rolled window shows the caps the next agent trade opens with.
+ */
+export function windowBudgets(
+  l: LaunchJson,
+  nowSec: number,
+): { buyCap: bigint; buySol: bigint; sellCap: bigint; sellTokens: bigint; resetsAt: number } {
   const t = l.terms;
-  if (nowSec >= l.windowStart + t.agentWindowSecs) {
-    return {
-      buySol: bps(BigInt(l.vaultSol), t.agentBuyBpsPerWindow),
-      sellTokens: bps(BigInt(l.vaultTokens), t.agentSellBpsPerWindow),
-      resetsAt: nowSec + t.agentWindowSecs,
-    };
-  }
-  const buyCap = BigInt(l.windowBuyCap);
-  const spent = BigInt(l.windowSolSpent);
-  const sellCap = BigInt(l.windowSellCap);
-  const sold = BigInt(l.windowTokensSold);
+  const rolled = nowSec >= l.windowStart + t.agentWindowSecs;
+  const vaultSol = BigInt(l.vaultSol);
+  const spent = rolled ? 0n : BigInt(l.windowSolSpent);
+  const sold = rolled ? 0n : BigInt(l.windowTokensSold);
+  const buyCap = windowBuyCap(rolled ? bps(vaultSol, t.agentBuyBpsPerWindow) : BigInt(l.windowBuyCap), vaultSol, spent, t.agentBuyBpsPerWindow);
+  const sellCap = rolled ? bps(BigInt(l.vaultTokens), t.agentSellBpsPerWindow) : BigInt(l.windowSellCap);
   return {
+    buyCap,
     buySol: buyCap > spent ? buyCap - spent : 0n,
+    sellCap,
     sellTokens: sellCap > sold ? sellCap - sold : 0n,
-    resetsAt: l.windowStart + t.agentWindowSecs,
+    resetsAt: rolled ? nowSec + t.agentWindowSecs : l.windowStart + t.agentWindowSecs,
   };
 }

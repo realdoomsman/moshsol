@@ -3,7 +3,7 @@ import { PublicKey } from "@solana/web3.js";
 import { IMAGE_TYPES, MAX_IMAGE_BYTES, type TokenImage } from "./image";
 
 /** A vault needs SOL from launch to buy back the first dips (launches with 0% start with only rounding dust). */
-export const MIN_RESERVE_PCT = 15;
+export const MIN_RESERVE_PCT = 20;
 
 export const MAX_DESCRIPTION = 500;
 /** `POST /api/upload` accepts at most this many whitelist entries. */

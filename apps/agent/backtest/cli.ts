@@ -8,22 +8,22 @@
  *   pnpm --filter @holdfast/agent backtest robust       TEST split under other timing / fair-value / candle-volume assumptions
  *   pnpm --filter @holdfast/agent backtest flow         current (pre-flow) policy vs --params and vs --params with the flow knobs off
  *                                                       on TRAIN, TEST and walk-forward TEST (value, worst 10%, drawdown, rug SOL lost per
- *                                                       flow model), then the sell guardrail's base allowance at --sweep levels (SOL per window)
+ *                                                       flow model)
  *   pnpm --filter @holdfast/agent backtest terms        search the launch terms (policy fixed) on TRAIN and walk-forward,
  *                                                       Pareto view + picks out of sample, then a reserve-share sweep
- *   pnpm --filter @holdfast/agent backtest support      vault model without profit share: the previous policy vs the low-volume
- *                                                       support mode (tuned on walk-forward TRAIN) and vs support + sell ramp retuned,
- *                                                       on TRAIN, TEST and walk-forward TEST
- *   pnpm --filter @holdfast/agent backtest speed        the event-driven agent (1 s reaction): tune clip granularity, margins, base
- *                                                       sell allowance and the per-launch cooldown on walk-forward TRAIN, read out
- *                                                       candidates on walk-forward TEST and TEST (objective, worst 10% vs v1,
+ *   pnpm --filter @holdfast/agent backtest support      vault model without profit share: --params with the support mode off vs the
+ *                                                       low-volume support mode (tuned on walk-forward TRAIN), on TRAIN, TEST and
+ *                                                       walk-forward TEST
+ *   pnpm --filter @holdfast/agent backtest speed        the event-driven agent (1 s reaction): tune buy clip granularity, margins, the
+ *                                                       sell ladder's 10× share and the per-launch cooldown on walk-forward TRAIN, read
+ *                                                       out candidates on walk-forward TEST and TEST (objective, worst 10% vs v1,
  *                                                       fills/h, agent share of volume), pick the most active one that passes
  *
  * Flags: --params <JSON object or file> (policy to evaluate/ablate/start from; default DEFAULT_PARAMS),
  * --random <n> (200) and --gens <n> (25) for training and the terms search, --freeze <feature,…> (train with
  * those features switched off, see FEATURES), --terms <JSON object or file> (terms search baseline; default
  * PRODUCTION_TERMS), --rug-budget <pp> (10: extra rug SOL loss a pick may add, pp of the starting vault SOL),
- * --reserves <bps,…> (reserve sweep), --sweep <sol,…> (guardrail base allowance sweep; 0.25,0.5,1,2,3),
+ * --reserves <bps,…> (reserve sweep),
  * --tuned <file> (speed: read a previous search result, results/speed-tuned.json, instead of searching),
  * --cooldowns <s,…> (speed: fallback spacing sweep; 5,8,10,15,20,30), --workers <n> (CPUs − 2), --venue <holdfast|pump>
  * (every scenario launches on the Holdfast curve, PRODUCTION_TERMS, by default; `pump` launches them on pump.fun with
@@ -79,18 +79,17 @@ import {
 /** Policy features that can be switched off (for ablation, and frozen out of training with `--freeze`). */
 const FEATURES: Record<string, { off: Partial<StrategyParams>; keys: ParamKey[] }> = {
   margins: { off: { buyMarginBps: 25, sellMarginBps: 25 }, keys: ["buyMarginBps", "sellMarginBps"] },
-  floor: { off: { holdSlope: PARAM_SPACE.holdSlope.hi }, keys: ["holdSlope"] },
+  ladder: { off: { ladderStartMult: 1, ladderShare10x: 1, ladderShape: PARAM_SPACE.ladderShape.lo }, keys: ["ladderStartMult", "ladderShare10x", "ladderShape"] },
+  sellpause: { off: { sellPauseDrawdown: 1 }, keys: ["sellPauseDrawdown"] },
   sellflow: { off: { sellFlowBps: 0 }, keys: ["sellFlowBps"] },
   thin: { off: { sellThinRatio: 0 }, keys: ["sellThinRatio"] },
   dump: { off: { buyDumpShare: 1 }, keys: ["buyDumpShare"] },
   climax: { off: { buyClimaxBps: 0 }, keys: ["buyClimaxBps"] },
   vwap: { off: { vwapEntryBps: 0 }, keys: ["vwapEntryBps"] },
-  guardrail: { off: { fullMcapMult: 1, fullVolumeSol: 1 }, keys: ["baseSellSol", "fullMcapMult", "fullVolumeSol", "rampShape"] },
-  strong: { off: { strongFlowMult: 1 }, keys: ["strongVolumeRatio", "strongFlowMult"] },
   support: { off: { supportVolumeMult: 0 }, keys: ["supportVolumeMult", "supportClipShare", "supportSpacingSecs"] },
 };
 
-/** The features that read the flow window (the sell guardrail's `strong` multiplier is part of the guardrail). */
+/** The features that read the flow window. */
 const FLOW_FEATURES = ["sellflow", "thin", "dump", "climax", "vwap"];
 
 /** `p` with the named features switched off. */
@@ -111,22 +110,8 @@ function frozenFlag(): string[] {
   return names;
 }
 
-/** The policy shipped before the flow features and the sell guardrail: 25 bps margins, no inventory floor, nothing else. */
+/** The policy shipped before the flow features, the sell ladder and the support mode: 25 bps margins, nothing else. */
 const CURRENT: StrategyParams = without(DEFAULT_PARAMS, Object.keys(FEATURES));
-
-/**
- * The policy shipped under the profit-share model (`backtest flow`): v1's entry, the 1 SOL guardrail with the
- * trained ramp, no support mode. Reference of the `support` command.
- */
-const PREVIOUS: StrategyParams = {
-  ...CURRENT,
-  baseSellSol: 1,
-  fullMcapMult: 17.6,
-  fullVolumeSol: 1387,
-  rampShape: 2.15,
-  strongVolumeRatio: 1.39,
-  strongFlowMult: 6.63,
-};
 
 const RESULTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "results");
 
@@ -276,8 +261,8 @@ const EVENT_SIM = { pollMs: 1_000, rereadMs: 150 } satisfies Partial<SimOptions>
 /** Per-launch spacing between agent trades (`COOLDOWN_MS`, s) the speed search picks from. */
 const COOLDOWN_GRID = [0, 1, 2, 3, 5, 8, 10, 15, 20, 30];
 
-/** Policy knobs the speed search tunes: clip granularity, entry margins and the sell guardrail's base allowance. */
-const SPEED_KEYS: ParamKey[] = ["buyClipShare", "sellClipShare", "clipSpacingSecs", "buyMarginBps", "sellMarginBps", "baseSellSol"];
+/** Policy knobs the speed search tunes: buy clip granularity, entry margins and the sell ladder's 10× share. */
+const SPEED_KEYS: ParamKey[] = ["buyClipShare", "clipSpacingSecs", "buyMarginBps", "sellMarginBps", "ladderShare10x"];
 
 /** Objective at least this on both held-out splits (the policy's as-trained level at 10 s polls / 15 s cooldown). */
 const SPEED_GATE = 0.39;
@@ -337,7 +322,7 @@ async function speedCommand(pool: SimPool, entries: PoolEntry[], testSpecs: Scen
     };
     const seeds: Timed[] = [
       start,
-      { ...start, buyClipShare: 0.25, sellClipShare: 0.25 },
+      { ...start, buyClipShare: 0.25 },
       { ...start, cooldown: COOLDOWN_GRID.indexOf(15) },
     ];
     const { best, random, cma } = await search(space, seeds, fitness, "speed (walk-forward TRAIN)");
@@ -407,11 +392,11 @@ async function speedCommand(pool: SimPool, entries: PoolEntry[], testSpecs: Scen
   await read("as trained: --params at 10 s polls, 15 s cooldown", { params });
   const named: [string, StrategyParams][] = [
     ["--params", params],
-    ["clips ≤ 50%", withParams(params, { buyClipShare: 0.5, sellClipShare: 0.5 })],
-    ["clips ≤ 25%", withParams(params, { buyClipShare: 0.25, sellClipShare: 0.25 })],
-    ["clips ≤ 10%", withParams(params, { buyClipShare: 0.1, sellClipShare: 0.1 })],
-    ["clips ≤ 25%, ≥ 15 s apart", withParams(params, { buyClipShare: 0.25, sellClipShare: 0.25, clipSpacingSecs: 15 })],
-    ["clips ≤ 25%, ≥ 60 s apart", withParams(params, { buyClipShare: 0.25, sellClipShare: 0.25, clipSpacingSecs: 60 })],
+    ["buy clips ≤ 50%", withParams(params, { buyClipShare: 0.5 })],
+    ["buy clips ≤ 25%", withParams(params, { buyClipShare: 0.25 })],
+    ["buy clips ≤ 10%", withParams(params, { buyClipShare: 0.1 })],
+    ["buy clips ≤ 25%, ≥ 15 s apart", withParams(params, { buyClipShare: 0.25, clipSpacingSecs: 15 })],
+    ["buy clips ≤ 25%, ≥ 60 s apart", withParams(params, { buyClipShare: 0.25, clipSpacingSecs: 60 })],
   ];
   const candidates: Row[] = [];
   for (const [name, p] of named) candidates.push(await read(name, { params: p, cooldownMs: 3_000 }));
@@ -553,7 +538,7 @@ async function main(): Promise<void> {
   const cmd = process.argv[2];
   if (!cmd || !["eval", "train", "walkforward", "ablate", "robust", "flow", "terms", "support", "speed"].includes(cmd)) {
     throw new Error(
-      "usage: backtest <eval|train|walkforward|ablate|robust|flow|terms|support|speed> [--params <json|file>] [--terms <json|file>] [--random n] [--gens n] [--freeze f,…] [--rug-budget pp] [--reserves bps,…] [--sweep sol,…] [--tuned file] [--cooldowns s,…] [--workers n]",
+      "usage: backtest <eval|train|walkforward|ablate|robust|flow|terms|support|speed> [--params <json|file>] [--terms <json|file>] [--random n] [--gens n] [--freeze f,…] [--rug-budget pp] [--reserves bps,…] [--tuned file] [--cooldowns s,…] [--workers n]",
     );
   }
   const entries = loadIndex();
@@ -591,8 +576,9 @@ async function main(): Promise<void> {
       // Tuning happens on walk-forward TRAIN (every pool's first 24 h) only; TRAIN/TEST/walk-forward TEST are read-outs.
       // `--compare name=file.json,…` skips the tuning and reads out the named policies against the previous one.
       const { wfTrain, wfTest } = walkForwardSpecs(entries);
-      say(`\nprevious policy (profit-share era defaults):\n\n\`\`\`json\n${fmtParams(PREVIOUS)}\n\`\`\``);
-      const named: [string, StrategyParams][] = [["previous", PREVIOUS]];
+      const previous = without(params, ["support"]);
+      say(`\nreference: --params with the support mode off:\n\n\`\`\`json\n${fmtParams(previous)}\n\`\`\``);
+      const named: [string, StrategyParams][] = [["support off", previous]];
       const compareFlag = flag("compare");
       if (compareFlag) {
         for (const entry of compareFlag.split(",")) {
@@ -604,10 +590,7 @@ async function main(): Promise<void> {
         }
       } else {
         const allButSupport = Object.keys(FEATURES).filter((f) => f !== "support");
-        const allButSells = allButSupport.filter((f) => f !== "guardrail" && f !== "strong");
-        const supportOnly = await tune(ev, wfTrain, { ...PREVIOUS, ...params }, "support knobs (walk-forward TRAIN)", allButSupport, true);
-        const supportRamp = await tune(ev, wfTrain, supportOnly, "support + sell ramp (walk-forward TRAIN)", allButSells, true);
-        named.push(["support", supportOnly], ["support + ramp", supportRamp]);
+        named.push(["support", await tune(ev, wfTrain, params, "support knobs (walk-forward TRAIN)", allButSupport, true)]);
       }
       const splits: [string, ScenarioSpec[]][] = [
         ["WALK-FORWARD TRAIN (hours 0–24, in-sample)", wfTrain],
@@ -626,7 +609,7 @@ async function main(): Promise<void> {
         ["TEST", testSpecs],
         ["WALK-FORWARD TEST (hours 24–72)", wfTest],
       ];
-      // "flow off" keeps the tuned margins, floor and guardrail: the flow knobs' own contribution.
+      // "flow off" keeps the tuned margins, ladder and pause: the flow knobs' own contribution.
       const compared: Record<string, unknown> = {};
       for (const [label, specs] of splits) {
         compared[label] = await compareCurrent(ev, label, specs, [
@@ -634,21 +617,7 @@ async function main(): Promise<void> {
           ["tuned, flow off", without(params, FLOW_FEATURES)],
         ]);
       }
-      // The owner's guardrail at several base levels (the ramp knobs stay as tuned).
-      const sweepLevels = (flag("sweep") ?? "0.25,0.5,1,2,3").split(",").map((s) => {
-        const n = Number(s.trim());
-        if (!(n > 0)) throw new Error(`--sweep: levels must be positive SOL amounts, got "${s}"`);
-        return n;
-      });
-      say(`\n## Sell guardrail: cost / benefit of the base allowance (SOL per window near the launch price; ramp as tuned)\n`);
-      const levels: [string, StrategyParams][] = [
-        ["no guardrail", without(params, ["guardrail"])],
-        ...sweepLevels.map((sol): [string, StrategyParams] => [`${sol} SOL / window`, withParams(params, { baseSellSol: sol })]),
-        ["tuned", params],
-      ];
-      const sweep: Record<string, unknown> = {};
-      for (const [label, specs] of splits) sweep[label] = await compareCurrent(ev, `guardrail — ${label}`, specs, levels);
-      save("flow", { params, compared, sweep });
+      save("flow", { params, compared });
     } else if (cmd === "speed") {
       await speedCommand(pool, entries, testSpecs, params);
     } else if (cmd === "robust") {

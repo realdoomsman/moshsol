@@ -918,6 +918,16 @@ impl Launch {
         Ok(())
     }
 
+    /// The agent's buy cap in the current window: the cap `roll_window` snapshotted, raised to
+    /// `buy_bps` of the vault's SOL plus what the window already spent. SOL the agent's sells
+    /// bring in can buy the next dip in the same window; its own buys move SOL from `vault_sol`
+    /// to `window_sol_spent` and leave the cap unchanged, so a window never spends more than
+    /// `buy_bps` of the vault's SOL counting what it spent.
+    pub fn window_buy_limit(&self) -> Result<u64> {
+        let base = self.vault_sol.checked_add(self.window_sol_spent).ok_or(MoshError::MathOverflow)?;
+        Ok(self.window_buy_cap.max(math::bps(base, self.terms.agent_buy_bps_per_window)?))
+    }
+
     /// Average vault cost as (sol, tokens). Falls back to the bundle's entry if the vault is empty.
     pub fn cost_basis(&self) -> (u64, u64) {
         if self.vault_tokens > 0 {

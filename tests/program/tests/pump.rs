@@ -183,7 +183,7 @@ fn pump_agent_rules_and_vault_keeps_proceeds() {
     let l = env.launch_at(&launch);
     let dip = curve_price_q64(&env.curve(&mint));
     assert!(dip < l.ema_price * 98 / 100);
-    assert_err(env.agent_buy_pump(&launch, l.window_buy_cap + 1, 0), MoshError::AgentWindowLimit);
+    assert_err(env.agent_buy_pump(&launch, l.window_buy_limit().unwrap() - l.window_sol_spent + 1, 0), MoshError::AgentWindowLimit);
     assert_err(env.agent_buy_pump(&launch, l.vault_sol - l.terms.min_vault_sol + 1, 0), MoshError::VaultFloor);
     let spend = l.window_buy_cap / 4;
     let meta = ok(env.agent_buy_pump(&launch, spend, 0));
@@ -1083,7 +1083,7 @@ fn agent_trades_through_registered_wallets_on_the_curve() {
     let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &mint));
     ok(env.pump_public_sell(&whale, &mint, whale_tokens));
     let l = env.launch_at(&launch);
-    assert_err(env.agent_buy_pump_via(&w2, &launch, l.window_buy_cap + 1, 0), MoshError::AgentWindowLimit);
+    assert_err(env.agent_buy_pump_via(&w2, &launch, l.window_buy_limit().unwrap() - l.window_sol_spent + 1, 0), MoshError::AgentWindowLimit);
     assert_err(env.agent_buy_pump_via(&w2, &launch, l.vault_sol - l.terms.min_vault_sol + 1, 0), MoshError::VaultFloor);
     // Someone creates w2's token account and parks tokens on it: used as found, left as found.
     let parked = 1_000;
@@ -1152,7 +1152,7 @@ fn agent_trades_through_registered_wallets_on_pumpswap() {
     ok(env.amm_public_sell(&whale, &mint, whale_tokens));
     let l2 = env.launch_at(&launch);
     let w = wallets[9].insecure_clone();
-    assert_err(env.agent_buy_pump_via(&w, &launch, l2.window_buy_cap + 1, 0), MoshError::AgentWindowLimit);
+    assert_err(env.agent_buy_pump_via(&w, &launch, l2.window_buy_limit().unwrap() - l2.window_sol_spent + 1, 0), MoshError::AgentWindowLimit);
     let spend = l2.window_buy_cap / 2;
     let w_before = env.lamports(&w.pubkey());
     let meta = ok(env.agent_buy_pump_via(&w, &launch, spend, 0));
@@ -1164,6 +1164,107 @@ fn agent_trades_through_registered_wallets_on_pumpswap() {
     let t = trades(&meta);
     assert_eq!((t[0].trader, t[0].is_buy, t[0].token_amount), (w.pubkey(), true, l3.vault_tokens - l2.vault_tokens));
     env.assert_pump_invariants(&launch);
+}
+
+/// The live TEST launch on mainnet as dumped on 2026-10-02 at slot 452,750,639, graduated to
+/// PumpSwap (`fixtures/mainnet-test-launch`: platform, launch, mint, vault, pool and its token
+/// accounts, the coin creator vault and the fee recipients the SDK picked for the failing buy),
+/// with the agent authority and agent wallet #1 swapped for test keys. Every agent wallet buy
+/// there failed with `InvalidArgument`: wrapping the vault's SOL handed SPL Token's `sync_native`
+/// the launch as an extra account, which mainnet's SPL Token (p-token) refuses. Its window buy
+/// cap was 0.0175 SOL, snapshotted before sells brought the vault to 2.2 SOL.
+#[test]
+fn agent_wallet_buys_a_dip_on_the_mainnet_test_pool() {
+    use anchor_lang::{AccountDeserialize, AccountSerialize};
+    let launch: Pubkey = solana_sdk::pubkey!("EGy86QhJtC58hPzCxR9gY4rqNoGFzkNj8M42sQqcuvqR");
+    let protocol_fee_recipient: Pubkey = solana_sdk::pubkey!("7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX");
+    let buyback_fee_recipient: Pubkey = solana_sdk::pubkey!("3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR");
+    let mut env = pump_env();
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/mainnet-test-launch");
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        let (k, a) = fixture_account(&format!("mainnet-test-launch/{}", name.trim_end_matches(".json")));
+        env.svm.set_account(k, a).unwrap();
+    }
+    let mut clock = env.svm.get_sysvar::<solana_sdk::clock::Clock>();
+    clock.slot = 452_750_649;
+    clock.unix_timestamp = 1_790_981_726;
+    env.svm.set_sysvar(&clock);
+
+    let wallet = env.user(1);
+    let mut acct = env.svm.get_account(&platform_pda()).unwrap();
+    let mut p = moshsol::state::Platform::try_deserialize(&mut acct.data.as_slice()).unwrap();
+    assert!(p.has_agent_executors(), "mainnet trades through agent wallets");
+    p.agent_authority = env.agent.pubkey();
+    p.agent_executors[0] = wallet.pubkey();
+    let mut data = Vec::with_capacity(acct.data.len());
+    p.try_serialize(&mut data).unwrap();
+    acct.data[..data.len()].copy_from_slice(&data);
+    env.svm.set_account(platform_pda(), acct).unwrap();
+
+    // A dip: spot 6% under the band's buy line.
+    let l0 = env.launch_at(&launch);
+    let mint = l0.mint;
+    assert!(l0.pump.graduated);
+    assert_eq!((l0.vault_sol, l0.window_buy_cap, l0.window_sol_spent), (2_200_656_088, 17_465_046, 0));
+    let (quote, base) = effective_pool(&env, &mint);
+    let spot = moshsol::math::price_q64(quote, base).unwrap();
+    env.set_launch_at(&launch, |l| {
+        l.ema_price = spot * 10_000 / 9_400 * 10_000 / (10_000 - l.terms.agent_band_bps as u128);
+        l.last_trade_ts = clock.unix_timestamp;
+    });
+
+    let agent = env.agent.insecure_clone();
+    let buy = |env: &mut Env, sol_in: u64| {
+        let mut accounts = moshsol::accounts::AgentTradePump {
+            agent: agent.pubkey(),
+            platform: platform_pda(),
+            launch,
+            mint,
+            pump_authority: pump_authority_pda(&launch),
+            vault_tokens: spl_ata(&pump_authority_pda(&launch), &mint),
+            token_program: TOKEN_ID,
+            system_program: anchor_lang::system_program::ID,
+            associated_token_program: anchor_spl::associated_token::ID,
+            executor: Some(wallet.pubkey()),
+            executor_tokens: Some(spl_ata(&wallet.pubkey(), &mint)),
+        }
+        .to_account_metas(None);
+        accounts.extend(pool_accounts(&mint, &launch, &wallet.pubkey(), &protocol_fee_recipient, &buyback_fee_recipient));
+        let ix = solana_sdk::instruction::Instruction {
+            program_id: moshsol::ID,
+            accounts,
+            data: anchor_lang::InstructionData::data(&moshsol::instruction::AgentBuyPump { sol_in, min_tokens_out: 1 }),
+        };
+        env.send(&[ix], &[&wallet, &agent])
+    };
+
+    // Within the snapshotted cap: the buy the agent sent on mainnet.
+    let vault_ata = spl_ata(&pump_authority_pda(&launch), &mint);
+    let launch_lamports = env.lamports(&launch);
+    let w_before = env.lamports(&wallet.pubkey());
+    let meta = ok(buy(&mut env, 10_000_000));
+    let l1 = env.launch_at(&launch);
+    let t = trades(&meta);
+    assert_eq!((t[0].trader, t[0].is_buy, t[0].sol_amount), (wallet.pubkey(), true, 10_000_000));
+    assert!(t[0].token_amount > 0);
+    assert_eq!(l1.vault_sol, l0.vault_sol - 10_000_000);
+    assert_eq!(l1.vault_tokens, l0.vault_tokens + t[0].token_amount);
+    assert_eq!(env.spl_balance(&vault_ata), l1.vault_tokens, "the vault received the tokens");
+    assert_eq!(env.lamports(&launch), launch_lamports - 10_000_000, "the launch paid exactly the fill");
+    assert_wallet_untouched(&env, &wallet.pubkey(), &mint, w_before);
+
+    // Past the snapshotted cap: the sells' proceeds count, up to 10% of the vault's SOL plus what
+    // the window spent.
+    let limit = moshsol::math::bps(l1.vault_sol + l1.window_sol_spent, l1.terms.agent_buy_bps_per_window).unwrap();
+    assert_eq!(l1.window_buy_limit().unwrap(), limit);
+    assert!(limit > 10 * l1.window_buy_cap);
+    let spend = 4 * l1.window_buy_cap;
+    ok(buy(&mut env, spend));
+    let l2 = env.launch_at(&launch);
+    assert_eq!((l2.window_sol_spent, l2.vault_sol), (10_000_000 + spend, l1.vault_sol - spend));
+    assert_eq!(l2.window_buy_limit().unwrap(), limit, "the agent's own buys leave the cap where it is");
+    assert_err(buy(&mut env, limit - l2.window_sol_spent + 1), MoshError::AgentWindowLimit);
 }
 
 /// The platform as it sits on mainnet since the dev-key upgrade (302 bytes, dumped 2026-10-02)

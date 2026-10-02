@@ -203,7 +203,28 @@ unchanged. **Pump** launches (`create_launch_pump`) are pump.fun tokens created 
 
 ### Layout migration (run right after the upgrade)
 
-**Review-fix upgrade (current; no layout change, no migration).** Effective PumpSwap reserves (the pool's
+**PumpSwap-buy-fix upgrade (current; no layout change, no migration).** Since its graduation every agent-wallet
+`agent_buy_pump` on the TEST pool failed with `InvalidArgument`: wrapping the vault's SOL for PumpSwap moved the
+lamports onto the WSOL account directly and flushed the move with a `sync_native` carrying the launch as an extra
+account, which mainnet's SPL Token (p-token) refuses (litesvm's built-in spl-token 3.5, which the suite used, ignores
+it); sells, curve buys and the rules before the venue call were unaffected. The SOL now reaches the WSOL account
+through the venue `user` (`fund`, then a system transfer) and `sync_native` gets the WSOL account alone; the
+buy-back-and-burn buy on a graduated Holdfast-token pool shares the path. Same upgrade: the agent's buy cap grows
+with the vault inside a window (`Launch::window_buy_limit` = max(the cap snapshotted at the window's start,
+`buy_bps` × (`vault_sol` + SOL spent this window))), so sell proceeds and fees can buy the next dip in the same
+window (TEST held 2.2 SOL against a 0.0175 SOL cap); the agent and the web compute the same cap
+(`windowBuyCap` in the SDK), so deploy the new agent with the upgrade (the old one only plans more conservatively).
+Account layouts, instruction accounts and the IDL are unchanged.
+
+```bash
+anchor build                                   # WSL; target/deploy/moshsol.so: 750,640 bytes ≤ the 750,680-byte ProgramData (no extend)
+sha256sum target/deploy/moshsol.so             # 4577d643ae0d206c80bdc89f88f8d1c6f50a05ebbeafd6c8a53bdb005c00204e for this build
+export RPC_URL=<mainnet rpc> KEYS_DIR=.mainnet APPROVER_KEYPAIRS=.mainnet/member-1.json,.mainnet/member-2.json
+pnpm run upgrade --dry-run                     # buffer ≈3.8141 SOL (refunded); extend not needed
+pnpm run upgrade
+```
+
+**Review-fix upgrade (done on mainnet; no layout change, no migration).** Effective PumpSwap reserves (the pool's
 `virtual_quote_reserves`), the launch window (`LAUNCH_GRACE_SECS`, `LaunchWindowClosed` = error 6049), lamports
 parked on transient account addresses booked as donated, venue CPIs without the launch account. Account layouts
 and instruction accounts are unchanged, so the agent, indexer and web keep working across the upgrade; only new
@@ -323,9 +344,14 @@ back; the indexer and agent recover on their own once the platform decodes again
 
 ### Fixtures
 
-The pump tests run pump.fun, PumpSwap, the pump fee program and Metaplex token metadata dumped from mainnet
-(`tests/program/fixtures/*.so` + their config accounts; refresh with `bash scripts/dump-pump-fixtures.sh`, which
-trims the dumps to the ELF). The venue account lists follow pump.fun's April 2026 layout (`bonding-curve-v2` +
+The pump tests run pump.fun, PumpSwap, the pump fee program, Metaplex token metadata, SPL Token and the
+associated token account program dumped from mainnet (`tests/program/fixtures/*.so` + their config accounts;
+refresh with `bash scripts/dump-pump-fixtures.sh`, which trims the dumps to the ELF). SPL Token on mainnet is
+p-token, which fails an instruction given an account it doesn't take where litesvm's built-in spl-token 3.5
+ignores it — the difference behind the PumpSwap buy outage of 2026-10-02 (see the PumpSwap-buy-fix upgrade
+above). `agent_wallet_buys_a_dip_on_the_mainnet_test_pool` replays an agent-wallet buy on the TEST launch's
+graduated pool as dumped from mainnet (`fixtures/mainnet-test-launch/`). The venue account lists follow
+pump.fun's April 2026 layout (`bonding-curve-v2` +
 a buyback fee recipient on the curve; `pool-v2` + a buyback fee recipient and its WSOL ATA on PumpSwap); if
 pump.fun changes its remaining accounts again, `pump.rs`, `packages/sdk/src/pump.ts` and the test harness are
 the three places to update. The harness rotates through every pump.fun fee / PumpSwap protocol / buyback fee
@@ -343,7 +369,7 @@ the differences are listed under [Venues](#venues)):
 - **Agent can't go rogue.** Only `platform.agent_authority` may call `agent_*`. Every agent trade is fee-free and must pass all of:
   EMA band (buy ≤ EMA×(1−band), sell ≥ EMA×(1+band); EMA weight `dt/(dt+period)` so it can never be snapped to a held price),
   cost basis (sell fill ≥ vault average cost×(1+band); buy fill ≤ average cost, or a buy-back at ≤ average agent sell price×(1−band)),
-  per-window caps (≤20% of vault per window, window ≥5 min), max impact per trade (≤10%) and the vault floor (`vault_sol` never below `min_vault_sol`). Admin can pause agents (circuit breaker; it also stops `payout_backers` and `buyback_burn`, the other two instructions the agent key signs).
+  per-window caps (≤20% of vault per window, window ≥5 min; the sell cap is snapshotted when the window opens, the buy cap is `max(snapshot, buy_bps × (vault_sol + SOL spent this window))` at each buy, so sell proceeds can buy the next dip in the same window while the window never spends more than `buy_bps` of the vault counting what it spent), max impact per trade (≤10%) and the vault floor (`vault_sol` never below `min_vault_sol`). Admin can pause agents (circuit breaker; it also stops `payout_backers` and `buyback_burn`, the other two instructions the agent key signs).
 - **Agent wallets hold nothing.** Once the admin registers agent wallets (`set_agent_executors`, up to 15 keys in `platform.agent_executors`), every `agent_buy_pump` / `agent_sell_pump` must name one of them as `executor` (a signer next to the agent authority; `ExecutorRequired` / `ExecutorNotRegistered` otherwise) and that wallet is the pump.fun / PumpSwap `user`. Inside the one instruction the vault's SOL moves to the wallet (buy) or the vault's tokens to its token account (sell), the wallet trades, and the measured fill moves back to the vault: the tokens bought to the vault's token account, whatever SOL the wallet holds above what it started with back to the launch, PumpSwap's WSOL account closed into the launch. The wallet creates its token account for the mint if missing and gets it closed back to itself (lamports anyone parked on that address before come back with it and go to the launch as donated vault SOL), and the program then requires it to hold exactly the lamports and tokens it started the instruction with (`ExecutorNotSettled`), so the only thing a wallet ever spends is its own transaction fee. Every rule above is checked on the measured fill exactly as without a wallet. The agent key pays each wallet's one-time pump.fun / PumpSwap volume-accumulator rent. With no wallet registered the pump authority trades itself (the pre-upgrade path).
 - **No atomic sandwiches.** An agent trade can't run in a slot that already saw a public trade on that launch, and no public trade can follow it in the same slot, so nobody (including whoever holds the agent key) can wrap a vault trade in one transaction or Jito bundle. What a leaked agent key *can* still do is trade within the rules above — bounded per window, no withdrawals — until the admin pauses agents and rotates the key (`set_agent_authority`, admin = multisig on mainnet).
 - **Frozen terms.** Fee split, trade/launch fee, agent limits and the payback terms are copied into the launch at creation and never change (the one exception: the payback upgrade's migration, which set them on the launches that predate it). `create_launch` carries the terms the creator reviewed (plus virtual SOL and a max create fee) and fails with `TermsChanged` if the platform changed them in between. Trade fee is bounded to 0.3%–2%.
@@ -380,7 +406,7 @@ a strong market, never in a dip (see [Cranks](#venues-cranks-and-the-lookup-tabl
    spot, as `update_ema_with` does), and every quote carries the venue's 1.25% fee the way `pump_venue.rs`
    measures the fill: a buy spends `solIn`, of which `solIn − ⌈1.25%⌉` reaches the curve; a sell's gross
    `x·t/(y+t)` (capped at the real SOL) leaves the curve and the launch receives it minus `⌈1.25%⌉`. The
-   cost-basis rules, `min_out` and the inventory/guardrail math all use the net fill, the impact check the gross
+   cost-basis rules, `min_out` and the ladder math all use the net fill, the impact check the gross
    reserve move. A completed curve (waiting for pump.fun's migration) or a missing venue account is a `skip` with
    that reason.
 2. **Entry margins.** It buys only `buyMarginBps` past the lower band edge and sells only `sellMarginBps` past the
@@ -389,11 +415,19 @@ a strong market, never in a dip (see [Cranks](#venues-cranks-and-the-lookup-tabl
    whose per-period capacity the program's window caps already enforce. A dip buy passes either program path
    (fill ≤ the vault's average cost, or ≤ the average agent sell price × (1 − band) = a **buy-back**) and spends
    vault SOL above the floor; the former sell-proceeds budget is gone.
-3. **Inventory floor.** Rally selling keeps at least `bundleTokens × (1 − holdSlope × ln(spot / bundle price))`
-   tokens, so net selling grows with each e-fold of price rather than with time (a price-indexed inventory
+3. **Sell ladder** (`ladderStartMult` 1.5, `ladderShare10x` 0.35, `ladderShape` 1.25; a risk rule the owner set after
+   the first live launch, shipped regardless of the backtest). How much of the bundle rally sells may have taken is
+   a rising function of the multiple M = spot / the vault's average cost: nothing below 1.5×, then
+   `0.35 × (ln(M/1.5) / ln(10/1.5))^1.25` — ~10% at 3×, ~20% at 5×, 35% at 10×, ~50% at 20× (a price-indexed inventory
    target in the spirit of [Hummingbot's inventory skew](https://hummingbot.org/strategies/v1-strategies/pure-market-making/)
-   and [Avellaneda–Stoikov](https://www.math.nyu.edu/~avellane/HighFrequencyTrading.pdf)): a runner can't drain
-   the bag window after window, while buy-backs keep round-tripping below it.
+   and [Avellaneda–Stoikov](https://www.math.nyu.edu/~avellane/HighFrequencyTrading.pdf)). The vault keeps
+   `bundleTokens × (1 − share)` and sells the gap; tokens bought back on dips beyond the bundle sell freely, so buy-backs
+   keep round-tripping. Per window the bundle goes at the same pace: at most `share / ladderShare10x` of the program's
+   window sell cap (29% of it at 3×, 57% at 5×, all of it from 10×), so a rally that runs inside one window keeps the
+   budget for its higher prices instead of spending it at 2–3×. Each sell is one clip as large as the gap, the window
+   and 90% of the launch's frozen impact limit allow (down to the EMA band edge), never under `MIN_SELL_LAMPORTS`
+   (0.05 SOL). The reason says where the ladder stands, e.g. `ladder at 4.2× avg cost sells 17% of the bundle, vault
+   holds 88% of it`.
 4. **Flow window** (`src/flow.ts`). Every streamed update and every heartbeat differences the Launch counters (`volume_sol`, `trade_count`,
    `real_sol`, `agent_*`; the venue's reserves on pump launches): public volume, trade count and net SOL flow (buys − sells into the curve, the agent's
    own fills removed) of the interval, one sample per chain second (a later update in the same second extends it, so a
@@ -404,19 +438,18 @@ a strong market, never in a dip (see [Cranks](#venues-cranks-and-the-lookup-tabl
    the volume rate over the window's median minute volume (volume climax / exhaustion in the
    [Wyckoff](https://trendspider.com/learning-center/chart-patterns-wyckoff-accumulation/) sense), spot vs the
    30 min [VWAP](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-overlays/anchored-vwap)
-   and seconds since the last trade. Every `/status` decision carries them (`flow`). The flow knobs built on them
+   and the 3 min VWAP, the highest spot of the last 15 min with the public net flow since it, and seconds since the last
+   trade. Every `/status` decision carries them (`flow`). The flow knobs built on them
    (sell earlier into net buying, hold rally sells on thin volume, wait out a live sell-off before buying, buy
    earlier after a selling climax that is easing, a VWAP anchor) are tuned and kept only if they beat the
    previous policy out of sample — see the results below.
-5. **Sell ramp** (by state, not age; a risk constraint that ships regardless of the backtest). Per agent
-   window, rally sells may take `baseSellSol` SOL of proceeds (valued at spot) while the launch trades near its
-   launch price with little volume, whatever the on-chain window cap allows. The allowance ramps geometrically
-   to the on-chain cap as *both* the market-cap multiple (spot / bundle price, log scale, full at `fullMcapMult`)
-   and the traded volume (`volume_sol`, log scale, full at `fullVolumeSol`) grow (`min(both)^rampShape`); a rally
-   with net buying on at least `strongVolumeRatio` × the median minute volume may sell `strongFlowMult` × that
-   (sell into bullish volume, never size up into a thin uptick). Selling is not a bad outcome — the proceeds are
-   what buys the next dip — so a strong chart gets real sizes, not dust. The reason is visible in `/status`, e.g.
-   `mcap 1.3× launch, 4.2 SOL traded: sell allowance 0.6 SOL this window`.
+5. **Sell pause** (`sellPauseDrawdown` 0.2; part of the owner's rule, like the ladder). A rally sell needs a green
+   market, not just spot above the EMA band: on a pump launch the EMA is sampled only by agent trades, so after a
+   dump it can still sit near the launch price and read the lows as "+5–25% vs EMA". No rally sell while spot is more
+   than 20% under its 15 min high with the public net selling since that high (`sell paused: −68.0% from 15-min high,
+   sellers in control (net −41.20 SOL since the high)`), while spot is under the 3 min VWAP, or while the latest
+   minute's public flow is net selling. With the agent deciding on every streamed update (3 s cooldown) the sells go
+   into the green candles themselves. The program still enforces its own EMA band; this is an extra agent-side gate.
 6. **Low-volume support mode** (`supportVolumeMult`, `supportClipShare`, `supportSpacingSecs`). While the launch's
    24 h activity (`flow.volume24hSol`: public volume, or on pump launches the price-implied net flow, scaled to a
    day while the window is younger) is below `supportVolumeMult` × the vault's SOL, dip buys shrink to
@@ -431,7 +464,7 @@ a depth ladder (RBS cushion → wall), window pacing (TWAP, the risk-neutral
 filters on the agent's own price samples, and an inventory skew of the entry depth.
 
 The parameters (`StrategyParams`) are tuned in a backtest, not by hand; `STRATEGY_PARAMS` overrides any of them
-inside `PARAM_SPACE` (the guardrail cannot be switched off that way).
+inside `PARAM_SPACE` (the sell pause cannot be switched off that way: its drawdown threshold stays within 5–50%).
 
 ### Agent wallets (who executes the vault's trades)
 
@@ -488,7 +521,7 @@ lines and listed newest-first (≤ 50) in `/status` → `cranks` (`kind`, `addre
   SDK's `payoutStatus(launch, now)` says whether the program would accept one (liquid vault SOL ≥
   `payout_mult_bps` × `initial_vault_sol`, ≥ `payout_interval_secs` since the last payout, never below
   `min_vault_sol`; principal first, then `payout_share_bps` of the vault per tick). On top the agent requires a
-  **strong market** by the sell ramp's observables (`payoutMarketStrong`): spot above the EMA band, net buying on
+  **strong market** by the flow window's observables (`payoutMarketStrong`): spot above the EMA band, net buying on
   ≥ `strongVolumeRatio` × the median minute volume, above the 30 min VWAP and the launch price, and no more than
   20% under the 24 h high. A due payout in a weak market is skipped — the vault's SOL buys the dip first — and
   the skip reason is written to the activity feed (`payout eligible, skipped: price under EMA band`), at most once
@@ -628,9 +661,9 @@ pnpm --filter @holdfast/agent backtest eval      # no agent / v1 / current / tun
 pnpm --filter @holdfast/agent backtest walkforward   # tune on each pool's first 24 h, test on hours 24–72
 pnpm --filter @holdfast/agent backtest ablate    # tune on a FIT part of TRAIN, switch features off on VALIDATION
 pnpm --filter @holdfast/agent backtest robust    # TEST under other poll/latency/fair-value/candle-volume assumptions
-pnpm --filter @holdfast/agent backtest flow      # pre-flow policy vs --params on TRAIN, TEST, walk-forward TEST; guardrail level sweep
+pnpm --filter @holdfast/agent backtest flow      # pre-flow policy vs --params on TRAIN, TEST, walk-forward TEST
 pnpm --filter @holdfast/agent backtest terms     # launch terms (policy fixed): Pareto view on TRAIN + walk-forward, reserve sweep
-pnpm --filter @holdfast/agent backtest support   # previous policy vs support mode vs support + sell ramp retuned (walk-forward tuned)
+pnpm --filter @holdfast/agent backtest support   # --params with the support mode off vs support knobs tuned on walk-forward TRAIN
 pnpm --filter @holdfast/agent backtest speed --venue pump   # event-driven timing: clip / margin / cooldown candidates vs the gate, on pump.fun launches
 pnpm --filter @holdfast/agent test               # property + regression tests
 ```
@@ -749,6 +782,25 @@ always above 2× the vault's SOL, so it only fires on charts quieter than any po
 meant to add volume; the tuned variants above show that letting it fire on busy charts costs value. `backtest
 support --compare name=file.json,…` reads out any other preset against "previous" on the same four splits
 (`results/support-compare.md`).
+
+**Sell ladder + sell pause** (2026-10, owner's rule after the TEST launch; pump terms of new launches: 8% impact,
+5% of the vault per 15 min window; event-driven agent, 1 s reaction / 3 s cooldown; previous = the HEAD policy with
+the 2 SOL ramp and 10% sell clips, same harness and terms; no tuning, read-out only):
+
+| split | policy | objective (0 = v1) | ΔV@VWAP median (mean) % exo / fair / syn | worst-10% ΔV % | rug SOL lost % exo / fair | sells / SOL sold / avg SOL |
+|---|---|---:|---|---|---|---|
+| WF TEST (73) | previous | +0.14 | 11.3 (13.9) / 14.8 (20.6) | −32.1 / −31.6 | 19.4 / 18.9 | 135,533 / 5,174 / 0.038 |
+| WF TEST | **ladder + pause** | −2.43 | 5.4 (7.7) / 6.4 (11.3) | −18.3 / −17.4 | 26.3 / 26.2 | 13,020 / 3,845 / 0.295 |
+| TEST (21 + 8 syn) | previous | −1.89 | 36.1 (44.2) / 57.2 (56.8) / 76.2 | −58.2 / −54.6 / 68.2 | 28.4 / 25.2 | 107,153 / 13,604 / 0.127 |
+| TEST | **ladder + pause** | −1.75 | 23.8 (42.5) / 30.4 (51.2) / 69.5 | −35.1 / −28.4 / 56.5 | 27.7 / 25.5 | 10,943 / 12,757 / 1.166 |
+
+Reading: the ladder sells ~10× fewer, ~8× larger clips and halves the worst 10% (it no longer sells the bag at
+1.1–3× nor into dumps), but it holds the bundle below 1.5× the vault's cost, so the median launch ends with less
+value and walk-forward rug pools lose more vault SOL (its dip buys are no longer financed by early bundle sells).
+On the objective it loses walk-forward TEST (−2.6) and edges TEST (+0.13); it ships as the owner's rule, not
+as a backtest win. On the TEST launch replay (`ladder.test.ts`) it sells 2.95 SOL in 19 sells (0.16 SOL average,
+the whole 5% window cap), 1.94 SOL of it above 5×, nothing after the top; the previous policy sold 1.89 SOL in 67
+sells, 0.01 SOL above 5× and 0.99 SOL in the dump.
 
 **Launch terms** (`backtest terms`, ~15 min on 26 workers; measured with sell proceeds kept in the vault, not re-run). The shipped policy is fixed and the six agent terms
 are searched inside the program's hard limits (band 50–5000 bps, impact and window caps from 10 bps, window
@@ -903,7 +955,7 @@ Node 22+ and pnpm 10 for everything else (on Windows the validator runs in WSL, 
 
 ```bash
 anchor build                 # WSL/Linux, once and after every program change
-cargo test -p moshsol-tests  # 53 litesvm tests (27 curve + 26 pump.fun); needs target/deploy/moshsol.so
+cargo test -p moshsol-tests  # 54 litesvm tests (27 curve + 27 pump.fun); needs target/deploy/moshsol.so
 
 pnpm install
 CLONE_PUMP=1 pnpm localnet --reset   # terminal 1: validator (through WSL on Windows) with pump.fun, PumpSwap,
@@ -987,7 +1039,6 @@ Indexer (`apps/indexer`):
 | `LOG_LEVEL` | `info` | `debug` adds poller catch-ups and websocket retry attempts |
 | `POLL_MS`, `FULL_REFRESH_MS` | `4000`, `15000` | Signature poller cadence (the program, plus the venue account of every live pump launch for public pump.fun / PumpSwap trades); full `getProgramAccounts` refresh (launch snapshots, platform, metadata retries, holder counts) |
 | `CHAIN_CHECK_MS`, `HOLDERS_TTL_MS` | `30000`, `30000` | Genesis/cursor verification cadence (also after every RPC outage); holder snapshot cache per launch |
-| `PUMP_BACKFILL` | `200` | Newest venue-account signatures indexed when a live pump launch is first watched (public pump.fun trades older than that are not backfilled); live trades arrive over the logs websocket, the poller fills gaps |
 | `PRICE_REFRESH_MS` | `60000` | SOL/USD refresh (Jupiter `lite-api.jup.ag/price/v3`, CoinGecko fallback; no API key). Served as `solUsd` on `/api/stats` and as the `…Usd` fields of launch summaries; the last good price is kept in memory and SQLite through a feed outage or restart |
 
 Every endpoint, the signed-message scheme for comments/profiles, rate limits and WebSocket messages are documented in
@@ -1007,8 +1058,9 @@ Agent (`apps/agent`):
 | `WS_URL` | from `RPC_URL` | Websocket endpoint of the stream (`https` → `wss`, an explicit port + 1, e.g. `8899` → `8900`); only its origin is logged |
 | `DEBOUNCE_MS` | `150` | A streamed change is decided on this long after its first notification (updates arriving meanwhile ride along) |
 | `SENDER_URL`, `SENDER_TIP_LAMPORTS` | `https://sender.helius-rpc.com/fast?swqos_only=true` when `RPC_URL` is Helius mainnet (else unset), `5000` | Helius Sender endpoint (the global one routes to the nearest region; a regional `http://<region>-sender.helius-rpc.com/fast?swqos_only=true` saves the TLS hop): trades go out through it and the RPC at once and carry the tip (≥ 5,000 lamports; Sender Max without `swqos_only` wants ≥ 1,000,000). `off`: RPC only |
-| `MIN_TRADE_LAMPORTS` | `10000000` | 0.01 SOL: smaller buys/sells are skipped |
-| `STRATEGY_PARAMS` | unset | JSON object overriding any of the backtest-tuned policy parameters (see [Vault agent](#vault-agent)), e.g. `{"holdSlope":0.5}`; unknown keys or out-of-range values stop startup |
+| `MIN_TRADE_LAMPORTS` | `10000000` | 0.01 SOL: smaller buys are skipped |
+| `MIN_SELL_LAMPORTS` | `50000000` | 0.05 SOL: smaller sells are skipped (sells go out as a few impact-sized clips into green candles, not as dust) |
+| `STRATEGY_PARAMS` | unset | JSON object overriding any of the backtest-tuned policy parameters (see [Vault agent](#vault-agent)), e.g. `{"ladderShare10x":0.5}`; unknown keys or out-of-range values stop startup |
 | `COOLDOWN_MS` | `3000` | Per launch after a confirmed trade, counted once the stream shows that fill (errors back off exponentially from 15 s up to 5 min; a same-slot collision with a public trade is retried on the next decision). Also the agent-wallet spacing: no wallet gets a buy within this long of a sell on the same launch (or the reverse) |
 | `AGENT_EXECUTORS_JSON`, `AGENT_EXECUTORS_DIR` | unset, `agent-wallets/` next to the agent keypair file (`.localnet/agent-wallets`) | The agent wallets (see [Agent wallets](#agent-wallets-who-executes-the-vaults-trades)): `_JSON` = a JSON array of up to 15 secret-key arrays (hosted secrets), else every `*.json` keypair file in the directory. Only wallets registered on the platform are used |
 | `EXECUTOR_MIN_SOL`, `EXECUTOR_TOPUP_SOL`, `EXECUTOR_TOPUP_MAX_SOL_PER_HOUR` | `0.01`, `0.02`, `0.2` | A wallet under the minimum is not picked and is topped up to `EXECUTOR_TOPUP_SOL` from the agent key at the next heartbeat (one transaction, logged `agent_wallet_topup`; counted against the hour when sent, refunded only if it failed or expired), at most the hourly total and never below a 0.05 SOL reserve on the agent key, which pays the fees and rent of the cranks only it runs (`collect_pump_fees`, `payout_backers`, `buyback_burn`, `wind_down_pump`, the lookup table); wallets left out are logged `agent_wallet_topup_skipped` with the reason |
@@ -1097,8 +1149,8 @@ between transactions), `SIM_TRADERS` (10), `SIM_BACKERS` (6), `SIM_MEDIAN_TRADE_
 - **Phantom on localnet** shows stale balances or "blockhash not found" after a chain reset: switch its
   network away and back to the custom `http://127.0.0.1:8899` RPC.
 - **Agent doesn't trade.** `GET :8788/status` gives the reason per launch: inside the EMA band, not far enough
-  past the band yet (entry margin), inventory floor, cost-basis rule, window budget exhausted, cooldown, or a
-  trade below `MIN_TRADE_LAMPORTS`.
+  past the band yet (entry margin), sell ladder, sell pause, cost-basis rule, window budget exhausted, cooldown, or a
+  trade below `MIN_TRADE_LAMPORTS` / `MIN_SELL_LAMPORTS`.
 - **429 from the indexer.** Raise `RATE_LIMIT_PER_MIN` / `UPLOAD_LIMIT_PER_MIN` (everything on one machine
   shares the 127.0.0.1 budget), or set the same `INTERNAL_TOKEN` / `INDEXER_INTERNAL_TOKEN` on the indexer and the
   web so server renders skip the general budget.

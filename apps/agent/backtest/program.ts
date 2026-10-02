@@ -14,6 +14,7 @@ import {
   solInForTokens,
   solOut,
   tokensOut,
+  windowBuyCap,
   type LaunchVenue,
 } from "@holdfast/sdk";
 import { venueFeeBps, type AgentTerms, type MarketState } from "../src/strategy";
@@ -314,7 +315,7 @@ export function agentBuy(chain: Chain, solIn: bigint, minTokensOut: bigint, now:
     require(solIn > 0n, "ZeroAmount");
     require(solIn <= l.vaultSol, "InsufficientVault");
     require(l.vaultSol - solIn >= t.minVaultSol, "VaultFloor");
-    require(l.windowSolSpent + solIn <= l.windowBuyCap, "AgentWindowLimit");
+    require(l.windowSolSpent + solIn <= windowBuyCap(l.windowBuyCap, l.vaultSol, l.windowSolSpent, t.buyBpsPerWindow), "AgentWindowLimit");
     const before = spot(l);
     require(before <= (l.emaPrice / BPS) * (BPS - t.bandBps), "AgentBuyNotDip");
     // The venue's fee comes off the spend; the launch measures `spent` = solIn and the net fill.
@@ -404,5 +405,16 @@ export const PRODUCTION_TERMS: SimTerms = {
   minVaultSol: 100_000_000n,
 };
 
-/** The same agent terms frozen by `create_launch_pump` (`LaunchTerms::pump`: no trade fee). */
-export const PUMP_TERMS: SimTerms = { ...PRODUCTION_TERMS, venue: "pump", tradeFeeBps: 0n };
+/**
+ * Agent terms frozen by `create_launch_pump` (`LaunchTerms::pump`: no trade fee) for launches created under the current
+ * platform parameters: 15 min windows, 5% of the vault's SOL / tokens per window, 8% max price impact per agent trade.
+ */
+export const PUMP_TERMS: SimTerms = {
+  ...PRODUCTION_TERMS,
+  venue: "pump",
+  tradeFeeBps: 0n,
+  maxImpactBps: 800n,
+  buyBpsPerWindow: 500n,
+  sellBpsPerWindow: 500n,
+  windowSecs: 900n,
+};

@@ -11,6 +11,17 @@ export function bpsCeil(amount: bigint, b: number | bigint): bigint {
   return (amount * BigInt(b) + BPS - 1n) / BPS;
 }
 
+/**
+ * The agent's buy cap for the current window, `Launch::window_buy_limit` in state.rs: the cap
+ * `roll_window` snapshotted, raised to `buyBps` of the vault's SOL plus what the window already
+ * spent — SOL the agent's sells bring in can buy the next dip in the same window, while its own
+ * buys (which move SOL from `vaultSol` to `spent`) leave it unchanged.
+ */
+export function windowBuyCap(storedCap: bigint, vaultSol: bigint, windowSolSpent: bigint, buyBps: number | bigint): bigint {
+  const live = bps(vaultSol + windowSolSpent, buyBps);
+  return live > storedCap ? live : storedCap;
+}
+
 export function tokensOut(x: bigint, y: bigint, solIn: bigint): bigint {
   return (y * solIn) / (x + solIn);
 }

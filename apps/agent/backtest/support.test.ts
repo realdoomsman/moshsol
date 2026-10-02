@@ -5,14 +5,14 @@ import { DEFAULT_PARAMS, evaluate, payoutMarketStrong, project, withParams } fro
 import { PRODUCTION_TERMS, agentBuy, agentSell, launch, type Chain } from "./program";
 import { Market, T0 } from "./sim";
 
-const SIZING = { minTradeLamports: 10_000_000n, slippageBps: 100 };
+const SIZING = { minTradeLamports: 10_000_000n, minSellLamports: 50_000_000n, slippageBps: 100 };
 
-/** A 50 SOL launch after a rally sell, now dipped `dipPct` under the EMA so the buy-back path is open. */
+/** A 50 SOL launch after a rally sell at 3× (where the sell ladder lets a window sell), now dipped `dipPct` under the EMA so the buy-back path is open. */
 function dipped(dipPct: number): { chain: Chain; now: bigint } {
   const chain = launch({ terms: PRODUCTION_TERMS, virtualSol: 30_000_000_000n, raised: 50_000_000_000n, reserveBps: 3_000n, bundleSupplyBps: 2_000n }, BigInt(T0));
   const market = new Market(chain, null);
   market.t = 60_000;
-  market.moveTo(Math.log(market.spot() * 1.3));
+  market.moveTo(Math.log(market.spot() * 3));
   market.t = 120_000;
   const rally = evaluate(chain, SIZING, market.now(), DEFAULT_PARAMS, NEUTRAL_FLOW).plan;
   assert.equal(rally.action, "sell", rally.reason);
@@ -32,7 +32,7 @@ function dipped(dipPct: number): { chain: Chain; now: bigint } {
 test("support mode clips and spaces dip buys on a quiet launch and steps aside on a busy one", () => {
   const { chain, now } = dipped(0.06);
   // General clipping off so the support clip is compared with the unclipped buy.
-  const support = withParams(DEFAULT_PARAMS, { supportVolumeMult: 2, supportClipShare: 0.25, supportSpacingSecs: 300, buyClipShare: 1, sellClipShare: 1 });
+  const support = withParams(DEFAULT_PARAMS, { supportVolumeMult: 2, supportClipShare: 0.25, supportSpacingSecs: 300, buyClipShare: 1 });
   const vaultSol = Number(chain.vaultSol) / 1e9;
   const quiet: FlowFeatures = { ...NEUTRAL_FLOW, volume24hSol: vaultSol * 0.5, sinceAgentTradeSecs: 3_600 };
   const busy: FlowFeatures = { ...NEUTRAL_FLOW, volume24hSol: vaultSol * 10, sinceAgentTradeSecs: 3_600 };

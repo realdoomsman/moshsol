@@ -52,6 +52,7 @@ export interface AgentConfig {
   /** Helius Sender (`SENDER_URL`, `SENDER_TIP_LAMPORTS`): trades also go out through it, carrying the tip; null = RPC only. */
   sender: { url: string; tipLamports: number } | null;
   minTradeLamports: bigint;
+  minSellLamports: bigint;
   /** Policy parameters: backtest-tuned defaults, optionally overridden by `STRATEGY_PARAMS` (JSON object). */
   strategy: StrategyParams;
   slippageBps: number;
@@ -158,8 +159,10 @@ export function loadConfig(): AgentConfig {
     debounceMs: int("DEBOUNCE_MS", 150, 0, 5_000),
     cooldownMs: int("COOLDOWN_MS", 3_000, 0, 86_400_000),
     sender: senderUrl ? { url: senderUrl, tipLamports: int("SENDER_TIP_LAMPORTS", 5_000, 5_000, 100_000_000) } : null,
-    // 0.01 SOL: below this a vault trade barely moves price and mostly adds noise to the tape.
+    // 0.01 SOL: below this a vault buy barely moves price and mostly adds noise to the tape.
     minTradeLamports: BigInt(int("MIN_TRADE_LAMPORTS", 10_000_000, 1, Number.MAX_SAFE_INTEGER)),
+    // 0.05 SOL: sells go out as a few large clips into green candles, never as a stream of dust.
+    minSellLamports: BigInt(int("MIN_SELL_LAMPORTS", 50_000_000, 1, Number.MAX_SAFE_INTEGER)),
     strategy: strategyParams(),
     // Agent trades can't be sandwiched (same-slot rule) and every fill it accepts still passes the vault's cost
     // rules (planned against this floor), so the tolerance only absorbs public trades landing in flight.

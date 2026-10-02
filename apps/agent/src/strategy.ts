@@ -16,6 +16,7 @@ import {
   tokensOut,
   tokensToUi,
   venueOf,
+  windowBuyCap,
   type CurveState,
   type LaunchAccount,
   type LaunchVenue,
@@ -134,7 +135,10 @@ export function marketOf(l: LaunchAccount, venue?: CurveState): MarketState {
 }
 
 export interface Sizing {
+  /** Smallest buy (lamports in) the agent sends. */
   minTradeLamports: bigint;
+  /** Smallest sell (expected lamports out) the agent sends: sells go out as few large clips into strength, never as dust. */
+  minSellLamports: bigint;
   slippageBps: number;
 }
 
@@ -152,7 +156,10 @@ export interface Projection {
   /** Start of the agent window the next trade lands in (`now` when that trade would roll it). */
   windowStart: bigint;
   windowEnd: bigint;
-  /** Window caps as snapshotted by `roll_window` (lamports / token base units). */
+  /**
+   * Window caps (lamports / token base units): the sell cap as snapshotted by `roll_window`, the buy cap as
+   * the program checks it (`windowBuyCap`: the snapshot raised with the vault's SOL plus what the window spent).
+   */
   buyCap: bigint;
   sellCap: bigint;
   buyRemaining: bigint;
@@ -170,18 +177,14 @@ export function project(m: MarketState, now: bigint): Projection {
   const y = m.tokenReserve;
   const price = priceQ64(x, y);
 
-  let windowStart = m.windowStart;
-  let buyCap = m.windowBuyCap;
-  let sellCap = m.windowSellCap;
-  let buyRemaining = m.windowBuyCap > m.windowSolSpent ? m.windowBuyCap - m.windowSolSpent : 0n;
-  let sellRemaining = m.windowSellCap > m.windowTokensSold ? m.windowSellCap - m.windowTokensSold : 0n;
-  if (now >= m.windowStart + t.windowSecs) {
-    windowStart = now;
-    buyCap = bps(m.vaultSol, t.buyBpsPerWindow);
-    sellCap = bps(m.vaultTokens, t.sellBpsPerWindow);
-    buyRemaining = buyCap;
-    sellRemaining = sellCap;
-  }
+  const rolled = now >= m.windowStart + t.windowSecs;
+  const windowStart = rolled ? now : m.windowStart;
+  const solSpent = rolled ? 0n : m.windowSolSpent;
+  const tokensSold = rolled ? 0n : m.windowTokensSold;
+  const buyCap = windowBuyCap(rolled ? bps(m.vaultSol, t.buyBpsPerWindow) : m.windowBuyCap, m.vaultSol, solSpent, t.buyBpsPerWindow);
+  const sellCap = rolled ? bps(m.vaultTokens, t.sellBpsPerWindow) : m.windowSellCap;
+  const buyRemaining = buyCap > solSpent ? buyCap - solSpent : 0n;
+  const sellRemaining = sellCap > tokensSold ? sellCap - tokensSold : 0n;
 
   // EMA weight dt / (dt + period), floored step, applied before reserves change. Pump launches sample the
   // venue price only on agent trades, so the program clamps dt to the period there (`update_ema_with`).
@@ -345,21 +348,32 @@ export function minBig(...v: bigint[]): bigint {
  * Tunable policy, searched by `pnpm --filter @holdfast/agent backtest train` (apps/agent/backtest). The
  * backtest also tried volatility-scaled entries, a depth ladder, window pacing, falling-knife and pump
  * filters and an inventory skew; switching them off did not hurt on the validation split, so they are
- * gone. Tuned margins and floor fit TRAIN but did not beat v1 in the walk-forward test, so the defaults
- * stay at v1's 25 bps entry with the floor off (holdSlope 10 keeps nothing above ~1.1× the bundle price).
- * The flow knobs read `FlowFeatures` (flow.ts: public volume, net flow and trades between polls); the
- * sell guardrail is a risk constraint the owner asked for and ships regardless of the objective.
+ * gone. Tuned margins fit TRAIN but did not beat v1 in the walk-forward test, so the defaults stay at v1's
+ * 25 bps entry. The flow knobs read `FlowFeatures` (flow.ts: public volume, net flow and trades between polls);
+ * the sell ladder and the sell pause are the owner's risk rules and ship regardless of the objective.
  */
 export interface StrategyParams {
   /** Extra depth past the band before buying / selling, bps of the EMA (absorbs EMA drift until landing). */
   buyMarginBps: number;
   sellMarginBps: number;
   /**
-   * Inventory floor for rally selling: the vault keeps at least bundleTokens × (1 − holdSlope ×
-   * ln(spot / bundle average price)) tokens, so net selling grows with each e-fold of price instead
-   * of with time and a runner can't drain the bag window after window.
+   * Sell ladder: how much of the bundle rally sells may have taken at a given multiple M = spot / the vault's
+   * average cost. Nothing below `ladderStartMult`, then `ladderShare10x` × (ln(M / start) / ln(10 / start))^`ladderShape`
+   * (capped at the whole bundle): the defaults reach ~10% at 3×, ~20% at 5×, 35% at 10×, ~50% at 20×. The vault
+   * keeps bundleTokens × (1 − that share) and sells the excess (dip-bought tokens included), each sell as large as
+   * that gap, the window and 90% of the impact limit allow. Per window the bundle's tokens go at the same pace: at most
+   * share / `ladderShare10x` of the program's window cap (all of it from 10×), so a rally that runs within one
+   * window keeps the budget for its higher prices instead of spending it early.
    */
-  holdSlope: number;
+  ladderStartMult: number;
+  ladderShare10x: number;
+  ladderShape: number;
+  /**
+   * Sell pause: no rally sell while spot is more than this far under its 15 min high with the public net selling
+   * since that high (a crash, not the agent's own sells). Rally sells also need spot at or above the 3 min VWAP and
+   * no net public selling over the latest minute, so they only go into green candles. Not switchable off (≤ 50%).
+   */
+  sellPauseDrawdown: number;
   /** Sell margin cut per unit of positive short-window imbalance (bps): sell earlier into net buying. 0 = off. */
   sellFlowBps: number;
   /** Hold rally sells while the short-window volume rate is below this multiple of the median minute volume (thin rally). 0 = off. */
@@ -370,21 +384,8 @@ export interface StrategyParams {
   buyClimaxBps: number;
   /** VWAP anchor: buy only this many bps below, sell only this many bps above the 30 min volume-weighted average price. 0 = off. */
   vwapEntryBps: number;
-  /**
-   * Sell guardrail, by state rather than age: per agent window, rally sells may take `baseSellSol` SOL of
-   * proceeds (valued at spot) while the launch trades near its launch price with little volume, regardless of
-   * the on-chain window cap. The allowance ramps geometrically to the on-chain cap as BOTH the market-cap
-   * multiple (spot / bundle price, log scale, full at `fullMcapMult`) and the traded volume (`volume_sol`
-   * since launch, log scale from 1 SOL, full at `fullVolumeSol`) grow: progress = min(both)^rampShape (> 1
-   * ramps late). A rally with net buying on at least `strongVolumeRatio` × the median minute volume may sell
-   * `strongFlowMult` × the allowance (sell into bullish volume, never size up into a thin uptick).
-   */
-  baseSellSol: number;
-  fullMcapMult: number;
-  fullVolumeSol: number;
-  rampShape: number;
+  /** Payout market gate: net buying on at least this multiple of the median minute volume (`payoutMarketStrong`). */
   strongVolumeRatio: number;
-  strongFlowMult: number;
   /**
    * Low-volume support mode for dip buys: while the launch's 24 h activity (SOL, `FlowFeatures.volume24hSol`)
    * is below `supportVolumeMult` × the vault's SOL, buy-backs shrink to `supportClipShare` of the size the
@@ -396,13 +397,12 @@ export interface StrategyParams {
   supportClipShare: number;
   supportSpacingSecs: number;
   /**
-   * Clip granularity: one decision buys at most `buyClipShare` / sells at most `sellClipShare` of what the window
-   * may still trade (buys: the window's buy budget left, capped by the vault SOL above its floor; sells: the
-   * window's sell budget left after the inventory floor and the sell guardrail), never below the minimum trade.
-   * Every clip passes band, cost, budget and impact on its own. 1 = off (one clip to the band edge).
+   * Buy clip granularity: one decision buys at most `buyClipShare` of what the window may still buy (the window's
+   * buy budget left, capped by the vault SOL above its floor), never below the minimum trade. Every clip passes
+   * band, cost, budget and impact on its own. 1 = off (one clip to the band edge). Sells are not clipped: each
+   * takes the ladder gap up to the impact limit.
    */
   buyClipShare: number;
-  sellClipShare: number;
   /**
    * At least this many seconds between the agent's own fills on a launch, either side (so a buy and a sell are
    * never closer than this either), counted from the decision that first saw the last fill. 0 = off.
@@ -416,65 +416,50 @@ export type ParamKey = keyof StrategyParams;
 export const PARAM_SPACE: Record<ParamKey, { lo: number; hi: number; log?: boolean }> = {
   buyMarginBps: { lo: 0, hi: 1_500 },
   sellMarginBps: { lo: 0, hi: 1_500 },
-  holdSlope: { lo: 0.02, hi: 10, log: true },
+  ladderStartMult: { lo: 1, hi: 5, log: true },
+  ladderShare10x: { lo: 0.05, hi: 1, log: true },
+  ladderShape: { lo: 0.25, hi: 4, log: true },
+  sellPauseDrawdown: { lo: 0.05, hi: 0.5 },
   sellFlowBps: { lo: 0, hi: 1_500 },
   sellThinRatio: { lo: 0, hi: 2 },
   buyDumpShare: { lo: 0.5, hi: 1 },
   buyClimaxBps: { lo: 0, hi: 1_500 },
   vwapEntryBps: { lo: 0, hi: 1_500 },
-  baseSellSol: { lo: 0.1, hi: 5, log: true },
-  fullMcapMult: { lo: 2, hi: 50, log: true },
-  fullVolumeSol: { lo: 20, hi: 5_000, log: true },
-  rampShape: { lo: 0.33, hi: 3, log: true },
   strongVolumeRatio: { lo: 1, hi: 5 },
-  strongFlowMult: { lo: 1, hi: 10, log: true },
   supportVolumeMult: { lo: 0, hi: 20 },
   supportClipShare: { lo: 0.05, hi: 1 },
   supportSpacingSecs: { lo: 30, hi: 3_600, log: true },
   buyClipShare: { lo: 0.05, hi: 1 },
-  sellClipShare: { lo: 0.05, hi: 1 },
   clipSpacingSecs: { lo: 0, hi: 600 },
 };
 
 export const PARAM_KEYS = Object.keys(PARAM_SPACE) as ParamKey[];
 
 /**
- * Shipped defaults (`backtest flow`, 74 pools): v1's 25 bps entry, inventory floor off, flow knobs off — the
- * trained flow policy won on TEST (+0.40 vs this) but lost in the walk-forward test (−0.32), so it stays an
- * opt-in via STRATEGY_PARAMS. The sell ramp ships as a risk constraint: with a 1 SOL base allowance and the
- * trained ramp it is neutral on value. `backtest support` (no profit share, 2026-10): re-tuning the ramp and
- * the support knobs jointly on walk-forward TRAIN (+0.09 in-sample) lost on walk-forward TEST (−0.44 vs this
- * policy) and on TEST (−0.83), a bolder hand-set ramp (2 SOL base, full at 8× / 300 SOL) won walk-forward
- * (+0.22) but lost TEST (−1.62), so the ramp stays. The support mode at this preset (24 h activity below 2× the
- * vault's SOL → ⅓-size buys ≥ 5 min apart) changes no backtest number (walk-forward −0.001, TEST 0.000): it
- * only fires on charts quieter than the dataset's pools, which is exactly where it is meant to give volume.
+ * Shipped defaults: v1's 25 bps entry, flow knobs off, the support mode at 24 h activity below 2× the vault's SOL
+ * (⅓-size buys ≥ 5 min apart; it only fires on charts quieter than the dataset's pools). The sell ladder and the sell
+ * pause are the owner's call after the first live launch (TEST: 9× in minutes, then −86%; the previous per-window
+ * SOL allowance was spent in 0.01 SOL clips at 2–4×, and the lagging pump EMA kept it selling into the dump).
  */
 export const DEFAULT_PARAMS: StrategyParams = {
   buyMarginBps: 25,
   sellMarginBps: 25,
-  holdSlope: 10,
+  ladderStartMult: 1.5,
+  ladderShare10x: 0.35,
+  ladderShape: 1.25,
+  sellPauseDrawdown: 0.2,
   sellFlowBps: 0,
   sellThinRatio: 0,
   buyDumpShare: 1,
   buyClimaxBps: 0,
   vwapEntryBps: 0,
-  // Owner's call after the first live launch (TEST, 9× in minutes, ~1 SOL/h sold): sell into strength up to the
-  // program's window cap once the chart is 3× launch with 50 SOL traded; 2 SOL per window before that. Bolder than
-  // the backtest-tuned ramp (17.6× / 1,387 SOL), whose out-of-sample edge came from holding through rugs.
-  baseSellSol: 2,
-  fullMcapMult: 3,
-  fullVolumeSol: 50,
-  rampShape: 1,
   strongVolumeRatio: 1.39,
-  strongFlowMult: 6.63,
   supportVolumeMult: 2,
   supportClipShare: 0.33,
   supportSpacingSecs: 300,
   // Event-driven timing (backtest/results/speed.md; selected by the speed gate at 3 s cooldown with the buy-back-cost
-  // guardrail: "clips ≤ 10%"): objective ≥ 0.39 on WF TEST and TEST with a worst 10% not below v1's, ~32 fills/h
-  // instead of 3–4.
+  // guardrail: "clips ≤ 10%"): ~32 fills/h instead of 3–4.
   buyClipShare: 0.1,
-  sellClipShare: 0.1,
   clipSpacingSecs: 0,
 };
 
@@ -496,8 +481,7 @@ export type HoldKind =
   | "in_band"
   | "entry"
   | "flow"
-  | "floor"
-  | "allowance"
+  | "ladder"
   | "budget"
   | "vault_empty"
   | "vault_floor"
@@ -621,85 +605,60 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
 /** Climax volume: the short window trades at least this multiple of the median minute volume. */
 const CLIMAX_VOLUME_RATIO = 2;
 
-export interface SellAllowance {
-  /** SOL of proceeds this window may still take; Infinity = only the on-chain cap applies. */
-  sol: number;
-  /** Ramp progress 0..1 (1 = the on-chain cap). */
-  progress: number;
-  /** The rally came with net buying on strong volume: `strongFlowMult` applied. */
-  strong: boolean;
+/** Share of the bundle the sell ladder lets rally sells have taken at `mult` = spot / vault average cost (0..1). */
+export function ladderShare(p: StrategyParams, mult: number): number {
+  if (!(mult > p.ladderStartMult)) return 0;
+  const progress = Math.log(mult / p.ladderStartMult) / Math.log(10 / p.ladderStartMult);
+  return Math.min(1, p.ladderShare10x * progress ** p.ladderShape);
 }
 
 /**
- * The sell guardrail's allowance per window (SOL of proceeds, valued at spot): `baseSellSol` ramping
- * geometrically to the on-chain window cap `windowCapSol` as the smaller of the market-cap and traded-volume
- * progress (both on a log scale) rises to 1, shaped by `rampShape`; strong buy flow multiplies it.
+ * Share of the program's window sell cap the ladder spends at `mult`: the ladder's share relative to its 10× share, so a
+ * rally that runs within one window keeps most of the window's budget for its higher prices (all of it from 10×).
  */
-export function sellAllowance(p: StrategyParams, mcapMult: number, volumeSol: number, windowCapSol: number, flow: FlowFeatures): SellAllowance {
-  const toward = (value: number, full: number) => (full <= 1 ? 1 : Math.min(1, Math.max(0, Math.log(Math.max(1, value)) / Math.log(full))));
-  const progress = Math.min(toward(mcapMult, p.fullMcapMult), toward(volumeSol, p.fullVolumeSol)) ** p.rampShape;
-  const strong = flow.imbalance > 0 && flow.volumeRatio >= p.strongVolumeRatio;
-  if (progress >= 1 || windowCapSol <= p.baseSellSol) return { sol: Infinity, progress, strong };
-  const sol = p.baseSellSol * (windowCapSol / p.baseSellSol) ** progress * (strong ? p.strongFlowMult : 1);
-  return { sol, progress, strong };
+export function ladderWindowShare(p: StrategyParams, mult: number): number {
+  return Math.min(1, ladderShare(p, mult) / p.ladderShare10x);
 }
 
-function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyParams, flow: FlowFeatures, head: string): Plan {
+function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyParams, head: string): Plan {
   const t = m.terms;
-  const { x, y, price } = proj;
+  const { x, y, price, costSol, costTokens } = proj;
   /** Lamports the launch receives for selling `tokens` (net of the venue's fee). */
   const proceeds = (tokens: bigint) => sellFill(m, proj, tokens).net;
+  const minSell = solStr(s.minSellLamports);
   if (m.vaultTokens === 0n) return hold("vault_empty", `${head} but vault has no tokens`);
-  const budget = minBig(proj.sellRemaining, m.vaultTokens);
-  if (budget === 0n || proceeds(budget) < s.minTradeLamports) return budgetHold(proj, tokStr(proj.sellRemaining));
-  const bundlePrice = Number(m.bundleSol) / Number(m.bundleTokens);
-  const keepShare = Math.max(0, Math.min(1, 1 - params.holdSlope * Math.log(Number(x) / Number(y) / bundlePrice)));
-  const keep = (m.bundleTokens * BigInt(Math.round(keepShare * 1_000_000))) / 1_000_000n;
-  let room = m.vaultTokens > keep ? minBig(budget, m.vaultTokens - keep) : 0n;
-  if (room === 0n || proceeds(room) < s.minTradeLamports) {
-    return hold("floor", `${head} but the vault keeps ${tokStr(keep)} at this price (${Math.round(keepShare * 100)}% of the bundle)`);
+  // Sell ladder: at this multiple of the vault's average cost the vault keeps bundleTokens × (1 − share); the rest may go.
+  const mult = Number(x) / Number(y) / (Number(costSol) / Number(costTokens));
+  const share = ladderShare(params, mult);
+  const keep = (m.bundleTokens * BigInt(Math.round((1 - share) * 1_000_000))) / 1_000_000n;
+  const gap = m.vaultTokens > keep ? m.vaultTokens - keep : 0n;
+  const held = m.bundleTokens > 0n ? Number(m.vaultTokens) / Number(m.bundleTokens) : 0;
+  const ladder = `ladder at ${mult.toFixed(1)}× avg cost sells ${Math.round(share * 100)}% of the bundle, vault holds ${Math.round(held * 100)}% of it`;
+  if (gap === 0n || proceeds(gap) < s.minSellLamports) {
+    const left = gap === 0n ? "nothing left to sell at this price" : `~${solStr(proceeds(gap))} left, below the ${minSell} minimum sell`;
+    return hold("ladder", `${head} but ${ladder}: ${left}`);
   }
-  // Sell guardrail: proceeds per window (at spot) capped below the on-chain window cap until market cap and traded volume have grown.
-  const windowCapSol = Number(proceeds(minBig(proj.sellCap, m.vaultTokens))) / 1e9;
-  const mcapMult = Number(x) / Number(y) / bundlePrice;
-  const volumeSol = Number(m.volumeSol) / 1e9;
-  const allowance = sellAllowance(params, mcapMult, volumeSol, windowCapSol, flow);
-  let capNote = "";
-  if (allowance.sol < windowCapSol) {
-    // The allowance is SOL of proceeds. Value what this window already sold at what buying it back would cost on
-    // today's curve (x·S / (y − S)): with nothing else traded that is exactly what the sells took out of the curve
-    // (before the venue's fee), and buyers since only raise it, so the bound is conservative whichever way the price
-    // moved. Then size the rest as the tokens whose gross leaves the curve (x·T / (y + T) = cap). Counting tokens, or
-    // valuing them at today's sell price, lets several clips overshoot the allowance.
-    const sold = proj.sellCap - proj.sellRemaining;
-    const allowanceLamports = BigInt(Math.floor(allowance.sol * 1e9));
-    const soldLamports = sold === 0n ? 0n : sold < y ? (x * sold) / (y - sold) : allowanceLamports;
-    const leftLamports = allowanceLamports > soldLamports ? allowanceLamports - soldLamports : 0n;
-    const capLamports = grossForNet(m, leftLamports);
-    const left = leftLamports === 0n ? 0n : capLamports < x ? (y * capLamports) / (x - capLamports) : room;
-    const cap =
-      `mcap ${mcapMult.toFixed(1)}× launch, ${fmtSol(volumeSol, 1)} SOL traded: sell allowance ${fmtSol(allowance.sol, 3)} SOL this window` +
-      `${allowance.strong ? ` (strong buy flow ×${params.strongFlowMult.toFixed(1)})` : ""}`;
-    if (left === 0n || proceeds(left) < s.minTradeLamports) return hold("allowance", `${head} but ${cap}, ${solStr(proceeds(sold))} sold`);
-    if (left < room) {
-      room = left;
-      capNote = `; ${cap}`;
-    }
+  // Per window, the bundle's tokens go at the ladder's pace (tokens bought back on dips beyond the bundle sell freely).
+  const windowShare = ladderWindowShare(params, mult);
+  const excess = m.vaultTokens > m.bundleTokens ? m.vaultTokens - m.bundleTokens : 0n;
+  const allowed = minBig(proj.sellCap, (proj.sellCap * BigInt(Math.round(windowShare * 1_000_000))) / 1_000_000n + excess);
+  const windowSold = proj.sellCap - proj.sellRemaining;
+  const room = minBig(allowed > windowSold ? allowed - windowSold : 0n, gap);
+  if (room === 0n || proceeds(room) < s.minSellLamports) {
+    if (allowed >= proj.sellCap) return budgetHold(proj, tokStr(proj.sellRemaining));
+    return hold(
+      "ladder",
+      `${head} but ${ladder}; at this multiple a window sells ${Math.round(windowShare * 100)}% of its ${tokStr(proj.sellCap)} cap, ` +
+        `${tokStr(windowSold)} sold, resets in ${countdown(Number(proj.windowEnd), Number(proj.now))}`,
+    );
   }
+  // One clip as large as the ladder gap and the window allow, down to the EMA band edge or 90% of the impact limit.
   const floorTarget = (proj.ema * (BPS + t.bandBps)) / BPS;
   const impactTarget = impactTargets(proj, t.maxImpactBps).down;
   const ideal = sellToPrice(proj, floorTarget > impactTarget ? floorTarget : impactTarget);
-  if (ideal === 0n || proceeds(ideal) < s.minTradeLamports) return hold("too_small", `${head}, ideal sell below minimum`);
-  // Clip granularity: at most `sellClipShare` of what this window may still sell per decision; proceeds are concave
-  // in the tokens sold, so `atLeast` (the minimum trade's share of the room, scaled up) still clears the minimum.
-  if (params.sellClipShare < 1) {
-    const atLeast = (room * ((s.minTradeLamports * 1_001n) / 1_000n)) / proceeds(room) + 1n;
-    const sellClip = (room * BigInt(Math.round(params.sellClipShare * 10_000))) / BPS;
-    const clip = sellClip > atLeast ? sellClip : atLeast;
-    if (clip < minBig(ideal, room)) capNote += `; clip ≤ ${Math.round(params.sellClipShare * 100)}% of ${tokStr(room)} window room`;
-    room = minBig(clip, room);
+  if (ideal === 0n || proceeds(ideal) < s.minSellLamports) {
+    return hold("too_small", `${head}, a sell to the band edge / impact limit takes ~${solStr(ideal === 0n ? 0n : proceeds(ideal))}, below the ${minSell} minimum sell`);
   }
-
   // Cost rule checked against the slippage floor, so any fill the transaction accepts passes it.
   const tokensIn = largestFeasible(minBig(ideal, room), (a) => {
     if (!sellCurveOk(m, proj, a)) return false;
@@ -707,25 +666,42 @@ function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyP
   });
   const fill = sellFill(m, proj, tokensIn);
   const expectedSol = fill.net;
-  if (tokensIn === 0n || expectedSol < s.minTradeLamports) {
+  if (tokensIn === 0n || expectedSol < s.minSellLamports) {
     // Net spot (Q64 lamports per base unit, after the venue's fee) vs cost × (1 + band): if spot fails, no size can pass.
     const netSpot = (price * (BPS - venueFeeBps(m))) / BPS;
     if (netSpot * m.vaultTokens * BPS < (m.vaultCostSol << 64n) * (BPS + t.bandBps)) {
       const need = avgPriceStr((m.vaultCostSol * (BPS + t.bandBps)) / BPS, m.vaultTokens);
       return hold("cost_basis", `${head} but fill must be ≥ ${need} (vault avg cost + band)`);
     }
-    return hold("impact", `${head}, impact/cost limits leave sell below minimum`);
+    return hold("impact", `${head}, impact/cost limits leave sell below the ${minSell} minimum`);
   }
   const impactBps = moveBps(price, priceQ64(x - fill.gross, y + tokensIn));
+  const capNote = room < gap && tokensIn === room ? `; the rest of this window's ${Math.round(windowShare * 100)}% of its cap` : "";
   return {
     action: "sell",
     kind: "rally",
-    reason: `${head}: sell ${tokStr(tokensIn)} for ~${solStr(expectedSol)} (impact ${Number(impactBps) / 100}%)${capNote}`,
+    reason: `${head}: sell ${tokStr(tokensIn)} for ~${solStr(expectedSol)} (impact ${Number(impactBps) / 100}%); ${ladder}${capNote}`,
     amount: tokensIn,
     expectedOut: expectedSol,
     minOut: minOut(expectedSol, s.slippageBps),
     impactBps,
   };
+}
+
+/**
+ * Why a rally sell must wait for the market: a crash (spot more than `sellPauseDrawdown` under its 15 min high with the
+ * public net selling since that high), spot under the 3 min VWAP (the lagging pump EMA alone can read a dump as a rally),
+ * or net public selling over the latest minute (a red candle). Null = sell into it.
+ */
+export function sellPause(params: StrategyParams, flow: FlowFeatures): string | null {
+  if (flow.drawdownHigh > params.sellPauseDrawdown && flow.netSinceHighSol < 0) {
+    return `sell paused: −${(flow.drawdownHigh * 100).toFixed(1)}% from 15-min high, sellers in control (net −${(-flow.netSinceHighSol).toFixed(2)} SOL since the high)`;
+  }
+  if (flow.vwapShortDevBps < 0) return `sell paused: spot −${(-flow.vwapShortDevBps / 100).toFixed(1)}% under the 3-min VWAP, waiting for buyers to lift it`;
+  if (flow.imbalanceRecent < 0) {
+    return `sell paused: sellers in control over the last minute (${Math.round(((1 - flow.imbalanceRecent) / 2) * 100)}% of the volume were sells)`;
+  }
+  return null;
 }
 
 /** Decision at chain time `now` with the launch's flow features as of this poll. */
@@ -763,8 +739,10 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
       return done(hold("flow", `${head} but thin: volume ${flow.volumeRatio.toFixed(2)}× the median minute, selling from ${params.sellThinRatio.toFixed(2)}×`));
     }
     if (params.vwapEntryBps > 0 && flow.vwapDevBps < params.vwapEntryBps) return done(hold("flow", `${head} but ${vwap}, selling from +${pctStr(params.vwapEntryBps)}`));
+    const paused = sellPause(params, flow);
+    if (paused) return done(hold("flow", `${head} but ${paused}`));
     if (spacing) return done(hold("spacing", `${head} but ${spacing}`));
-    return done(planSell(m, s, proj, params, flow, head));
+    return done(planSell(m, s, proj, params, head));
   }
   return done(hold("in_band", `price inside band (${dev} vs EMA)`));
 }

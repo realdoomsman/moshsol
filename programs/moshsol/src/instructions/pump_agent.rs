@@ -259,7 +259,7 @@ pub fn agent_buy_pump<'info>(
     require!(sol_in <= launch.vault_sol, MoshError::InsufficientVault);
     require!(launch.vault_sol - sol_in >= terms.min_vault_sol, MoshError::VaultFloor);
     require!(
-        launch.window_sol_spent + sol_in <= launch.window_buy_cap,
+        launch.window_sol_spent + sol_in <= launch.window_buy_limit()?,
         MoshError::AgentWindowLimit
     );
     let before = view.price_q64;

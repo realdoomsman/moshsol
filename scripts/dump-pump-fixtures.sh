@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Refreshes tests/program/fixtures from mainnet: the pump.fun, PumpSwap, pump fee and Metaplex
-# token-metadata programs plus the config accounts their trade instructions read. The litesvm
-# suite loads these so pump launches are exercised against the real programs.
+# token-metadata programs, SPL Token (p-token on mainnet, stricter than litesvm's built-in
+# spl-token 3.5) and the associated token account program, plus the config accounts their trade
+# instructions read. The litesvm suite loads these so pump launches are exercised against the
+# real programs.
 #
 #   RPC_URL=<mainnet rpc> bash scripts/dump-pump-fixtures.sh
 set -euo pipefail
@@ -15,6 +17,8 @@ declare -A PROGRAMS=(
   [pump_amm]=pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA
   [pump_fee]=pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ
   [mpl_token_metadata]=metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+  [spl_token]=TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+  [spl_associated_token_account]=ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL
 )
 for name in "${!PROGRAMS[@]}"; do
   solana program dump -u "$RPC_URL" "${PROGRAMS[$name]}" "$OUT/$name.so" >/dev/null

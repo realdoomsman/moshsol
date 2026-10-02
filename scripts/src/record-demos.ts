@@ -131,7 +131,7 @@ const STATE_FILE = path.join(DEMO_DIR, "state.json");
 const DAY = 86_400;
 const SLIPPAGE_BPS = 300;
 /** The vault agent's default sizing and policy (apps/agent/src/config.ts), used to predict its next decision. */
-const AGENT_SIZING: Sizing = { minTradeLamports: 10_000_000n, slippageBps: 100 };
+const AGENT_SIZING: Sizing = { minTradeLamports: 10_000_000n, minSellLamports: 50_000_000n, slippageBps: 100 };
 /** Extra depth below the agent's trigger so EMA drift during the next ticks can't cancel the buy. */
 const DUMP_EXTRA_BPS = 120n;
 
