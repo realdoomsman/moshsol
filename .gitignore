@@ -21,3 +21,4 @@ apps/agent/.agent*.db*
 .secrets/
 .x-session/
 apps/indexer/apps/
+apps/agent/.before/
