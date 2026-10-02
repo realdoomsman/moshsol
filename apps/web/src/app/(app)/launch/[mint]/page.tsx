@@ -59,7 +59,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
     description,
     alternates: { canonical: `/launch/${id}` },
     openGraph: { title: `${title} · Holdfast`, description, type: "website", siteName: "Holdfast" },
-    twitter: { card: "summary_large_image", title: `${title} · Holdfast`, description },
+    twitter: { card: "summary_large_image", site: "@TryHoldFast", title: `${title} · Holdfast`, description },
     // Hidden by the indexer (HIDDEN_LAUNCHES): off every list and the sitemap; existing links work, search engines skip it.
     robots: l.hidden ? { index: false } : undefined,
   };
