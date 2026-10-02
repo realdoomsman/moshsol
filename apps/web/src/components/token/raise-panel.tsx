@@ -97,17 +97,20 @@ export function RaisePanel({ launch: l, phase }: { launch: LaunchSummary; phase:
         </div>
 
         <div className="pb-6">
+          {/* min and max share the bar's right end when the raise is fixed or nearly so: one label then. */}
           <ProgressBar
             size="md"
             value={raised}
             max={max}
             min={min}
             tone={ended ? "muted" : "default"}
-            minLabel={`min ${fmtSolValue(min)}`}
+            minLabel={max > 0 && min / max < 0.8 ? `min ${fmtSolValue(min)}` : undefined}
             label={`Raised ${fmtSolValue(raised)} of ${fmtSolValue(max)} SOL, minimum ${fmtSolValue(min)}`}
           />
           <div className="relative">
-            <span className="micro num absolute top-2 right-0 text-ink-3">max {fmtSolValue(max)}</span>
+            <span className="micro num absolute top-2 right-0 text-ink-3">
+              {min >= max ? `target ${fmtSolValue(max)}` : max > 0 && min / max < 0.8 ? `max ${fmtSolValue(max)}` : `min ${fmtSolValue(min)} · max ${fmtSolValue(max)}`}
+            </span>
           </div>
         </div>
 
@@ -134,7 +137,7 @@ export function RaisePanel({ launch: l, phase }: { launch: LaunchSummary; phase:
         <Cell label="Per-wallet cap" rule={betaCap > 0n ? `Beta cap: no wallet may deposit more than ${fmtLamports(betaCap)} SOL per raise.` : undefined}>
           {cap > 0n ? `${fmtLamports(cap)} SOL` : "None"}
         </Cell>
-        <Cell label="Access">{l.whitelisted ? `Whitelist · ${l.whitelist?.length ?? 0}` : "Open"}</Cell>
+        <Cell label="Access">{l.whitelisted ? (l.whitelist?.length ? `Whitelist · ${l.whitelist.length}` : "Whitelist") : "Open"}</Cell>
       </dl>
 
       {ended ? null : <LaunchedNow launch={l} />}

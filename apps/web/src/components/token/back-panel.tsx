@@ -189,7 +189,9 @@ export function BackPanel({ launch: l, phase, bare, className }: { launch: Launc
       {l.whitelisted ? (
         <p className={cn("small", publicKey && (!proof || rootMatches === false) ? "text-warn" : "text-ink-2")}>
           {!publicKey
-            ? `Whitelist raise: ${l.whitelist?.length ?? 0} wallets can back it.`
+            ? l.whitelist?.length
+              ? `Whitelist raise: ${l.whitelist.length} ${l.whitelist.length === 1 ? "wallet" : "wallets"} can back it.`
+              : "Whitelist raise: only listed wallets can back it."
             : proof
               ? "This wallet is on the whitelist."
               : "This wallet isn't on the whitelist."}{" "}
