@@ -77,6 +77,12 @@ export const BUYBACK = {
  */
 export const PUMP_VENUE_FEE_BPS = 125;
 
+/**
+ * `LAUNCH_GRACE_SECS`: a raise that met its minimum can be launched until this long after its deadline;
+ * past it nobody can launch it and every backer can refund (the first `refund` flips it to Refunding).
+ */
+export const LAUNCH_GRACE_SECS = 3 * 86_400;
+
 /** `wind_down` opens once a launch has been live this long… */
 export const WIND_DOWN_MIN_AGE_SECS = 3 * 86_400;
 /** …and saw no vault trade for this long (plus at most `terms.deadHoldersBps` of supply outside the venue and vault). */

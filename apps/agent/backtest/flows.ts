@@ -1,3 +1,4 @@
+import { projectEma } from "@holdfast/sdk";
 import { publicBuy, publicFeeBps } from "./program";
 import { T0, type Market, type PublicFlow, type Recording, type Rng } from "./sim";
 
@@ -334,9 +335,15 @@ export class TraderMixFlow implements PublicFlow {
       const past = this.prices.length > 1 ? this.prices[0]! : price;
       const momentum = Math.log(price / past) / 0.05;
       const c = m.chain;
-      const dt = Math.max(0, Number(m.now() - c.lastTradeTs));
-      const emaNow = Number(c.emaPrice) / 2 ** 64;
-      const ema = emaNow + ((price - emaNow) * dt) / (dt + Number(c.terms.emaPeriodSecs));
+      // The EMA the site shows (and scripts/src/simulate.ts trades against): pump launches clamp the idle step.
+      const ema = projectEma({
+        venue: c.venue,
+        emaSol: Number(c.emaPrice) / 2 ** 64,
+        priceSol: price,
+        lastTradeTs: Number(c.lastTradeTs),
+        nowSec: Number(m.now()),
+        periodSecs: Number(c.terms.emaPeriodSecs),
+      });
       const deviation = Math.log(price / ema) / 0.03;
       const anchor = Math.log(price / this.launchPrice);
       const pBuy = Math.min(0.9, Math.max(0.1, 1 / (1 + Math.exp(-(this.mood + w.momentum * momentum - w.revert * deviation - 0.8 * anchor)))));

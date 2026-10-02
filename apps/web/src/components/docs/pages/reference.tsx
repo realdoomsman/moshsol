@@ -85,7 +85,7 @@ export const overview: DocPage = {
               </li>
             ) : null}
             <li>
-              100% refund if a raise misses its minimum; all of the vault&rsquo;s SOL to backers when a dead launch (≤ {s.deadHoldersPct}% of
+              100% refund if a raise misses its minimum or isn&rsquo;t launched within 3 days of its deadline; all of the vault&rsquo;s SOL to backers when a dead launch (≤ {s.deadHoldersPct}% of
               supply held outside the vault and pump.fun) is wound down.
             </li>
             <li>

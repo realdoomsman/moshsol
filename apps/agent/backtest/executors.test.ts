@@ -65,9 +65,10 @@ test("low wallets are skipped and reported for top-up; unregistered or unloaded 
 });
 
 test("retarget turns the SDK instruction for one wallet into the SDK instruction for another", async () => {
-  // fetchPumpConfig reads pump.fun's Global and PumpSwap's GlobalConfig; any bytes do for the account layout.
+  // fetchPumpConfig reads pump.fun's Global and PumpSwap's GlobalConfig (recipient lists up to byte 997); any bytes do
+  // for the account layout, and identical bytes make every random recipient pick the same key.
   const connection = new Connection("http://127.0.0.1:1");
-  const fake = { data: Buffer.alloc(800, 7) };
+  const fake = { data: Buffer.alloc(1100, 7) };
   Object.assign(connection, { getMultipleAccountsInfo: async () => [fake, fake] });
   const client = new MoshClient(connection);
   const agent = Keypair.generate().publicKey;

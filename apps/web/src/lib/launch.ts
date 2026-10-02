@@ -1,4 +1,4 @@
-import type { LaunchJson, LaunchVenue } from "@holdfast/sdk";
+import { LAUNCH_GRACE_SECS, type LaunchJson, type LaunchVenue } from "@holdfast/sdk";
 
 /**
  * What identifies a launch in URLs, API paths and query keys: its address on pump launches (no mint
@@ -33,7 +33,11 @@ export const VENUE_LABEL: Record<VenueKind, string> = {
   pumpswap: "PumpSwap",
 };
 
-/** UI lifecycle derived from on-chain status plus the clock. */
+/**
+ * UI lifecycle derived from on-chain status plus the clock. A raise still `raising` on-chain is "failed"
+ * (refundable) once its deadline passed below the minimum, or once `LAUNCH_GRACE_SECS` past the deadline
+ * nobody launched it; the first refund flips it on-chain.
+ */
 export type Phase = "raising" | "ready" | "failed" | "live" | "refunding" | "woundDown";
 
 export function phaseOf(
@@ -44,7 +48,7 @@ export function phaseOf(
   const raised = BigInt(l.raised);
   const minMet = raised >= BigInt(l.raiseMin);
   const closed = nowSec >= l.raiseDeadline;
-  if (closed && !minMet) return "failed";
+  if (closed && (!minMet || nowSec >= l.raiseDeadline + LAUNCH_GRACE_SECS)) return "failed";
   if (minMet && (closed || raised >= BigInt(l.raiseMax))) return "ready";
   return "raising";
 }
@@ -59,11 +63,13 @@ export const PHASE_LABEL: Record<Phase, string> = {
 };
 
 /**
- * A refunding raise the creator cancelled (still before its deadline, or past its minimum) rather than one
- * that missed its minimum. The program keeps no reason; this reads it off the numbers.
+ * A refunding raise the creator cancelled (still before its deadline, or past its minimum before the launch
+ * window closed) rather than one that missed its minimum or wasn't launched in time. The program keeps no
+ * reason; this reads it off the numbers.
  */
 export function wasCancelled(l: Pick<LaunchJson, "status" | "raised" | "raiseMin" | "raiseDeadline">, nowSec: number): boolean {
-  return l.status === "refunding" && (l.raiseDeadline > nowSec || BigInt(l.raised) >= BigInt(l.raiseMin));
+  if (l.status !== "refunding") return false;
+  return l.raiseDeadline > nowSec || (BigInt(l.raised) >= BigInt(l.raiseMin) && nowSec < l.raiseDeadline + LAUNCH_GRACE_SECS);
 }
 
 /** What a closed raise still owes its backers: nothing was deposited, every deposit is back, or refunds are open. */
@@ -88,11 +94,11 @@ export function phaseExplainer(phase: Phase, venue: LaunchVenue): string {
     case "raising":
       return "Raising: you can put SOL in now. If the minimum isn't met by the deadline, you get 100% back.";
     case "ready":
-      return `Minimum met and the raise is closed to new deposits. Anyone can launch it ${venue === "pump" ? "on pump.fun " : ""}now; the backers' SOL then makes the first buy.`;
+      return `Minimum met and the raise is closed to new deposits. Anyone can launch it ${venue === "pump" ? "on pump.fun " : ""}now; the backers' SOL then makes the first buy. If nobody does within ${LAUNCH_GRACE_SECS / 86_400} days of the deadline, every backer gets 100% back.`;
     case "failed":
-      return "The raise missed its minimum. Every backer gets 100% of their deposit back from this page.";
+      return "The raise missed its minimum, or nobody launched it in time. Every backer gets 100% of their deposit back from this page.";
     case "refunding":
-      return "Refunding: this raise was cancelled or missed its minimum. Every backer gets 100% of their deposit back from this page.";
+      return "Refunding: this raise was cancelled, missed its minimum or wasn't launched in time. Every backer gets 100% of their deposit back from this page.";
     case "live":
       return `Live: buy or sell ${where}. The vault agent holds the backers' bundle, selling into strength and buying back dips; once the vault is well above its start it may pay backers back.`;
     case "woundDown":

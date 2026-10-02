@@ -178,12 +178,20 @@ export const PUMP_INITIAL_VIRTUAL_SOL = 30_000_000_000n;
 export const PUMP_INITIAL_VIRTUAL_TOKENS = 1_073_000_000_000_000n;
 export const PUMP_INITIAL_REAL_TOKENS = 793_100_000_000_000n;
 /**
- * What pump.fun `create` + the launch's first buy take out of the raise before the bundle: rent of
- * the bonding curve, its token account, the Metaplex metadata, the mint and the pump authority's
- * volume accumulator (0.02038 SOL measured on a localnet with the mainnet programs; `launch_pump`
- * measures the real figure).
+ * What pump.fun `create` takes out of the raise before the bundle: rent of the mint, the bonding
+ * curve, its token account and the Metaplex metadata at mainnet's rent (measured on $HFPUMP's
+ * `launch_pump`: 1,066,800 + 1,285,240 + 1,488,440 + 13,733,800; `launch_pump` measures the real figure).
  */
-export const PUMP_CREATE_COST_LAMPORTS = 20_400_000n;
+export const PUMP_CREATE_COST_LAMPORTS = 17_574_280n;
+/**
+ * Rent pump.fun's first `buy` charges the buyer on top of the fill: the pump authority's user volume
+ * accumulator (1,346,200) and the launch's fresh creator vault topped up to rent (650,240), mainnet
+ * figures. `launch_pump` measures them into the bundle's spend.
+ */
+export const PUMP_BUNDLE_BUY_RENT_LAMPORTS = 1_346_200n + 650_240n;
+/** pump.fun's fees on a fresh curve, each rounded up on its own: protocol 95 bps, creator 30 bps (`PUMP_VENUE_FEE_BPS` in total). */
+export const PUMP_CURVE_PROTOCOL_FEE_BPS = 95;
+export const PUMP_CURVE_CREATOR_FEE_BPS = 30;
 /** `PUMP_BUY_FEE_HEADROOM_BPS`: the bundle is sized with this much room for the venue fee. */
 const PUMP_BUY_FEE_HEADROOM_BPS = 300;
 
@@ -192,7 +200,8 @@ const PUMP_BUY_FEE_HEADROOM_BPS = 300;
  * the create cost comes off first, the bundle budget is `1 − reserve` of the rest, the token amount
  * is the fee-free quote of the budget minus 3% headroom capped at `bundleSupplyBps` of supply and
  * one base unit short of the curve's real token reserves (the bundle never completes the curve), and
- * what is spent is that amount's cost plus the venue fee; the rest stays as vault SOL.
+ * what is spent is that amount's cost plus the venue's protocol and creator fees plus the buy's
+ * one-time rents; the rest stays as vault SOL. Exact for $HFPUMP (bundle 670,526,969, vault 301,898,751).
  */
 export function previewPumpBundle(p: {
   raised: bigint;
@@ -212,8 +221,9 @@ export function previewPumpBundle(p: {
   if (tokens > cap) tokens = cap;
   if (tokens >= PUMP_INITIAL_REAL_TOKENS) tokens = PUMP_INITIAL_REAL_TOKENS - 1n;
   const cost = solInForTokens(x, y, tokens);
-  let spent = cost + bpsCeil(cost, PUMP_VENUE_FEE_BPS);
-  if (spent > budget) spent = budget;
+  let spent =
+    cost + bpsCeil(cost, PUMP_CURVE_PROTOCOL_FEE_BPS) + bpsCeil(cost, PUMP_CURVE_CREATOR_FEE_BPS) + PUMP_BUNDLE_BUY_RENT_LAMPORTS;
+  if (spent > remaining) spent = remaining;
   const curve = { virtualSol: x, realSol: cost, tokenReserve: y - tokens };
   return {
     launchFee,

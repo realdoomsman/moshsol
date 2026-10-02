@@ -3384,7 +3384,7 @@ export type Moshsol = {
     {
       "code": 6013,
       "name": "minimumReached",
-      "msg": "Raise minimum was reached; refunds unavailable"
+      "msg": "Raise minimum was reached; refunds open only if it is not launched within the grace period"
     },
     {
       "code": 6014,
@@ -3560,6 +3560,11 @@ export type Moshsol = {
       "code": 6048,
       "name": "executorNotSettled",
       "msg": "The agent wallet must end the trade with exactly the lamports and tokens it started with"
+    },
+    {
+      "code": 6049,
+      "name": "launchWindowClosed",
+      "msg": "The raise was not launched within the grace period after its deadline; backers can refund"
     }
   ],
   "types": [

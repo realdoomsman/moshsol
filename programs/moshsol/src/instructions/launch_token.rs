@@ -32,7 +32,8 @@ pub struct LaunchToken<'info> {
 ///
 /// Who may call:
 /// - the creator, any time the minimum is met;
-/// - anyone, once the minimum is met and either the deadline passed or the raise is full.
+/// - anyone, once the minimum is met and either the deadline passed or the raise is full;
+/// - nobody once `LAUNCH_GRACE_SECS` past the deadline (`refund` opens instead).
 pub fn launch(ctx: Context<LaunchToken>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let launch = &mut ctx.accounts.launch;
@@ -42,6 +43,7 @@ pub fn launch(ctx: Context<LaunchToken>) -> Result<()> {
     let is_creator = ctx.accounts.cranker.key() == launch.creator;
     let ready = now >= launch.raise_deadline || launch.raised >= launch.raise_max;
     require!(is_creator || ready, MoshError::RaiseStillOpen);
+    require!(!launch.launch_window_closed(now), MoshError::LaunchWindowClosed);
 
     let launch_fee = math::bps(launch.raised, launch.terms.launch_fee_bps)?;
     let net = launch.raised - launch_fee;

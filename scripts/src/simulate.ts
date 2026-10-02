@@ -424,7 +424,7 @@ class Simulator {
     const price = l.priceSol;
     const past = market.prices.length > 1 ? market.prices[0]! : price;
     const momentum = Math.log(price / past) / 0.05;
-    const ema = projectEma({ emaSol: l.emaSol, priceSol: price, lastTradeTs: l.lastTradeTs, nowSec: now, periodSecs: l.terms.emaPeriodSecs });
+    const ema = projectEma({ venue: l.venue, emaSol: l.emaSol, priceSol: price, lastTradeTs: l.lastTradeTs, nowSec: now, periodSecs: l.terms.emaPeriodSecs });
     const deviation = Math.log(price / ema) / 0.03;
     // Pull toward the launch price keeps prices oscillating around it instead of drifting off, so the
     // vault agents get to both sell rallies and buy dips below their cost basis.

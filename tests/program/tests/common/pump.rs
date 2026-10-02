@@ -245,40 +245,78 @@ impl Env {
             let (k, a) = fixture_account(name);
             self.svm.set_account(k, a).unwrap();
         }
-        for k in [
-            self.pump_fee_recipient(),
-            self.amm_protocol_fee_recipient(),
-            self.buyback_fee_recipient(),
-            PUMP_WITHDRAW_AUTHORITY,
-        ] {
+        let mut recipients = self.pump_fee_recipients();
+        recipients.extend(self.amm_protocol_fee_recipients());
+        recipients.extend(self.buyback_fee_recipients());
+        for k in recipients.iter().copied().chain([PUMP_WITHDRAW_AUTHORITY]) {
             if self.lamports(&k) == 0 {
                 self.svm.airdrop(&k, SOL).unwrap();
             }
         }
-        // PumpSwap sends protocol fees to the recipient's WSOL ATA, which must already exist.
+        // PumpSwap sends protocol and buyback fees to the recipient's WSOL ATA, which must
+        // already exist.
         let payer = self.admin.insecure_clone();
-        let pfr = self.amm_protocol_fee_recipient();
-        self.create_spl_ata(&payer, &pfr, &WSOL_MINT);
-        let bfr = self.buyback_fee_recipient();
-        self.create_spl_ata(&payer, &bfr, &WSOL_MINT);
+        for k in self.amm_protocol_fee_recipients().into_iter().chain(self.buyback_fee_recipients()) {
+            self.create_spl_ata(&payer, &k, &WSOL_MINT);
+        }
     }
 
-    /// First of pump.fun `Global.buyback_fee_recipients` (the same list PumpSwap uses).
+    /// `count` pubkeys of `account`'s data from `at`.
+    fn pubkeys_at(&self, account: &Pubkey, at: usize, count: usize) -> Vec<Pubkey> {
+        let d = self.svm.get_account(account).unwrap().data;
+        (0..count).map(|i| Pubkey::new_from_array(d[at + 32 * i..at + 32 * (i + 1)].try_into().unwrap())).collect()
+    }
+
+    /// One of `keys`, rotating with the slot: the venues accept any recipient of each list (the
+    /// SDK picks one at random per trade), so the suite exercises all of them.
+    fn rotate(&self, keys: Vec<Pubkey>) -> Pubkey {
+        keys[self.svm.get_sysvar::<solana_sdk::clock::Clock>().slot as usize % keys.len()]
+    }
+
+    /// pump.fun `Global.fee_recipient` and `Global.fee_recipients[7]`.
+    pub fn pump_fee_recipients(&self) -> Vec<Pubkey> {
+        let mut keys = self.pubkeys_at(&pump_global(), 41, 1);
+        keys.extend(self.pubkeys_at(&pump_global(), 162, 7));
+        keys
+    }
+
+    /// pump.fun `Global.buyback_fee_recipients[8]` (the same list PumpSwap uses).
+    pub fn buyback_fee_recipients(&self) -> Vec<Pubkey> {
+        self.pubkeys_at(&pump_global(), 741, 8)
+    }
+
+    /// PumpSwap `GlobalConfig.protocol_fee_recipients[8]`.
+    pub fn amm_protocol_fee_recipients(&self) -> Vec<Pubkey> {
+        self.pubkeys_at(&amm_global_config(), 57, 8)
+    }
+
     pub fn buyback_fee_recipient(&self) -> Pubkey {
-        let g = self.svm.get_account(&pump_global()).unwrap().data;
-        Pubkey::new_from_array(g[741..773].try_into().unwrap())
+        self.rotate(self.buyback_fee_recipients())
     }
 
-    /// pump.fun `Global.fee_recipient`.
     pub fn pump_fee_recipient(&self) -> Pubkey {
-        let g = self.svm.get_account(&pump_global()).unwrap().data;
-        Pubkey::new_from_array(g[41..73].try_into().unwrap())
+        self.rotate(self.pump_fee_recipients())
     }
 
-    /// First of PumpSwap `GlobalConfig.protocol_fee_recipients`.
     pub fn amm_protocol_fee_recipient(&self) -> Pubkey {
-        let g = self.svm.get_account(&amm_global_config()).unwrap().data;
-        Pubkey::new_from_array(g[57..89].try_into().unwrap())
+        self.rotate(self.amm_protocol_fee_recipients())
+    }
+
+    /// `mint`'s PumpSwap pool: (WSOL balance, token balance, `virtual_quote_reserves`).
+    /// PumpSwap prices on the WSOL balance plus the (signed) virtual quote.
+    pub fn pool_state(&self, mint: &Pubkey) -> (u64, u64, i128) {
+        let pool = pump::pool_pda(mint);
+        let d = self.svm.get_account(&pool).unwrap().data;
+        let v = i128::from_le_bytes(d[245..261].try_into().unwrap());
+        (self.spl_balance(&spl_ata(&pool, &WSOL_MINT)), self.spl_balance(&spl_ata(&pool, mint)), v)
+    }
+
+    /// Rewrites `mint`'s pool `virtual_quote_reserves`.
+    pub fn set_pool_virtual_quote(&mut self, mint: &Pubkey, v: i128) {
+        let pool = pump::pool_pda(mint);
+        let mut a = self.svm.get_account(&pool).unwrap();
+        a.data[245..261].copy_from_slice(&v.to_le_bytes());
+        self.svm.set_account(pool, a).unwrap();
     }
 
     /// Rewrites pump.fun's fee config so curve trades pay `protocol_bps` on top of the 0.3%
@@ -398,6 +436,21 @@ impl Env {
             }
             .to_account_metas(None),
             data: moshsol::instruction::Deposit { amount, proof: vec![] }.data(),
+        };
+        self.send(&[ix], &[owner])
+    }
+
+    /// `refund` on a launch by address.
+    pub fn refund_at(&mut self, owner: &Keypair, launch: &Pubkey) -> TxResult {
+        let ix = Instruction {
+            program_id: moshsol::ID,
+            accounts: moshsol::accounts::Refund {
+                owner: owner.pubkey(),
+                launch: *launch,
+                backer: backer_pda(launch, &owner.pubkey()),
+            }
+            .to_account_metas(None),
+            data: moshsol::instruction::Refund {}.data(),
         };
         self.send(&[ix], &[owner])
     }

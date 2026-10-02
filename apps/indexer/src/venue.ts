@@ -2,6 +2,7 @@ import {
   bondingCurvePda,
   curveStateOf,
   decodeBondingCurve,
+  decodePool,
   poolBaseAta,
   poolPda,
   poolQuoteAta,
@@ -25,10 +26,10 @@ function tokenAmount(info: AccountInfo<Buffer> | null): bigint | null {
 }
 
 /**
- * The reserves each launch currently trades against — PumpSwap pool base/quote balances once graduated,
- * the bonding curve before — read with one `getMultipleAccountsInfo` per 100 accounts instead of one RPC
- * call per launch (`fetchVenueState` in the SDK does one launch). Launches whose venue account doesn't
- * exist (yet) map to null.
+ * The reserves each launch currently trades against — PumpSwap pool base/quote balances plus the pool's
+ * signed `virtual_quote_reserves` once graduated, the bonding curve before — read with one
+ * `getMultipleAccountsInfo` per 100 accounts instead of one RPC call per launch (`fetchVenueState` in the
+ * SDK does one launch). Launches whose venue account doesn't exist (yet) map to null.
  */
 export async function loadVenueStates(
   connection: Connection,
@@ -40,7 +41,7 @@ export async function loadVenueStates(
     reads.push({ target, at: keys.length });
     if (target.graduated) {
       const pool = poolPda(target.mint);
-      keys.push(poolBaseAta(pool, target.mint), poolQuoteAta(pool));
+      keys.push(poolBaseAta(pool, target.mint), poolQuoteAta(pool), pool);
     } else {
       keys.push(bondingCurvePda(target.mint));
     }
@@ -54,7 +55,8 @@ export async function loadVenueStates(
     if (target.graduated) {
       const base = tokenAmount(infos[at]);
       const quote = tokenAmount(infos[at + 1]);
-      out.set(target.address, base !== null && quote !== null ? { curve: poolStateOf(quote, base), complete: false } : null);
+      const pool = infos[at + 2];
+      out.set(target.address, base !== null && quote !== null && pool ? { curve: poolStateOf(quote, base, decodePool(pool.data).virtualQuoteReserves), complete: false } : null);
     } else {
       const info = infos[at];
       if (!info) {

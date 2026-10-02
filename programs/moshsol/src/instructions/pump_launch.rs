@@ -292,6 +292,7 @@ pub fn launch_pump(ctx: Context<LaunchPump>) -> Result<()> {
     let is_creator = ctx.accounts.cranker.key() == launch.creator;
     let ready = now >= launch.raise_deadline || launch.raised >= launch.raise_max;
     require!(is_creator || ready, MoshError::RaiseStillOpen);
+    require!(!launch.launch_window_closed(now), MoshError::LaunchWindowClosed);
     let mint_key = ctx.accounts.mint.key();
     require_keys_neq!(mint_key, launch.create_key, MoshError::InvalidParam);
 
@@ -343,8 +344,7 @@ pub fn launch_pump(ctx: Context<LaunchPump>) -> Result<()> {
         donated: std::cell::Cell::new(0),
     };
     venue.absorb()?;
-    launch_info.sub_lamports(net)?;
-    authority.add_lamports(net)?;
+    venue.fund(net)?;
 
     let create = Instruction {
         program_id: pump::PUMP_PROGRAM_ID,
@@ -363,8 +363,6 @@ pub fn launch_pump(ctx: Context<LaunchPump>) -> Result<()> {
             AccountMeta::new_readonly(ctx.accounts.rent.key(), false),
             AccountMeta::new_readonly(ctx.accounts.event_authority.key(), false),
             AccountMeta::new_readonly(ctx.accounts.pump_program.key(), false),
-            // Unused by pump.fun; rides along so the runtime sees the launch's debit (`Trader`).
-            AccountMeta::new(launch_key, false),
         ],
         data: pump::create_data(&launch.name, &launch.symbol, &launch.uri, &launch_key),
     };
@@ -385,7 +383,6 @@ pub fn launch_pump(ctx: Context<LaunchPump>) -> Result<()> {
             ctx.accounts.rent.to_account_info(),
             ctx.accounts.event_authority.to_account_info(),
             ctx.accounts.pump_program.to_account_info(),
-            launch_info.clone(),
         ],
         &[authority_seeds],
     )?;

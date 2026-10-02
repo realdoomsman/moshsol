@@ -1,6 +1,6 @@
 "use client";
 
-import { fmtPrice, lamportsToSol, previewBundle, previewPumpBundle } from "@holdfast/sdk";
+import { fmtPrice, LAUNCH_GRACE_SECS, lamportsToSol, previewBundle, previewPumpBundle } from "@holdfast/sdk";
 import { useMemo, type ReactNode } from "react";
 import { fmtLamports, fmtSolValue, fmtTokens } from "@/lib/format";
 import type { Phase } from "@/lib/launch";
@@ -116,6 +116,7 @@ export function RaisePanel({ launch: l, phase }: { launch: LaunchSummary; phase:
         ) : phase === "ready" ? (
           <p className="small text-ink-2">
             The minimum is met and the raise is closed. Launching buys the bundle before anyone can trade. Any wallet can trigger it.
+            If nobody does, refunds open <Countdown to={l.raiseDeadline + LAUNCH_GRACE_SECS} prefix="in" endedLabel="now" />.
           </p>
         ) : phase === "raising" ? (
           <p className="small text-ink-2">

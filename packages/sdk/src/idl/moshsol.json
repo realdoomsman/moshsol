@@ -3378,7 +3378,7 @@
     {
       "code": 6013,
       "name": "MinimumReached",
-      "msg": "Raise minimum was reached; refunds unavailable"
+      "msg": "Raise minimum was reached; refunds open only if it is not launched within the grace period"
     },
     {
       "code": 6014,
@@ -3554,6 +3554,11 @@
       "code": 6048,
       "name": "ExecutorNotSettled",
       "msg": "The agent wallet must end the trade with exactly the lamports and tokens it started with"
+    },
+    {
+      "code": 6049,
+      "name": "LaunchWindowClosed",
+      "msg": "The raise was not launched within the grace period after its deadline; backers can refund"
     }
   ],
   "types": [

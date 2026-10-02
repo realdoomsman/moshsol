@@ -10,12 +10,27 @@
  * - `decisionToSent`: decision → the send accepted by the RPC / Sender (instruction, blockhash, fee, signing).
  * - `sentToLanded`: send → processed (signature notification or status poll); `sentToConfirmed`: → confirmed.
  *
- * `failures` counts failed trade sends by reason (`describeError` text).
+ * `failures` counts failed trade sends by reason (`failureReason`): at most MAX_FAILURE_REASONS distinct keys, any
+ * further reason counts under "other".
  */
+
+import { TransactionExpiredError, TransactionFailedError, describeError } from "@holdfast/sdk";
 
 const MAX_SAMPLES = 500;
 /** Slots whose first-report time is remembered (≈ 13 min). */
 const MAX_SLOTS = 2_048;
+/** Distinct `failures` keys kept for `/status`. */
+export const MAX_FAILURE_REASONS = 32;
+
+/**
+ * Stable key of a failed send: the program error when the logs name one, else the kind of failure without the
+ * block height (expiry) or signature (landed failure) its message carries, so repeated failures aggregate.
+ */
+export function failureReason(err: unknown): string {
+  if (err instanceof TransactionExpiredError) return "Transaction expired unconfirmed";
+  if (err instanceof TransactionFailedError) return describeError({ message: `Transaction failed: ${JSON.stringify(err.txError)}`, logs: err.logs });
+  return describeError(err);
+}
 
 export interface LatencySummary {
   n: number;
@@ -56,7 +71,7 @@ export class Metrics {
   private readonly stages = Object.fromEntries(STAGES.map((s) => [s, new Latency()])) as Record<Stage, Latency>;
   private readonly slotSeen = new Map<number, number>();
   private readonly trades = { sent: 0, landed: 0, failed: 0 };
-  private readonly failures: Record<string, number> = {};
+  private readonly failures = new Map<string, number>();
 
   add(stage: Stage, ms: number): void {
     this.stages[stage].add(ms);
@@ -82,16 +97,19 @@ export class Metrics {
     this.trades.landed += 1;
   }
 
-  failed(reason: string): void {
+  failed(err: unknown): void {
     this.trades.failed += 1;
-    this.failures[reason] = (this.failures[reason] ?? 0) + 1;
+    const reason = failureReason(err);
+    // The last slot is "other": one more distinct reason would grow `/status` with every new message.
+    const key = this.failures.has(reason) || this.failures.size < MAX_FAILURE_REASONS - 1 ? reason : "other";
+    this.failures.set(key, (this.failures.get(key) ?? 0) + 1);
   }
 
   snapshot(): MetricsSnapshot {
     return {
       latencyMs: Object.fromEntries(STAGES.map((s) => [s, this.stages[s].summary()])) as Record<Stage, LatencySummary>,
       trades: { ...this.trades },
-      failures: { ...this.failures },
+      failures: Object.fromEntries(this.failures),
     };
   }
 }

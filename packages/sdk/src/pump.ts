@@ -106,41 +106,106 @@ export interface PoolState {
   poolBaseTokenAccount: PublicKey;
   poolQuoteTokenAccount: PublicKey;
   coinCreator: PublicKey;
+  /**
+   * `Pool.virtual_quote_reserves` (signed i128 at offset 245; 0 for pools written before the
+   * field existed): PumpSwap quotes every trade on `quote vault balance + this`.
+   */
+  virtualQuoteReserves: bigint;
 }
+
+/** Offset of `Pool.virtual_quote_reserves` (i128 LE); shorter (older) pool accounts carry none. */
+const POOL_VIRTUAL_QUOTE_AT = 245;
 
 export function decodePool(data: Buffer | Uint8Array): PoolState {
   const b = Buffer.from(data);
   const pk = (at: number) => new PublicKey(b.subarray(at, at + 32));
+  let virtualQuoteReserves = 0n;
+  if (b.length >= POOL_VIRTUAL_QUOTE_AT + 16) {
+    const view = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    const lo = view.getBigUint64(POOL_VIRTUAL_QUOTE_AT, true);
+    const hi = view.getBigInt64(POOL_VIRTUAL_QUOTE_AT + 8, true);
+    virtualQuoteReserves = (hi << 64n) + lo;
+  }
   return {
     baseMint: pk(43),
     quoteMint: pk(75),
     poolBaseTokenAccount: pk(139),
     poolQuoteTokenAccount: pk(171),
     coinCreator: pk(211),
+    virtualQuoteReserves,
   };
 }
 
-/** Fee recipients the venues require on every trade; read live because pump.fun can change them. */
+/**
+ * The quote reserve PumpSwap prices on: the pool's WSOL vault balance plus its (signed)
+ * `virtual_quote_reserves` — mirrors `pump::effective_quote` in the program, which rejects a
+ * non-positive or overflowing result; here it floors at 0.
+ */
+export function poolEffectiveQuote(raw: bigint, virtualQuote: bigint): bigint {
+  const q = raw + virtualQuote;
+  return q > 0n ? q : 0n;
+}
+
+/** Every fee recipient the venues accept, read live because pump.fun can change them. */
+export interface PumpFeeRecipients {
+  /** pump.fun `Global.fee_recipient` and `Global.fee_recipients[7]` */
+  feeRecipients: PublicKey[];
+  /** PumpSwap `GlobalConfig.protocol_fee_recipients[8]` */
+  protocolFeeRecipients: PublicKey[];
+  /** pump.fun `Global.buyback_fee_recipients[8]` (the same list on both programs) */
+  buybackFeeRecipients: PublicKey[];
+}
+
+/** One fee recipient of each kind for one instruction (see `pickPumpConfig`). */
 export interface PumpConfig {
-  /** pump.fun `Global.fee_recipient` */
   feeRecipient: PublicKey;
-  /** first of PumpSwap `GlobalConfig.protocol_fee_recipients` */
   protocolFeeRecipient: PublicKey;
-  /** first of `Global.buyback_fee_recipients` (the same list on both programs) */
   buybackFeeRecipient: PublicKey;
 }
 
-export async function fetchPumpConfig(connection: Connection): Promise<PumpConfig> {
+/** `count` pubkeys from `at`, unset (all-zero) slots skipped. */
+function pubkeyList(data: Buffer, at: number, count: number): PublicKey[] {
+  const out: PublicKey[] = [];
+  for (let i = 0; i < count; i++) {
+    const key = new PublicKey(data.subarray(at + 32 * i, at + 32 * (i + 1)));
+    if (!key.equals(PublicKey.default)) out.push(key);
+  }
+  return out;
+}
+
+export async function fetchPumpFeeRecipients(connection: Connection): Promise<PumpFeeRecipients> {
   const [global, config] = await connection.getMultipleAccountsInfo([pumpGlobalPda(), ammGlobalConfigPda()], "confirmed");
   if (!global || !config) throw new Error("pump.fun config accounts not found on this cluster");
   return {
-    // Global: disc(8) initialized(1) authority(32) fee_recipient(32)
-    feeRecipient: new PublicKey(global.data.subarray(41, 73)),
-    // GlobalConfig: disc(8) admin(32) lp_fee(8) protocol_fee(8) disable_flags(1) recipients[8]
-    protocolFeeRecipient: new PublicKey(config.data.subarray(57, 89)),
+    // Global: disc(8) initialized(1) authority(32) fee_recipient(32) … creator_fee_basis_points(8) fee_recipients[7] (162)
+    feeRecipients: [...pubkeyList(global.data, 41, 1), ...pubkeyList(global.data, 162, 7)],
+    // GlobalConfig: disc(8) admin(32) lp_fee(8) protocol_fee(8) disable_flags(1) protocol_fee_recipients[8]
+    protocolFeeRecipients: pubkeyList(config.data, 57, 8),
     // Global: … reserved_fee_recipients[7] is_cashback_enabled(1) buyback_fee_recipients[8]
-    buybackFeeRecipient: new PublicKey(global.data.subarray(741, 773)),
+    buybackFeeRecipients: pubkeyList(global.data, 741, 8),
   };
+}
+
+/**
+ * A random recipient of each list, as pump.fun recommends per buy / sell: every recipient is
+ * write-locked by the trade, so spreading them avoids queueing behind everyone else's trades on
+ * the same account (and the priority fee that local fee market charges).
+ */
+export function pickPumpConfig(r: PumpFeeRecipients): PumpConfig {
+  const pick = (keys: PublicKey[], what: string) => {
+    if (keys.length === 0) throw new Error(`pump.fun ${what} list is empty`);
+    return keys[Math.floor(Math.random() * keys.length)]!;
+  };
+  return {
+    feeRecipient: pick(r.feeRecipients, "fee recipient"),
+    protocolFeeRecipient: pick(r.protocolFeeRecipients, "protocol fee recipient"),
+    buybackFeeRecipient: pick(r.buybackFeeRecipients, "buyback fee recipient"),
+  };
+}
+
+/** Fee recipients for one venue instruction, picked at random (`pickPumpConfig`). */
+export async function fetchPumpConfig(connection: Connection): Promise<PumpConfig> {
+  return pickPumpConfig(await fetchPumpFeeRecipients(connection));
 }
 
 const w = (pubkey: PublicKey, isWritable = false): AccountMeta => ({ pubkey, isSigner: false, isWritable });
@@ -239,9 +304,17 @@ export function curveStateOf(c: BondingCurveState): CurveState {
   return { virtualSol: c.virtualSolReserves - c.realSolReserves, realSol: c.realSolReserves, tokenReserve: c.virtualTokenReserves };
 }
 
-/** A PumpSwap pool (quote = WSOL balance, base = token balance) as a `CurveState`: everything is real. */
-export function poolStateOf(quoteReserve: bigint, baseReserve: bigint): CurveState {
-  return { virtualSol: 0n, realSol: quoteReserve, tokenReserve: baseReserve };
+/**
+ * A PumpSwap pool as a `CurveState`: `x` = the effective quote (WSOL vault balance plus the pool's
+ * signed `virtual_quote_reserves`, see `poolEffectiveQuote`), of which only the vault balance
+ * (`realSol`) can leave on sells; `y` = the base vault balance.
+ */
+export function poolStateOf(quoteReserve: bigint, baseReserve: bigint, virtualQuoteReserves: bigint): CurveState {
+  return {
+    virtualSol: poolEffectiveQuote(quoteReserve, virtualQuoteReserves) - quoteReserve,
+    realSol: quoteReserve,
+    tokenReserve: baseReserve,
+  };
 }
 
 export interface VenueState {
@@ -261,11 +334,14 @@ export async function fetchVenueState(
 ): Promise<VenueState | null> {
   if (l.graduated) {
     const pool = poolPda(l.mint);
-    const [base, quote] = await connection.getMultipleAccountsInfo([poolBaseAta(pool, l.mint), poolQuoteAta(pool)], commitment);
-    if (!base || !quote) return null;
+    const [poolInfo, base, quote] = await connection.getMultipleAccountsInfo(
+      [pool, poolBaseAta(pool, l.mint), poolQuoteAta(pool)],
+      commitment,
+    );
+    if (!poolInfo || !base || !quote) return null;
     const quoteReserve = unpackAccount(poolQuoteAta(pool), quote, TOKEN_PROGRAM_ID).amount;
     const baseReserve = unpackAccount(poolBaseAta(pool, l.mint), base, TOKEN_PROGRAM_ID).amount;
-    return { curve: poolStateOf(quoteReserve, baseReserve), complete: false };
+    return { curve: poolStateOf(quoteReserve, baseReserve, decodePool(poolInfo.data).virtualQuoteReserves), complete: false };
   }
   const info = await connection.getAccountInfo(bondingCurvePda(l.mint), commitment);
   if (!info) return null;

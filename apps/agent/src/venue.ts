@@ -1,9 +1,20 @@
 import { PublicKey } from "@solana/web3.js";
-import { bondingCurvePda, curveStateOf, decodeBondingCurve, poolBaseAta, poolQuoteAta, poolStateOf, type LaunchJson, type VenueState } from "@holdfast/sdk";
+import {
+  bondingCurvePda,
+  curveStateOf,
+  decodeBondingCurve,
+  decodePool,
+  poolBaseAta,
+  poolQuoteAta,
+  poolStateOf,
+  type LaunchJson,
+  type VenueState,
+} from "@holdfast/sdk";
 
 /**
  * A pump launch's venue state from accounts read in a batch or delivered by the stream (`fetchVenueState` for
- * one launch at a time): the bonding curve before graduation, the pool's base and quote token accounts after.
+ * one launch at a time): the bonding curve before graduation; after it the pool's base and quote token accounts
+ * and the pool itself, whose signed `virtual_quote_reserves` PumpSwap adds to the quote balance to price trades.
  */
 
 /** SPL token account layout: mint(32) owner(32) amount(u64). */
@@ -18,7 +29,7 @@ export function venueKeys(l: Pick<LaunchJson, "mint" | "pump">): PublicKey[] {
   const mint = new PublicKey(l.mint);
   if (!l.pump.graduated) return [bondingCurvePda(mint)];
   const pool = new PublicKey(l.pump.pool);
-  return [poolBaseAta(pool, mint), poolQuoteAta(pool)];
+  return [poolBaseAta(pool, mint), poolQuoteAta(pool), pool];
 }
 
 /** `fetchVenueState`'s decoding of the `venueKeys(l)` accounts; null when any is missing. */
@@ -29,7 +40,7 @@ export function decodeVenue(l: Pick<LaunchJson, "mint" | "pump">, infos: ({ data
     const c = decodeBondingCurve(curve.data);
     return { curve: curveStateOf(c), complete: c.complete };
   }
-  const [base, quote] = infos;
-  if (!base || !quote) return null;
-  return { curve: poolStateOf(tokenAmount(quote), tokenAmount(base)), complete: false };
+  const [base, quote, pool] = infos;
+  if (!base || !quote || !pool) return null;
+  return { curve: poolStateOf(tokenAmount(quote), tokenAmount(base), decodePool(pool.data).virtualQuoteReserves), complete: false };
 }

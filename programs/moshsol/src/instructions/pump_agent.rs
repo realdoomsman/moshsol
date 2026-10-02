@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program;
 use anchor_spl::associated_token::{self, get_associated_token_address, AssociatedToken};
 use anchor_spl::token::{self, CloseAccount, Token};
 use anchor_spl::token_interface::{self, TransferChecked};
@@ -164,15 +165,31 @@ impl<'a, 'info> Wallet<'a, 'info> {
         )
     }
 
-    /// Closes the token account this instruction created, its rent back to the wallet.
-    fn close(&self, infos: &Infos<'info>) -> Result<()> {
+    /// Closes the token account this instruction created, its rent back to the wallet. Lamports
+    /// someone parked at the address before it existed (the ATA program only topped them up to
+    /// rent) come back with it: whatever the wallet then holds above its starting balance goes
+    /// to the launch and is booked in `donated`, so the wallet keeps nothing and can't be
+    /// blocked by dust.
+    fn close(&self, infos: &Infos<'info>, donated: &std::cell::Cell<u64>) -> Result<()> {
         if self.held.is_some() {
             return Ok(());
         }
         token::close_account(CpiContext::new(
             infos.token_program.clone(),
             CloseAccount { account: self.tokens.clone(), destination: self.info.clone(), authority: self.info.clone() },
-        ))
+        ))?;
+        let surplus = self.info.lamports().saturating_sub(self.lamports);
+        if surplus > 0 {
+            system_program::transfer(
+                CpiContext::new(
+                    infos.system_program.clone(),
+                    system_program::Transfer { from: self.info.clone(), to: infos.launch.clone() },
+                ),
+                surplus,
+            )?;
+            donated.set(donated.get() + surplus);
+        }
+        Ok(())
     }
 
     /// The wallet keeps no value: same lamports and tokens as before the instruction.
@@ -252,7 +269,7 @@ pub fn agent_buy_pump<'info>(
     let (spent, tokens) = venue.buy(sol_in, min_tokens_out)?;
     if let Some(w) = &wallet {
         w.transfer(&infos, seeds, tokens, true)?;
-        w.close(&infos)?;
+        w.close(&infos, &venue.donated)?;
     }
     venue.settle()?;
     if let Some(w) = &wallet {
@@ -343,7 +360,7 @@ pub fn agent_sell_pump<'info>(
     }
     let (sol, sold) = venue.sell(tokens_in, min_sol_out)?;
     if let Some(w) = &wallet {
-        w.close(&infos)?;
+        w.close(&infos, &venue.donated)?;
     }
     venue.settle()?;
     if let Some(w) = &wallet {

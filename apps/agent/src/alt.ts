@@ -21,7 +21,7 @@ import {
   ammGlobalConfigPda,
   ammGlobalVolumeAccumulatorPda,
   feeConfigPda,
-  fetchPumpConfig,
+  fetchPumpFeeRecipients,
   platformPda,
   prepareTx,
   sendAndConfirm,
@@ -30,13 +30,17 @@ import {
 } from "@holdfast/sdk";
 import { log } from "./log";
 
+/** Addresses per `extendLookupTable` (32 bytes each; 20 fit next to the create instruction in one transaction). */
+const EXTEND_BATCH = 20;
+
 /**
  * The agent's address lookup table: the accounts every PumpSwap trade (`agent_*_pump` after graduation,
  * `buyback_burn` on a graduated Holdfast token, `wind_down_pump`) carries regardless of the launch —
- * `poolVenueAccounts` minus the pool's own accounts plus the agent instruction's fixed accounts — so a
- * v0 transaction fits where the legacy one (≈30 keys) does not. Created once per cluster with the
- * agent as authority and remembered in `altFile` under the cluster's genesis hash (a localnet reset
- * gets a fresh table instead of a vanished one); `AGENT_ALT` pins an existing table instead.
+ * `poolVenueAccounts` minus the pool's own accounts plus the agent instruction's fixed accounts, with every fee
+ * recipient pump.fun lists since each instruction picks one at random — so a v0 transaction fits where the legacy
+ * one (≈30 keys) does not. Created once per cluster with the agent as authority and remembered in `altFile` under
+ * the cluster's genesis hash (a localnet reset gets a fresh table instead of a vanished one); `AGENT_ALT` pins an
+ * existing table instead. A table the agent owns is extended with whatever it lacks when it is loaded.
  */
 export class LookupTable {
   private account: AddressLookupTableAccount | null = null;
@@ -78,11 +82,26 @@ export class LookupTable {
     const remembered = this.pinned ?? this.remembered(genesis);
     if (remembered) {
       const { value } = await this.connection.getAddressLookupTable(remembered, { commitment: "confirmed" });
-      if (value) return value;
+      if (value) return this.complete(value);
       if (this.pinned) throw new Error(`AGENT_ALT ${remembered.toBase58()} does not exist on this cluster`);
       log("alt_stale", { lookupTable: remembered.toBase58(), file: this.file });
     }
     return this.create(genesis);
+  }
+
+  /** `table` with the addresses it lacks appended (pump.fun's recipient lists change); a table another key owns is used as is. */
+  private async complete(table: AddressLookupTableAccount): Promise<AddressLookupTableAccount> {
+    const have = new Set(table.state.addresses.map((k) => k.toBase58()));
+    const missing = (await this.addresses()).filter((k) => !have.has(k.toBase58()));
+    if (missing.length === 0) return table;
+    if (!table.state.authority?.equals(this.authority.publicKey)) {
+      log("alt_incomplete", { lookupTable: table.key.toBase58(), missing: missing.length });
+      return table;
+    }
+    await this.extend(table.key, missing);
+    const value = await this.activated(table.key, table.state.addresses.length + missing.length);
+    log("alt_extended", { lookupTable: table.key.toBase58(), added: missing.length, addresses: value.state.addresses.length });
+    return value;
   }
 
   private remembered(genesis: string): PublicKey | null {
@@ -113,20 +132,27 @@ export class LookupTable {
     const addresses = await this.addresses();
     const recentSlot = await this.connection.getSlot("finalized");
     const [createIx, lookupTable] = AddressLookupTableProgram.createLookupTable({ authority, payer: authority, recentSlot });
-    // Up to ~20 addresses fit next to the create instruction; the rest go in a second transaction.
-    const first = addresses.slice(0, 20);
-    const rest = addresses.slice(20);
-    const extend = (list: PublicKey[]) => AddressLookupTableProgram.extendLookupTable({ payer: authority, authority, lookupTable, addresses: list });
-    await this.send([createIx, extend(first)]);
-    if (rest.length > 0) await this.send([extend(rest)]);
+    // Up to ~20 addresses fit next to the create instruction; the rest go in further transactions.
+    await this.send([createIx, AddressLookupTableProgram.extendLookupTable({ payer: authority, authority, lookupTable, addresses: addresses.slice(0, EXTEND_BATCH) })]);
+    await this.extend(lookupTable, addresses.slice(EXTEND_BATCH));
     this.remember(genesis, lookupTable);
-    // Addresses become usable in the slot after the one that extended the table.
+    const value = await this.activated(lookupTable, addresses.length);
+    log("alt_created", { lookupTable: lookupTable.toBase58(), addresses: addresses.length, file: this.file });
+    return value;
+  }
+
+  private async extend(lookupTable: PublicKey, addresses: PublicKey[]): Promise<void> {
+    const authority = this.authority.publicKey;
+    for (let i = 0; i < addresses.length; i += EXTEND_BATCH) {
+      await this.send([AddressLookupTableProgram.extendLookupTable({ payer: authority, authority, lookupTable, addresses: addresses.slice(i, i + EXTEND_BATCH) })]);
+    }
+  }
+
+  /** The table once it holds `count` addresses and they are usable (from the slot after the one that extended it). */
+  private async activated(lookupTable: PublicKey, count: number): Promise<AddressLookupTableAccount> {
     for (;;) {
       const { value } = await this.connection.getAddressLookupTable(lookupTable, { commitment: "confirmed" });
-      if (value && value.state.addresses.length === addresses.length && (await this.connection.getSlot("confirmed")) > value.state.lastExtendedSlot) {
-        log("alt_created", { lookupTable: lookupTable.toBase58(), addresses: addresses.length, file: this.file });
-        return value;
-      }
+      if (value && value.state.addresses.length === count && (await this.connection.getSlot("confirmed")) > value.state.lastExtendedSlot) return value;
       await sleep(400);
     }
   }
@@ -139,12 +165,13 @@ export class LookupTable {
 
   /**
    * The launch-independent accounts of a PumpSwap trade through this program (`poolVenueAccounts` +
-   * `pumpAgentAccounts`). The invoked programs (compute budget, this program) and the signer stay static
-   * keys by protocol rule, so they are not listed.
+   * `pumpAgentAccounts`), with every fee recipient the venues accept (each instruction picks one at random) and
+   * the WSOL accounts of the PumpSwap ones. The invoked programs (compute budget, this program) and the signer stay
+   * static keys by protocol rule, so they are not listed.
    */
   private async addresses(): Promise<PublicKey[]> {
-    const cfg = await fetchPumpConfig(this.connection);
-    return [
+    const r = await fetchPumpFeeRecipients(this.connection);
+    const all = [
       SystemProgram.programId,
       TOKEN_PROGRAM_ID,
       ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -157,10 +184,9 @@ export class LookupTable {
       ammEventAuthorityPda(),
       ammGlobalVolumeAccumulatorPda(),
       feeConfigPda(PUMP_AMM_PROGRAM_ID),
-      cfg.protocolFeeRecipient,
-      splAta(cfg.protocolFeeRecipient, WSOL_MINT),
-      cfg.buybackFeeRecipient,
-      splAta(cfg.buybackFeeRecipient, WSOL_MINT),
+      ...[...r.protocolFeeRecipients, ...r.buybackFeeRecipients].flatMap((k) => [k, splAta(k, WSOL_MINT)]),
+      ...r.feeRecipients,
     ];
+    return [...new Map(all.map((k) => [k.toBase58(), k])).values()];
   }
 }

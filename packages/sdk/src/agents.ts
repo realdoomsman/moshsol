@@ -1,6 +1,6 @@
 /** Quote and agent-rule helpers shared by the web app and the vault agent. */
 import { quoteBuy, solInForTokens, type CurveState } from "./math";
-import type { LaunchJson } from "./launch";
+import type { LaunchJson, LaunchVenue } from "./launch";
 
 /** Smallest gross SOL input (fee included) whose buy quote yields at least `tokens`. */
 export function solForTokens(c: CurveState, tokens: bigint, tradeFeeBps: number): bigint {
@@ -12,9 +12,11 @@ export function solForTokens(c: CurveState, tokens: bigint, tradeFeeBps: number)
 
 /**
  * EMA as the program will see it on the next trade: `ema += (spot − ema) · dt / (dt + period)`,
- * where dt is the time since the last trade.
+ * where dt is the time since the last trade. Pump launches sample the EMA only on agent trades, so the
+ * program clamps dt to the period there (`update_ema_with`): one sample moves it at most halfway.
  */
 export function projectEma(p: {
+  venue: LaunchVenue;
   emaSol: number;
   priceSol: number;
   lastTradeTs: number;
@@ -22,7 +24,8 @@ export function projectEma(p: {
   periodSecs: number;
 }): number {
   if (p.emaSol <= 0) return p.priceSol;
-  const dt = Math.max(0, p.nowSec - p.lastTradeTs);
+  const idle = Math.max(0, p.nowSec - p.lastTradeTs);
+  const dt = p.venue === "pump" ? Math.min(idle, p.periodSecs) : idle;
   return p.emaSol + ((p.priceSol - p.emaSol) * dt) / (dt + p.periodSecs);
 }
 
@@ -49,6 +52,7 @@ export interface AgentZones {
 export function agentZones(l: LaunchJson, nowSec: number): AgentZones {
   const band = l.terms.agentBandBps / 10_000;
   const ema = projectEma({
+    venue: l.venue,
     emaSol: l.emaSol,
     priceSol: l.priceSol,
     lastTradeTs: l.lastTradeTs,

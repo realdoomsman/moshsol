@@ -59,8 +59,8 @@ export class ExecutorPool {
   private registered: PublicKey[] = [];
   /** Per launch: the trade in flight, and the side and time of the last one handed out. */
   private readonly launches = new Map<string, { inFlight: boolean; side: Side | null; at: number }>();
-  /** Derived accounts per wallet and mint (`retarget`), so the hot path skips the PDA searches. */
-  private readonly derived = new Map<string, PublicKey[]>();
+  /** Derived accounts per mint and wallet (`retarget`), so the hot path skips the PDA searches; pruned to live mints. */
+  private readonly derived = new Map<string, Map<string, PublicKey[]>>();
 
   constructor(
     keypairs: Keypair[],
@@ -136,9 +136,10 @@ export class ExecutorPool {
     return low;
   }
 
-  /** Drops launches that are no longer live. */
-  retain(live: Set<string>): void {
+  /** Drops launches that are no longer live (`live`: launch addresses) and the derived accounts of mints no longer live. */
+  retain(live: Set<string>, liveMints: Set<string>): void {
     for (const key of [...this.launches.keys()]) if (!live.has(key) && !this.launches.get(key)!.inFlight) this.launches.delete(key);
+    for (const mint of [...this.derived.keys()]) if (!liveMints.has(mint)) this.derived.delete(mint);
   }
 
   /** Status view: every registered wallet, whether this agent holds it, its balance and last use. */
@@ -173,11 +174,14 @@ export class ExecutorPool {
   }
 
   private accountsOf(wallet: PublicKey, mint: PublicKey): PublicKey[] {
-    const key = `${wallet.toBase58()}:${mint.toBase58()}`;
-    let keys = this.derived.get(key);
+    const m = mint.toBase58();
+    let byWallet = this.derived.get(m);
+    if (!byWallet) this.derived.set(m, (byWallet = new Map()));
+    const w = wallet.toBase58();
+    let keys = byWallet.get(w);
     if (!keys) {
       keys = [wallet, splAta(wallet, mint), splAta(wallet, WSOL_MINT), pumpUserVolumeAccumulatorPda(wallet), ammUserVolumeAccumulatorPda(wallet)];
-      this.derived.set(key, keys);
+      byWallet.set(w, keys);
     }
     return keys;
   }

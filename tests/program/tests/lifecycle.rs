@@ -257,6 +257,24 @@ fn successful_raise_cannot_be_refunded_and_needs_permission_to_launch_early() {
 }
 
 #[test]
+fn met_raise_left_unlaunched_past_the_grace_period_refunds() {
+    let mut env = Env::new();
+    let creator = env.user(5);
+    let mint = env.create_ok(&creator, default_args());
+    let b1 = env.user(20);
+    ok(env.deposit(&b1, &mint, 10 * SOL, vec![]));
+    env.warp(3_600 + LAUNCH_GRACE_SECS - 1);
+    assert_err(env.refund(&b1, &mint), MoshError::MinimumReached);
+    env.warp(1);
+    assert_err(env.launch_token(&creator, &mint), MoshError::LaunchWindowClosed);
+    let before = env.lamports(&b1.pubkey());
+    ok(env.refund(&b1, &mint));
+    assert!(env.lamports(&b1.pubkey()) - before >= 10 * SOL, "deposit + backer rent returned");
+    assert_eq!(env.launch(&mint).status, LaunchStatus::Refunding);
+    env.assert_invariants(&mint);
+}
+
+#[test]
 fn creator_cancel_enables_refunds() {
     let mut env = Env::new();
     let creator = env.user(5);

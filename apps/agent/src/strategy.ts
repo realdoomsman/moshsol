@@ -183,12 +183,14 @@ export function project(m: MarketState, now: bigint): Projection {
     sellRemaining = sellCap;
   }
 
-  // EMA weight dt / (dt + period), floored step, applied before reserves change.
+  // EMA weight dt / (dt + period), floored step, applied before reserves change. Pump launches sample the
+  // venue price only on agent trades, so the program clamps dt to the period there (`update_ema_with`).
   let ema = m.emaPrice;
   if (ema === 0n) {
     ema = price;
   } else {
-    const dt = now > m.lastTradeTs ? now - m.lastTradeTs : 0n;
+    const idle = now > m.lastTradeTs ? now - m.lastTradeTs : 0n;
+    const dt = m.venue === "pump" && idle > t.emaPeriodSecs ? t.emaPeriodSecs : idle;
     const den = dt + t.emaPeriodSecs;
     if (price >= ema) ema += ((price - ema) * dt) / den;
     else ema -= ((ema - price) * dt) / den;
@@ -465,11 +467,12 @@ export const DEFAULT_PARAMS: StrategyParams = {
   supportVolumeMult: 2,
   supportClipShare: 0.33,
   supportSpacingSecs: 300,
-  // Event-driven timing (backtest/results/speed.md, selected by the speed gate at 3 s cooldown: "clips ≤ 25%,
-  // ≥ 15 s apart"): objective ≥ 0.39 on WF TEST and TEST with a worst 10% not below v1's, ~17 fills/h instead of 3–4.
-  buyClipShare: 0.25,
-  sellClipShare: 0.25,
-  clipSpacingSecs: 15,
+  // Event-driven timing (backtest/results/speed.md; selected by the speed gate at 3 s cooldown with the buy-back-cost
+  // guardrail: "clips ≤ 10%"): objective ≥ 0.39 on WF TEST and TEST with a worst 10% not below v1's, ~32 fills/h
+  // instead of 3–4.
+  buyClipShare: 0.1,
+  sellClipShare: 0.1,
+  clipSpacingSecs: 0,
 };
 
 /** `base` with the given overrides; throws on unknown keys or values outside `PARAM_SPACE`. */

@@ -14,11 +14,12 @@ use anchor_spl::token::{self, spl_token, CloseAccount};
 use super::pay_out;
 use crate::errors::MoshError;
 use crate::math;
-use crate::pump::{self, BondingCurve, Pool, Trader};
+use crate::pump::{self, BondingCurve, Trader};
 use crate::state::Launch;
 
 /// Spot and reserves of a pump launch's venue: the bonding curve's virtual reserves, or the
-/// pool's token balances once graduated.
+/// pool's effective reserves once graduated (`pump::pool_reserves`: the quote balance plus the
+/// pool's `virtual_quote_reserves`, as PumpSwap prices every trade).
 pub struct VenueView {
     pub price_q64: u128,
     pub quote_reserve: u64,
@@ -29,17 +30,7 @@ pub struct VenueView {
 
 pub fn venue_view<'info>(launch: &Launch, r: &[AccountInfo<'info>]) -> Result<VenueView> {
     if launch.pump.graduated {
-        require!(r.len() >= pump::pool::LEN, MoshError::InvalidVenueAccount);
-        require_keys_eq!(r[pump::pool::POOL].key(), launch.pump.pool, MoshError::InvalidVenueAccount);
-        let pool = Pool::load(&r[pump::pool::POOL])?;
-        require!(
-            pool.pool_base_token_account == r[pump::pool::POOL_BASE].key()
-                && pool.pool_quote_token_account == r[pump::pool::POOL_QUOTE].key()
-                && r[pump::pool::WSOL_MINT].key() == pump::WSOL_MINT,
-            MoshError::InvalidVenueAccount
-        );
-        let base_reserve = pump::token_amount(&r[pump::pool::POOL_BASE])?;
-        let quote_reserve = pump::token_amount(&r[pump::pool::POOL_QUOTE])?;
+        let (quote_reserve, base_reserve) = pump::pool_reserves(&launch.pump.pool, r)?;
         Ok(VenueView {
             price_q64: math::price_q64(quote_reserve, base_reserve)?,
             quote_reserve,
@@ -128,7 +119,6 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
             user_tokens: self.user_tokens,
             system_program: self.system_program,
             token_program: self.token_program,
-            launch: self.launch,
         }
     }
 
@@ -179,7 +169,8 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
             self.launch.sub_lamports(sol_in)?;
             let wsol = &self.remaining[pump::pool::USER_WSOL];
             wsol.add_lamports(sol_in)?;
-            // The launch rides along so the runtime sees both sides of the move (see `Trader`).
+            // The launch rides along so the runtime sees both sides of the move before the
+            // venue call (see `fund`; the token program ignores the extra account).
             let mut sync = spl_token::instruction::sync_native(self.token_program.key, wsol.key)?;
             sync.accounts.push(AccountMeta::new(self.launch.key(), false));
             invoke(&sync, &[wsol.clone(), self.launch.clone()])?;
@@ -192,8 +183,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
             )?;
             self.close_wsol()?;
         } else {
-            self.launch.sub_lamports(sol_in)?;
-            self.user().add_lamports(sol_in)?;
+            self.fund(sol_in)?;
             pump::curve_trade(
                 &self.trader(),
                 self.remaining,
@@ -219,8 +209,7 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
         self.absorb()?;
         let sol_before = self.launch.lamports();
         let tokens_before = pump::token_amount(self.user_tokens)?;
-        self.launch.sub_lamports(max_sol_cost)?;
-        self.authority.add_lamports(max_sol_cost)?;
+        self.fund(max_sol_cost)?;
         pump::curve_trade(
             &self.trader(),
             self.remaining,
@@ -273,9 +262,10 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
     /// Makes sure the venue `user`'s WSOL ATA exists for a PumpSwap trade. Existence is decided
     /// by the account being a token account, not by its balance (anyone can send lamports to
     /// the address); whatever the payer fronts for it is measured and owed back by `settle`.
-    /// An account that already exists (anyone can create and fund it) is used as is: every
-    /// lamport on it — rent and wrapped balance alike — reaches the launch when `close_wsol`
-    /// unwraps it, so it is booked as donated and kept out of the measured fill.
+    /// Every lamport already at the address — rent and wrapped balance of an account someone
+    /// created and funded, or bare lamports sent to it before it existed (the ATA program only
+    /// tops those up to rent) — reaches the launch when `close_wsol` unwraps it, so it is booked
+    /// as donated and kept out of the measured fill.
     fn open_wsol(&self) -> Result<()> {
         let r = self.remaining;
         let wsol = &r[pump::pool::USER_WSOL];
@@ -284,8 +274,8 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
             get_associated_token_address(self.user().key, &pump::WSOL_MINT),
             MoshError::InvalidVenueAccount
         );
+        self.donated.set(self.donated.get() + wsol.lamports());
         if pump::is_token_account(wsol) {
-            self.donated.set(self.donated.get() + wsol.lamports());
             return Ok(());
         }
         require_keys_eq!(
@@ -339,6 +329,25 @@ impl<'a, 'info> VenueTrade<'a, 'info> {
         let swept = self.sweep()?;
         self.donated.set(self.donated.get() + swept);
         Ok(())
+    }
+
+    /// Moves `amount` of the launch's lamports to the venue `user` (the pump authority or the
+    /// executor, both system accounts that can sign) and flushes the direct move to the runtime
+    /// with a zero-lamport transfer between the two, so the next CPI (the venue's) doesn't need
+    /// the launch among its accounts: the runtime syncs only a CPI's own accounts from the
+    /// caller and rejects the call if the caller's lamport sum moved.
+    pub fn fund(&self, amount: u64) -> Result<()> {
+        let user = self.user();
+        self.launch.sub_lamports(amount)?;
+        user.add_lamports(amount)?;
+        system_program::transfer(
+            CpiContext::new_with_signer(
+                self.system_program.clone(),
+                system_program::Transfer { from: user.clone(), to: self.launch.clone() },
+                &[self.authority_seeds],
+            ),
+            0,
+        )
     }
 
     /// Moves every lamport the pump authority holds back to the launch, so it ends the

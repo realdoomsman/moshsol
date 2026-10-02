@@ -16,7 +16,7 @@ export interface PumpTradeEvent {
   solAmount: bigint;
   tokenAmount: bigint;
   fee: bigint;
-  /** Reserves right after the trade, as the SDK quotes them (`curveStateOf` / `poolStateOf`). */
+  /** Reserves right after the trade, as the SDK quotes them (`curveStateOf` / `poolStateOf`, effective quote on the pool). */
   reserves: CurveState;
 }
 
@@ -35,6 +35,11 @@ const DATA = "Program data: ";
 class Reader {
   private at = 8;
   constructor(private readonly b: Buffer) {}
+  u32(): number {
+    const v = this.b.readUInt32LE(this.at);
+    this.at += 4;
+    return v;
+  }
   u64(): bigint {
     const v = this.b.readBigUInt64LE(this.at);
     this.at += 8;
@@ -44,6 +49,12 @@ class Reader {
     const v = this.b.readBigInt64LE(this.at);
     this.at += 8;
     return Number(v);
+  }
+  i128(): bigint {
+    const lo = this.b.readBigUInt64LE(this.at);
+    const hi = this.b.readBigInt64LE(this.at + 8);
+    this.at += 16;
+    return (hi << 64n) + lo;
   }
   bool(): boolean {
     return this.b[this.at++] !== 0;
@@ -55,6 +66,10 @@ class Reader {
   }
   skip(bytes: number): void {
     this.at += bytes;
+  }
+  /** Bytes left after the cursor (negative once a skip ran past the end). */
+  left(): number {
+    return this.b.length - this.at;
   }
 }
 
@@ -98,7 +113,12 @@ function decodeTradeEvent(b: Buffer): PumpTradeEvent {
   };
 }
 
-/** PumpSwap `BuyEvent` / `SellEvent` (pool; quote = WSOL, base = the token). */
+/**
+ * PumpSwap `BuyEvent` / `SellEvent` (pool; quote = WSOL, base = the token). The event's pool reserves are the vault
+ * balances before the trade; the reserves returned are after it: a buy adds `quote_amount_in_with_lp_fee` to the quote
+ * vault (protocol and creator fees go elsewhere), a sell takes `quote_amount_out_without_lp_fee` out of it. The quote
+ * is priced on the vault balance plus the pool's signed `virtual_quote_reserves`, appended to newer events (0 on older ones).
+ */
 function decodePoolEvent(b: Buffer, isBuy: boolean): PumpTradeEvent {
   const r = new Reader(b);
   const timestamp = r.i64();
@@ -112,13 +132,20 @@ function decodePoolEvent(b: Buffer, isBuy: boolean): PumpTradeEvent {
   const lpFee = r.u64();
   r.u64(); // protocol_fee_basis_points
   const protocolFee = r.u64();
-  r.u64(); // quote_amount_in_with_lp_fee / quote_amount_out_without_lp_fee
+  const vaultQuote = r.u64(); // quote_amount_in_with_lp_fee (buy) / quote_amount_out_without_lp_fee (sell)
   const userQuoteAmount = r.u64(); // user_quote_amount_in / user_quote_amount_out
   const pool = r.pubkey();
   const user = r.pubkey();
   r.skip(32 * 5); // user base/quote token accounts, protocol fee recipient (+ token account), coin_creator
   r.u64(); // coin_creator_fee_basis_points
   const creatorFee = r.u64();
+  if (isBuy && r.left() >= 1 + 8 * 5 + 4) {
+    // track_volume, total_unclaimed_tokens, total_claimed_tokens, current_sol_volume, last_update_timestamp, min_base_amount_out, ix_name
+    r.skip(1 + 8 * 5);
+    r.skip(r.u32());
+  }
+  r.skip(8 * 4); // cashback_fee_basis_points, cashback, buyback_fee_basis_points, buyback_fee
+  const virtualQuoteReserves = r.left() >= 16 ? r.i128() : 0n;
   return {
     mint: null,
     pool,
@@ -129,7 +156,9 @@ function decodePoolEvent(b: Buffer, isBuy: boolean): PumpTradeEvent {
     solAmount: isBuy ? userQuoteAmount : quoteAmount,
     tokenAmount: baseAmount,
     fee: lpFee + protocolFee + creatorFee,
-    reserves: poolStateOf(poolQuoteReserves, poolBaseReserves),
+    reserves: isBuy
+      ? poolStateOf(poolQuoteReserves + vaultQuote, poolBaseReserves - baseAmount, virtualQuoteReserves)
+      : poolStateOf(poolQuoteReserves - vaultQuote, poolBaseReserves + baseAmount, virtualQuoteReserves),
   };
 }
 

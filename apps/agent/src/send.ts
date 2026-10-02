@@ -219,8 +219,9 @@ export interface TradeSent {
 export class TradeSender {
   private blockhash: { blockhash: string; lastValidBlockHeight: number; at: number } | null = null;
   private blockhashPending: Promise<void> | null = null;
+  /** Fee estimate per launch address. */
   private readonly fees = new Map<string, { micro: number; at: number; pending: boolean }>();
-  /** Units consumed by the last landing, per trade kind (launch, side, venue stage). */
+  /** Units consumed by the last landing, per trade kind (`<launch address>:<side>:<venue stage>`). */
   private readonly units = new Map<string, number>();
   private readonly timers: NodeJS.Timeout[] = [];
 
@@ -267,6 +268,12 @@ export class TradeSender {
   /** The next send of `unitsKey` simulates first (after a failure: a program error is then caught before it costs a fee). */
   forgetUnits(unitsKey: string): void {
     this.units.delete(unitsKey);
+  }
+
+  /** Forgets the fee estimates and unit counts of launches no longer in `live` (launch addresses). */
+  retain(live: Set<string>): void {
+    for (const key of [...this.fees.keys()]) if (!live.has(key)) this.fees.delete(key);
+    for (const key of [...this.units.keys()]) if (!live.has(key.slice(0, key.indexOf(":")))) this.units.delete(key);
   }
 
   /**

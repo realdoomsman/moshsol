@@ -140,14 +140,19 @@ pub struct Refund<'info> {
     pub backer: Box<Account<'info, Backer>>,
 }
 
+/// Backer's full deposit back. A `Raising` launch turns `Refunding` here (permissionlessly,
+/// for every backer) once its deadline passed and either it missed its minimum or nobody
+/// launched it within `LAUNCH_GRACE_SECS` after the deadline; a cancelled one already is.
 pub fn refund(ctx: Context<Refund>) -> Result<()> {
     let launch = &mut ctx.accounts.launch;
     let now = Clock::get()?.unix_timestamp;
 
     if launch.status == LaunchStatus::Raising {
-        // A raise that missed its minimum by the deadline fails permanently.
         require!(now >= launch.raise_deadline, MoshError::RaiseStillOpen);
-        require!(launch.raised < launch.raise_min, MoshError::MinimumReached);
+        require!(
+            launch.raised < launch.raise_min || launch.launch_window_closed(now),
+            MoshError::MinimumReached
+        );
         launch.status = LaunchStatus::Refunding;
     }
     require!(launch.status == LaunchStatus::Refunding, MoshError::NotRefunding);

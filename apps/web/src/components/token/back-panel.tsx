@@ -1,6 +1,6 @@
 "use client";
 
-import { buildWhitelist, previewBundle, previewPumpBundle, seedKeyOf, solToLamports } from "@holdfast/sdk";
+import { buildWhitelist, LAUNCH_GRACE_SECS, previewBundle, previewPumpBundle, seedKeyOf, solToLamports } from "@holdfast/sdk";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { Keypair, PublicKey } from "@solana/web3.js";
@@ -383,7 +383,8 @@ export function RefundPanel({ launch: l, phase, className }: { launch: LaunchSum
 /** Why the raise ended, for the refunding banner. */
 export function useRefundReason(l: LaunchSummary): string {
   const now = useNow(60_000);
-  return wasCancelled(l, now)
-    ? "The creator cancelled this raise. Every backer can refund 100%."
+  if (wasCancelled(l, now)) return "The creator cancelled this raise. Every backer can refund 100%.";
+  return BigInt(l.raised) >= BigInt(l.raiseMin)
+    ? `Nobody launched this raise within ${LAUNCH_GRACE_SECS / 86_400} days of its deadline. Every backer can refund 100%.`
     : "This raise missed its minimum. Every backer can refund 100%.";
 }

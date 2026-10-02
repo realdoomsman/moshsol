@@ -5,9 +5,10 @@ import {
   MoshClient,
   PUMP_VENUE_FEE_BPS,
   curveOf,
-  fetchPumpConfig,
+  fetchPumpFeeRecipients,
   fetchVenueState,
   launchPda,
+  pickPumpConfig,
   prepareTx,
   pumpBuyIxs,
   pumpSellIx,
@@ -16,6 +17,7 @@ import {
   type LaunchJson,
   type PlatformAccount,
   type PumpConfig,
+  type PumpFeeRecipients,
   type ReviewedTerms,
 } from "@holdfast/sdk";
 import fs from "node:fs";
@@ -143,12 +145,13 @@ export async function launchRaise(client: MoshClient, cranker: Keypair, l: Pick<
 
 /** Public trades on a live launch's venue: the program's `buy`/`sell` on the Holdfast curve, pump.fun's otherwise. */
 export class VenueTrader {
-  private config: PumpConfig | null = null;
+  private recipients: PumpFeeRecipients | null = null;
 
   constructor(private readonly client: MoshClient) {}
 
+  /** pump.fun's fee recipient lists are read once; each trade picks its own at random. */
   private async pumpConfig(): Promise<PumpConfig> {
-    return (this.config ??= await fetchPumpConfig(this.client.connection));
+    return pickPumpConfig((this.recipients ??= await fetchPumpFeeRecipients(this.client.connection)));
   }
 
   async buyIxs(trader: PublicKey, l: Pick<LaunchJson, "address" | "mint" | "venue">, solIn: bigint, minTokensOut: bigint): Promise<TransactionInstruction[]> {

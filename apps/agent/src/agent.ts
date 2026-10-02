@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   SAME_SLOT_TRADE_MESSAGE,
+  TransactionExpiredError,
+  TransactionFailedError,
   agentExecutorsOf,
   describeError,
   launchToJson,
@@ -46,6 +48,12 @@ const LIVE_STATUS_BS58 = "2";
 const MAX_TICK_BACKOFF_MS = 60_000;
 /** Below this the agent cannot keep paying transaction fees for long. */
 const LOW_BALANCE_LAMPORTS = 0.01 * LAMPORTS_PER_SOL;
+/**
+ * Agent-key balance agent-wallet top-ups never touch: its fee floor plus the rent and fees of the permissionless
+ * cranks only it runs (collect_pump_fees fronts ~0.002 SOL of WSOL rent, a lookup table ~0.005 SOL, wind-down,
+ * buy-back and payout each a fee at up to ~0.0004 SOL of priority).
+ */
+const AGENT_RESERVE_LAMPORTS = 0.05 * LAMPORTS_PER_SOL;
 /** `getMultipleAccountsInfo` accepts at most this many keys per call. */
 const MAX_BATCH_KEYS = 100;
 /** First step of the exponential back-off after a failed trade (doubling per consecutive failure, up to `maxBackoffMs`). */
@@ -284,31 +292,40 @@ export class Agent {
     const hourAgo = Date.now() - 3_600_000;
     this.topUps = this.topUps.filter((t) => t.at > hourAgo);
     let budget = this.cfg.executorTopUpMaxPerHourLamports - this.topUps.reduce((s, t) => s + t.lamports, 0);
-    // The agent key keeps enough for its own fees.
-    let spendable = agentLamports - LOW_BALANCE_LAMPORTS;
+    let spendable = agentLamports - AGENT_RESERVE_LAMPORTS;
     const plan: { key: PublicKey; lamports: number }[] = [];
+    let skip: string | null = null;
     for (const w of low) {
       const lamports = this.cfg.executorTopUpLamports - w.lamports;
-      if (lamports > budget || lamports > spendable) break;
+      if (lamports > spendable) {
+        skip = `agent key keeps a ${AGENT_RESERVE_LAMPORTS / LAMPORTS_PER_SOL} SOL reserve for its own fees and cranks`;
+        break;
+      }
+      if (lamports > budget) {
+        skip = "hourly top-up budget used";
+        break;
+      }
       plan.push({ key: w.key, lamports });
       budget -= lamports;
       spendable -= lamports;
     }
-    if (plan.length === 0) {
-      const reason = spendable < this.cfg.executorTopUpLamports ? "agent key balance too low" : "hourly top-up budget used";
-      if (reason !== this.lastTopUpSkip) log("agent_wallet_topup_skipped", { reason, low: low.map((w) => w.key.toBase58()) });
-      this.lastTopUpSkip = reason;
-      return;
+    if (skip !== null && skip !== this.lastTopUpSkip) {
+      log("agent_wallet_topup_skipped", { reason: skip, agentSol: agentLamports / LAMPORTS_PER_SOL, skipped: low.slice(plan.length).map((w) => w.key.toBase58()) });
     }
-    this.lastTopUpSkip = null;
+    this.lastTopUpSkip = skip;
+    if (plan.length === 0) return;
     const ixs = plan.map((p) => SystemProgram.transfer({ fromPubkey: this.signer.publicKey, toPubkey: p.key, lamports: p.lamports }));
+    const total = plan.reduce((s, p) => s + p.lamports, 0);
+    // Debited before sending: a transfer that lands but whose confirmation is lost still counts against the hour.
+    const debit = { at: Date.now(), lamports: total };
+    this.topUps.push(debit);
     try {
       const sent = await sendIxs(this.client.connection, this.signer, ixs, this.cfg.priorityFee, this.alt);
-      const total = plan.reduce((s, p) => s + p.lamports, 0);
-      this.topUps.push({ at: Date.now(), lamports: total });
       this.executors.noteBalances(new Map(plan.map((p) => [p.key.toBase58(), this.cfg.executorTopUpLamports])));
       log("agent_wallet_topup", { wallets: plan.map((p) => ({ key: p.key.toBase58(), sol: p.lamports / LAMPORTS_PER_SOL })), totalSol: total / LAMPORTS_PER_SOL, signature: sent.signature });
     } catch (err) {
+      // A failed or expired transaction moved nothing; any other error may have landed, so its debit stays.
+      if (err instanceof TransactionFailedError || err instanceof TransactionExpiredError) this.topUps = this.topUps.filter((t) => t !== debit);
       log("agent_wallet_topup_failed", { error: describeError(err), wallets: plan.map((p) => p.key.toBase58()) });
     }
   }
@@ -359,6 +376,7 @@ export class Agent {
     await this.readVenues(rts.filter((rt) => rt.json.venue === "pump"));
     const poll: Trigger = { source: "poll", seenAt: readAt };
     const live = new Set<string>();
+    const liveMints = new Set<string>();
     for (const rt of rts) {
       if (signal.aborted) break;
       let woundDown = false;
@@ -368,6 +386,7 @@ export class Agent {
       // Wound down = no longer Live: its decision, runtime and subscriptions are dropped below.
       if (woundDown) continue;
       live.add(rt.key);
+      liveMints.add(rt.account.mint.toBase58());
       if (rt.json.venue === "pump") {
         await this.cranks.pump(this.crankLaunch(rt), this.platform.account, decodeVenue(rt.json, rt.venue), now);
         if (!this.cfg.dryRun) await this.warmTrades(rt);
@@ -386,7 +405,8 @@ export class Agent {
         this.runtime.delete(key);
       }
       this.cranks.retain(live);
-      this.executors.retain(live);
+      this.executors.retain(live, liveMints);
+      this.sender.retain(live);
       this.activity.forget(live);
     }
     this.lastTickAt = nowSec();
@@ -600,7 +620,7 @@ export class Agent {
     const market = this.marketOf(rt);
     if (!market) {
       const prices = { priceSol: 0, emaSol: q64ToSolPerToken(BigInt(json.emaPriceQ64)), bandLowSol: 0, bandHighSol: 0 };
-      const where = json.pump.graduated ? "PumpSwap pool token accounts" : "pump.fun bonding curve";
+      const where = json.pump.graduated ? "PumpSwap pool or its token accounts" : "pump.fun bonding curve";
       this.record(rt, l, prices, NEUTRAL_FLOW, { action: "skip", reason: `venue account missing (${where} not found)` }, "no_venue", this.decided(trigger, false).detail);
       return;
     }
@@ -614,8 +634,16 @@ export class Agent {
     }
     // Backer payouts are signed by the agent and only sent into a strong market (never a dip): decided on the
     // same projection and flow the trade decision used, at the heartbeat (not latency-critical).
-    if (heartbeat) await this.cranks.payout(l, market, ev.projection, flow, now, this.strategy);
-    if (pump && decodeVenue(json, rt.venue)?.complete) {
+    if (heartbeat) {
+      await this.cranks.payout(l, market, ev.projection, flow, now, this.strategy);
+      // The await yields to the stream: a landed `graduate_pump` swaps the venue under `ev`, which priced the curve.
+      if (pump && rt.json.pump.graduated !== json.pump.graduated) {
+        const reason = "venue changed during payout (graduation), re-planning on the next update";
+        this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason }, "venue_changed", this.decided(trigger, false).detail);
+        return;
+      }
+    }
+    if (pump && decodeVenue(rt.json, rt.venue)?.complete) {
       const reason = "bonding curve complete, awaiting pump.fun migration (then graduate_pump)";
       this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason }, "complete", this.decided(trigger, false).detail);
       return;
@@ -776,7 +804,7 @@ export class Agent {
       rt.lastError = error;
       // The next attempt simulates again, so a persistent program error is caught before it costs another fee.
       this.sender.forgetUnits(unitsKey);
-      this.metrics.failed(error);
+      this.metrics.failed(err);
       // A public trade landed in the same slot first (anti-sandwich rule): nothing is wrong, the next decision lands
       // in a later slot, so retry then instead of backing off.
       const backoff = error === SAME_SLOT_TRADE_MESSAGE ? 0 : Math.min(ERROR_BACKOFF_MS * 2 ** rt.failures++, this.cfg.maxBackoffMs);

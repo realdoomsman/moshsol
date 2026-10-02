@@ -729,6 +729,12 @@ impl Launch {
         math::price_q64(self.curve_sol(), self.token_reserve)
     }
 
+    /// Past `raise_deadline + LAUNCH_GRACE_SECS`: a raise still `Raising` can no longer launch
+    /// and every backer can refund, whether or not it met its minimum.
+    pub fn launch_window_closed(&self, now: i64) -> bool {
+        now >= self.raise_deadline.saturating_add(LAUNCH_GRACE_SECS)
+    }
+
     /// Lamports the program must hold in this account beyond rent, by status.
     pub fn owed_lamports(&self) -> u64 {
         match self.status {

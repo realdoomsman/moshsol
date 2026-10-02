@@ -161,7 +161,8 @@ plus indexer fields.
 launch has **no mint until it launches**: `mint` is the default pubkey `11111111111111111111111111111111` while
 raising/refunding, so key pump launches by `address` (see `:id` below). For pump launches the indexer overwrites the
 snapshot's `priceSol` / `marketCapSol` with the venue's reserves — bonding curve `virtualSol / virtualToken` before
-graduation, PumpSwap pool `quote / base` balances after — re-read on every full refresh (`FULL_REFRESH_MS`) and every
+graduation, PumpSwap pool `(quote balance + Pool.virtual_quote_reserves) / base balance` after (the effective quote
+PumpSwap prices on; the virtual part is signed) — re-read on every full refresh (`FULL_REFRESH_MS`) and every
 touching event, so `change24h`, sorting and stats work the same on both venues; `emaSol` stays the account's own sample.
 Between the curve completing and `graduate_pump` recording the pool there is nothing to quote and the last price is kept.
 
@@ -282,7 +283,8 @@ decoded from: `holdfast` (this program's `Trade` event — Holdfast curve trades
 `null` (public trades don't move the launch's EMA or vault), `solAmount` is the SOL the venue's reserves exchanged
 (fees aside), `fee` is every fee the venue took (pump.fun protocol + creator fees, plus the LP fee on PumpSwap) and
 `realSol` / `tokenReserve` are the venue's reserves after the trade (`realSolReserves` / `virtualTokenReserves` of the
-curve; the pool's WSOL / token balances).
+curve; the pool's WSOL / token balances after the trade, rebuilt from the event's pre-trade balances, with `priceSol`
+on the WSOL balance plus the pool's `virtual_quote_reserves` the event carries).
 
 ### ActivityEvent
 

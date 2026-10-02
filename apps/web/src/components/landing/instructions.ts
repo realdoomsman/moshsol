@@ -61,7 +61,8 @@ function known(s: PumpSplit): Record<string, Known> {
       group: "Launch lifecycle",
       caller: "Backer",
       moves: "Your deposit → you",
-      description: "Returns the full deposit when the raise missed its minimum by the deadline or was cancelled.",
+      description:
+        "Returns the full deposit when the raise missed its minimum by the deadline, was cancelled, or met it but wasn't launched within 3 days of the deadline.",
     },
     launch_pump: {
       group: "Launch lifecycle",

@@ -28,7 +28,7 @@ pub enum MoshError {
     WalletCapReached,
     #[msg("Raise minimum not reached")]
     MinimumNotReached,
-    #[msg("Raise minimum was reached; refunds unavailable")]
+    #[msg("Raise minimum was reached; refunds open only if it is not launched within the grace period")]
     MinimumReached,
     #[msg("Wallet is not on the whitelist")]
     NotWhitelisted,
@@ -100,4 +100,6 @@ pub enum MoshError {
     ExecutorRequired,
     #[msg("The agent wallet must end the trade with exactly the lamports and tokens it started with")]
     ExecutorNotSettled,
+    #[msg("The raise was not launched within the grace period after its deadline; backers can refund")]
+    LaunchWindowClosed,
 }

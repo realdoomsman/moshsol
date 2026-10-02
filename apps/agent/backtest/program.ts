@@ -1,4 +1,21 @@
-import { BPS, PUMP_VENUE_FEE_BPS, TOKEN_UNIT, TOTAL_SUPPLY, bps, bpsCeil, moveBps, priceQ64, solInForTokens, solOut, tokensOut, type LaunchVenue } from "@holdfast/sdk";
+import {
+  BPS,
+  PUMP_BUNDLE_BUY_RENT_LAMPORTS,
+  PUMP_CREATE_COST_LAMPORTS,
+  PUMP_CURVE_CREATOR_FEE_BPS,
+  PUMP_CURVE_PROTOCOL_FEE_BPS,
+  PUMP_VENUE_FEE_BPS,
+  TOKEN_UNIT,
+  TOTAL_SUPPLY,
+  bps,
+  bpsCeil,
+  moveBps,
+  priceQ64,
+  solInForTokens,
+  solOut,
+  tokensOut,
+  type LaunchVenue,
+} from "@holdfast/sdk";
 import { venueFeeBps, type AgentTerms, type MarketState } from "../src/strategy";
 
 /**
@@ -12,10 +29,12 @@ import { venueFeeBps, type AgentTerms, type MarketState } from "../src/strategy"
  * Venues: a Holdfast launch trades its own curve (`virtualSol` / `realSol` / `tokenReserve` are the
  * launch's fields, every trade prices the EMA and books volume). A pump launch's reserves are its
  * pump.fun bonding curve (`virtualSol` = the curve's virtual offset, `realSol` = real SOL reserves,
- * `tokenReserve` = virtual token reserves, as `curveStateOf`): the venue keeps a 1.25% fee on every
- * trade including the agent's, and public trades never touch the launch (no EMA sample, no volume).
- * On both venues every lamport an agent sell receives stays in the vault as liquid SOL (no profit
- * share), and no agent buy may take the vault below `minVaultSol` (`VaultFloor`).
+ * `tokenReserve` = virtual token reserves, as `curveStateOf`) until a buy takes its last real token; pump.fun
+ * then migrates it into a PumpSwap pool (`graduated`: the curve's real SOL and the supply it never sold, the
+ * same spot, so `virtualSol` = 0), modelled as instant, with no migration fee and no virtual quote. The venue
+ * keeps a 1.25% fee on every trade including the agent's, and public trades never touch the launch (no EMA
+ * sample, no volume). On both venues every lamport an agent sell receives stays in the vault as liquid SOL (no
+ * profit share), and no agent buy may take the vault below `minVaultSol` (`VaultFloor`).
  */
 
 export interface SimTerms extends AgentTerms {
@@ -31,6 +50,8 @@ export interface Chain extends MarketState {
   feesSol: bigint;
   lastPublicTradeSlot: number;
   lastAgentTradeSlot: number;
+  /** Pump launches: the curve completed and its reserves are now the PumpSwap pool's. */
+  graduated: boolean;
 }
 
 export type ProgramError =
@@ -76,8 +97,6 @@ export const PUMP_CURVE = {
   virtualTokens: 1_073_000_000n * TOKEN_UNIT,
   realTokens: 793_100_000n * TOKEN_UNIT,
 } as const;
-/** Rent pump.fun's `create` takes out of the raise (mint, curve, its ATA, metadata), ≈0.02 SOL. */
-const PUMP_CREATE_COST = 20_000_000n;
 /** constants.rs `PUMP_BUY_FEE_HEADROOM_BPS`. */
 const PUMP_BUY_FEE_HEADROOM_BPS = 300n;
 
@@ -89,18 +108,47 @@ export function publicFeeBps(l: Pick<Chain, "venue" | "terms">): bigint {
   return l.venue === "pump" ? BigInt(PUMP_VENUE_FEE_BPS) : l.terms.tradeFeeBps;
 }
 
-/** Tokens a buy can still take out of the venue (pump.fun sells only its real reserves). */
-function buyableTokens(l: Chain): bigint {
-  return l.venue === "pump" ? l.tokenReserve - (PUMP_CURVE.virtualTokens - PUMP_CURVE.realTokens) : l.tokenReserve - 1n;
+/** Supply pump.fun moves into the PumpSwap pool when the curve completes: everything the curve never sold. */
+const PUMP_POOL_TOKENS = TOTAL_SUPPLY - PUMP_CURVE.realTokens;
+
+/**
+ * Tokens `net` lamports buy from the venue, reserves moved (`InsufficientLiquidity` when the venue can't fill it).
+ * pump.fun sells only its real tokens: a buy that reaches the last one completes the curve, which is migrated into
+ * the pool (x/y is continuous: 85 SOL over 206.9M tokens is the curve's final 115 SOL over 279.9M), and the rest of
+ * the buy fills there.
+ */
+function venueBuy(l: Chain, net: bigint): bigint {
+  if (l.venue === "pump" && !l.graduated) {
+    const left = l.tokenReserve - (PUMP_CURVE.virtualTokens - PUMP_CURVE.realTokens);
+    const tokens = tokensOut(curveSol(l), l.tokenReserve, net);
+    if (tokens < left) {
+      l.realSol += net;
+      l.tokenReserve -= tokens;
+      return tokens;
+    }
+    const cost = solInForTokens(curveSol(l), l.tokenReserve, left);
+    const paid = cost < net ? cost : net;
+    l.realSol += paid;
+    l.virtualSol = 0n;
+    l.tokenReserve = PUMP_POOL_TOKENS;
+    l.graduated = true;
+    return left + (net > paid ? venueBuy(l, net - paid) : 0n);
+  }
+  const tokens = tokensOut(curveSol(l), l.tokenReserve, net);
+  require(tokens < l.tokenReserve, "InsufficientLiquidity");
+  l.realSol += net;
+  l.tokenReserve -= tokens;
+  return tokens;
 }
 
-/** state.rs `update_ema` (`update_ema_with` the venue spot on pump launches). */
+/** state.rs `update_ema` (`update_ema_with` the venue spot on pump launches, `dt` clamped to the period there). */
 function updateEma(l: Chain, now: bigint): void {
   const p = spot(l);
   if (l.emaPrice === 0n) {
     l.emaPrice = p;
   } else {
-    const dt = now > l.lastTradeTs ? now - l.lastTradeTs : 0n;
+    const idle = now > l.lastTradeTs ? now - l.lastTradeTs : 0n;
+    const dt = l.venue === "pump" && idle > l.terms.emaPeriodSecs ? l.terms.emaPeriodSecs : idle;
     const den = dt + l.terms.emaPeriodSecs;
     if (p >= l.emaPrice) l.emaPrice += ((p - l.emaPrice) * dt) / den;
     else l.emaPrice -= ((l.emaPrice - p) * dt) / den;
@@ -132,15 +180,16 @@ export interface LaunchSetup {
 function bundle(s: LaunchSetup, net: bigint): { reserves: Pick<Chain, "virtualSol" | "realSol" | "tokenReserve">; spent: bigint; tokens: bigint; left: bigint } {
   const cap = bps(TOTAL_SUPPLY, s.bundleSupplyBps);
   if (s.terms.venue === "pump") {
-    // pump_launch.rs: create rent, then `buy(amount, budget)` sized from the fee-free quote with headroom.
-    const remaining = net - PUMP_CREATE_COST;
+    // pump_launch.rs: create rent (mint, curve, its ATA, metadata), then `buy(amount, budget)` sized from the fee-free quote with headroom.
+    const remaining = net - PUMP_CREATE_COST_LAMPORTS;
     const budget = remaining - bps(remaining, s.reserveBps);
     const sized = budget - bps(budget, PUMP_BUY_FEE_HEADROOM_BPS);
     const quoted = tokensOut(PUMP_CURVE.virtualSol, PUMP_CURVE.virtualTokens, sized);
-    const tokens = [cap, PUMP_CURVE.realTokens].reduce((a, b) => (b < a ? b : a), quoted);
+    const tokens = [cap, PUMP_CURVE.realTokens - 1n].reduce((a, b) => (b < a ? b : a), quoted);
     if (tokens <= 0n) throw new Error("launch_pump: bundle buys nothing");
     const cost = solInForTokens(PUMP_CURVE.virtualSol, PUMP_CURVE.virtualTokens, tokens);
-    const spent = cost + bpsCeil(cost, PUMP_VENUE_FEE_BPS);
+    // pump.fun rounds its protocol and creator fees up separately and charges the buyer two one-time rents on top.
+    const spent = cost + bpsCeil(cost, PUMP_CURVE_PROTOCOL_FEE_BPS) + bpsCeil(cost, PUMP_CURVE_CREATOR_FEE_BPS) + PUMP_BUNDLE_BUY_RENT_LAMPORTS;
     if (spent > budget) throw new Error("launch_pump: bundle over budget");
     return {
       reserves: { virtualSol: PUMP_CURVE.virtualSol, realSol: cost, tokenReserve: PUMP_CURVE.virtualTokens - tokens },
@@ -192,6 +241,7 @@ export function launch(s: LaunchSetup, now: bigint): Chain {
     // The simulated slot clock starts at 0; -1 = no trade yet (the program starts at 0 on a chain far past slot 0).
     lastPublicTradeSlot: -1,
     lastAgentTradeSlot: -1,
+    graduated: false,
   };
   l.emaPrice = spot(l);
   l.windowStart = now - s.terms.windowSecs; // i64::MIN / 2 in the program: forces the roll below
@@ -210,12 +260,9 @@ export function publicBuy(chain: Chain, solIn: bigint, minTokensOut: bigint, now
     }
     const fee = bpsCeil(solIn, publicFeeBps(l));
     const net = solIn - fee;
-    const tokens = tokensOut(curveSol(l), l.tokenReserve, net);
+    const tokens = venueBuy(l, net);
     require(tokens > 0n, "ZeroAmount");
-    require(tokens <= buyableTokens(l), "InsufficientLiquidity");
     require(tokens >= minTokensOut, "Slippage");
-    l.realSol += net;
-    l.tokenReserve -= tokens;
     l.feesSol += fee;
     if (l.venue === "holdfast") {
       l.volumeSol += solIn;
@@ -273,9 +320,8 @@ export function agentBuy(chain: Chain, solIn: bigint, minTokensOut: bigint, now:
     // The venue's fee comes off the spend; the launch measures `spent` = solIn and the net fill.
     const fee = bpsCeil(solIn, venueFeeBps(l));
     const net = solIn - fee;
-    const tokens = tokensOut(curveSol(l), l.tokenReserve, net);
+    const tokens = venueBuy(l, net);
     require(tokens > 0n, "ZeroAmount");
-    require(tokens <= buyableTokens(l), "InsufficientLiquidity");
     require(tokens >= minTokensOut, "Slippage");
     const [costSol, costTokens] = l.vaultTokens > 0n ? [l.vaultCostSol, l.vaultTokens] : [l.bundleSol, l.bundleTokens];
     if (!(solIn * costTokens <= tokens * costSol)) {
@@ -284,8 +330,6 @@ export function agentBuy(chain: Chain, solIn: bigint, minTokensOut: bigint, now:
         l.agentTokensSold > 0n && solIn * l.agentTokensSold * BPS <= tokens * l.agentSolReceived * (BPS - t.bandBps);
       require(belowAvgSell, "AgentAboveCostBasis");
     }
-    l.realSol += net;
-    l.tokenReserve -= tokens;
     l.feesSol += fee;
     l.vaultSol -= solIn;
     l.vaultTokens += tokens;
@@ -341,9 +385,9 @@ export function agentSell(chain: Chain, tokensIn: bigint, minSolOut: bigint, now
   });
 }
 
-/** Tokens held by the public: everything outside the venue and the vault. */
+/** Tokens held by the public: everything outside the venue and the vault (the curve's reserve is virtual by its offset, the pool's is real). */
 export function publicTokens(l: Chain): bigint {
-  return (l.venue === "pump" ? PUMP_CURVE.virtualTokens : TOTAL_SUPPLY) - l.tokenReserve - l.vaultTokens;
+  return (l.venue === "pump" && !l.graduated ? PUMP_CURVE.virtualTokens : TOTAL_SUPPLY) - l.tokenReserve - l.vaultTokens;
 }
 
 /** Production terms (scripts/src/setup.ts, PROFILE=production): the Holdfast-curve launches. */

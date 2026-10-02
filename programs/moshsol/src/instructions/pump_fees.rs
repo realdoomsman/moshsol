@@ -10,7 +10,7 @@ use crate::constants::*;
 use crate::errors::MoshError;
 use crate::events::{BuybackBurned, CreatorFeesCollected};
 use crate::math;
-use crate::pump::{self, BondingCurve, Pool};
+use crate::pump::{self, BondingCurve};
 use crate::state::{Launch, LaunchStatus, Platform, Venue};
 
 /// Accounts for the PumpSwap leg of `collect_pump_fees` (remaining accounts, once graduated).
@@ -256,23 +256,7 @@ pub fn buyback_burn<'info>(
     let curve = BondingCurve::load(&ctx.accounts.buyback_curve)?;
     let graduated = curve.complete;
     let (quote_reserve, base_reserve) = if graduated {
-        require!(r.len() >= pump::pool::LEN, MoshError::InvalidVenueAccount);
-        require_keys_eq!(
-            r[pump::pool::POOL].key(),
-            pump::pool_pda(&ctx.accounts.buyback_mint.key()),
-            MoshError::InvalidVenueAccount
-        );
-        let pool = Pool::load(&r[pump::pool::POOL])?;
-        require!(
-            pool.pool_base_token_account == r[pump::pool::POOL_BASE].key()
-                && pool.pool_quote_token_account == r[pump::pool::POOL_QUOTE].key()
-                && r[pump::pool::WSOL_MINT].key() == pump::WSOL_MINT,
-            MoshError::InvalidVenueAccount
-        );
-        (
-            pump::token_amount(&r[pump::pool::POOL_QUOTE])?,
-            pump::token_amount(&r[pump::pool::POOL_BASE])?,
-        )
+        pump::pool_reserves(&pump::pool_pda(&ctx.accounts.buyback_mint.key()), r)?
     } else {
         require!(r.len() >= pump::curve::LEN, MoshError::InvalidVenueAccount);
         require_keys_eq!(

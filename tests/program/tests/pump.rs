@@ -697,7 +697,7 @@ fn prefunded_authority_wsol_account_is_donated_not_a_fill() {
     // Agent buy-back after a dump, with more parked (unwrapped) than the agent spends.
     env.warp(600);
     let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &mint));
-    ok(env.amm_public_sell(&whale, &mint, whale_tokens / 2));
+    ok(env.amm_public_sell(&whale, &mint, whale_tokens));
     let l2 = env.launch_at(&launch);
     let spend = l2.window_buy_cap / 2;
     let wsol = env.create_spl_ata(&stranger, &authority, &WSOL_MINT);
@@ -892,7 +892,11 @@ fn graduation_moves_agent_fees_and_wind_down_to_pumpswap() {
     eprintln!("CU agent_sell_pump (pool): {}", meta.compute_units_consumed);
     let l1 = env.launch_at(&launch);
     assert_eq!(l1.vault_tokens, l0.vault_tokens - chunk);
-    assert_eq!(l1.vault_sol, l0.vault_sol + l1.agent_sol_received - l0.agent_sol_received);
+    assert_eq!(
+        l1.vault_sol,
+        l0.vault_sol + l1.agent_sol_received - l0.agent_sol_received + 1,
+        "the lamport parked on the WSOL address is donated, not part of the fill"
+    );
     assert_eq!(env.svm.get_account(&authority_wsol).map(|a| a.lamports).unwrap_or(0), 0, "transient WSOL account closed");
     env.assert_pump_invariants(&launch);
 
@@ -909,7 +913,7 @@ fn graduation_moves_agent_fees_and_wind_down_to_pumpswap() {
     // Agent buy on PumpSwap after a dump.
     env.warp(600);
     let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &mint));
-    ok(env.amm_public_sell(&whale, &mint, whale_tokens / 2));
+    ok(env.amm_public_sell(&whale, &mint, whale_tokens * 9 / 10));
     let l3 = env.launch_at(&launch);
     let spend = l3.window_buy_cap / 2;
     let meta = ok(env.agent_buy_pump(&launch, spend, 0));
@@ -919,8 +923,7 @@ fn graduation_moves_agent_fees_and_wind_down_to_pumpswap() {
     assert!(l4.vault_tokens > l3.vault_tokens);
     env.assert_pump_invariants(&launch);
 
-    // Buyback on PumpSwap is not covered here: see the README's known issues (the fill of a
-    // PumpSwap `buy_exact_quote_in` falls under the 97% floor in this harness).
+    // Buyback on PumpSwap: `graduated_pool_prices_on_effective_quote_reserves`.
     let l5 = env.launch_at(&launch);
 
     // Wind-down on PumpSwap once the whale is out and the launch is dead.
@@ -1146,7 +1149,7 @@ fn agent_trades_through_registered_wallets_on_pumpswap() {
 
     env.warp(600);
     let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &mint));
-    ok(env.amm_public_sell(&whale, &mint, whale_tokens / 2));
+    ok(env.amm_public_sell(&whale, &mint, whale_tokens));
     let l2 = env.launch_at(&launch);
     let w = wallets[9].insecure_clone();
     assert_err(env.agent_buy_pump_via(&w, &launch, l2.window_buy_cap + 1, 0), MoshError::AgentWindowLimit);
@@ -1207,4 +1210,304 @@ fn migrate_platform_appends_agent_wallets_to_current_mainnet_layout() {
     let keys: [Pubkey; 15] = std::array::from_fn(|_| Pubkey::new_unique());
     ok(env.set_agent_executors(&admin, keys));
     assert_eq!(env.platform().agent_executors, keys);
+}
+
+// ---------------- lamports parked on transient account addresses ----------------
+
+/// Anyone can send lamports to the address of an agent wallet's token account for a mint
+/// before it exists. The ATA program only tops them up to rent, so closing the account hands
+/// them to the wallet: they go to the vault as donated SOL, the fill stays exact and the wallet
+/// keeps trading (it used to fail every trade on that mint with `ExecutorNotSettled`).
+#[test]
+fn dust_on_a_wallet_token_account_address_is_donated_and_the_wallet_still_trades() {
+    let mut env = pump_env();
+    let (_c, launch, mint, _b) = env.live_pump_launch(&[10 * SOL, 10 * SOL]);
+    let wallets = register_executors(&mut env);
+    let w = wallets[5].insecure_clone();
+    let ata = spl_ata(&w.pubkey(), &mint);
+
+    // Rally sell with one lamport parked on the address.
+    env.warp(60);
+    let whale = public_pump(&mut env, &mint, 20 * SOL);
+    env.svm.airdrop(&ata, 1).unwrap();
+    let l0 = env.launch_at(&launch);
+    let w_before = env.lamports(&w.pubkey());
+    let meta = ok(env.agent_sell_pump_via(&w, &launch, l0.window_sell_cap / 4, 0));
+    let l1 = env.launch_at(&launch);
+    let fill = l1.agent_sol_received - l0.agent_sol_received;
+    assert_eq!(trades(&meta)[0].sol_amount, fill);
+    assert_eq!(l1.vault_sol, l0.vault_sol + fill + 1, "the parked lamport is donated, not a fill");
+    assert_wallet_untouched(&env, &w.pubkey(), &mint, w_before);
+    env.assert_pump_invariants(&launch);
+
+    // Dip buy with more than the account's rent parked (the ATA program then charges nothing).
+    env.warp(600);
+    let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &mint));
+    ok(env.pump_public_sell(&whale, &mint, whale_tokens));
+    let l = env.launch_at(&launch);
+    let spend = l.window_buy_cap / 4;
+    let parked = 5_000_000;
+    env.svm.airdrop(&ata, parked).unwrap();
+    let w_before = env.lamports(&w.pubkey());
+    let meta = ok(env.agent_buy_pump_via(&w, &launch, spend, 0));
+    let l2 = env.launch_at(&launch);
+    assert_eq!(trades(&meta)[0].sol_amount, spend);
+    assert_eq!(l2.vault_sol, l.vault_sol - spend + parked);
+    assert_eq!(l2.vault_cost_sol, l.vault_cost_sol + spend);
+    assert!(l2.vault_tokens > l.vault_tokens);
+    assert_wallet_untouched(&env, &w.pubkey(), &mint, w_before);
+    env.assert_pump_invariants(&launch);
+}
+
+/// A launch graduated to PumpSwap with the whale that completed its curve and the agent
+/// wallets registered. Every call builds the same state (same amounts, slots and clock), so two
+/// runs differing in one detail compare exactly.
+fn graduated_with_wallets() -> (Env, Pubkey, Pubkey, solana_sdk::signature::Keypair, Vec<solana_sdk::signature::Keypair>) {
+    let mut env = pump_env();
+    let (_c, launch, mint, _b) = env.live_pump_launch(&[10 * SOL]);
+    let cranker = env.user(2);
+    let whale = env.user(200);
+    let left = env.curve(&mint).real_token_reserves;
+    ok(env.pump_public_buy_tokens(&whale, &mint, left, 120 * SOL));
+    ok(env.pump_migrate(&cranker, &mint));
+    ok(env.graduate_pump(&cranker, &launch));
+    let wallets = register_executors(&mut env);
+    (env, launch, mint, whale, wallets)
+}
+
+/// A rally sell then a dip buy through an agent wallet on PumpSwap, with `parked` lamports sent
+/// to the wallet's (not yet existing) WSOL account address before each. Returns, per trade, the
+/// measured fill (SOL received / tokens bought) and the vault SOL delta.
+fn wallet_pool_round_trip(parked: impl Fn(u64) -> u64) -> [(u64, i128); 2] {
+    let (mut env, launch, mint, whale, wallets) = graduated_with_wallets();
+    let w = wallets[2].insecure_clone();
+    let wsol = spl_ata(&w.pubkey(), &WSOL_MINT);
+
+    env.warp(60);
+    ok(env.amm_public_buy(&whale, &mint, 10 * SOL));
+    let l0 = env.launch_at(&launch);
+    let chunk = l0.window_sell_cap / 4;
+    let dust = parked(chunk);
+    if dust > 0 {
+        env.svm.airdrop(&wsol, dust).unwrap();
+    }
+    let w_before = env.lamports(&w.pubkey());
+    ok(env.agent_sell_pump_via(&w, &launch, chunk, 0));
+    let l1 = env.launch_at(&launch);
+    assert_wallet_untouched(&env, &w.pubkey(), &mint, w_before);
+    env.assert_pump_invariants(&launch);
+    let sell = (l1.agent_sol_received - l0.agent_sol_received, l1.vault_sol as i128 - l0.vault_sol as i128);
+
+    env.warp(600);
+    let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &mint));
+    ok(env.amm_public_sell(&whale, &mint, whale_tokens));
+    let l2 = env.launch_at(&launch);
+    let spend = l2.window_buy_cap / 2;
+    let dust = parked(spend);
+    if dust > 0 {
+        env.svm.airdrop(&wsol, dust).unwrap();
+    }
+    let w_before = env.lamports(&w.pubkey());
+    ok(env.agent_buy_pump_via(&w, &launch, spend, 0));
+    let l3 = env.launch_at(&launch);
+    assert_eq!(l3.vault_cost_sol, l2.vault_cost_sol + spend, "spent exactly the clip");
+    assert_wallet_untouched(&env, &w.pubkey(), &mint, w_before);
+    env.assert_pump_invariants(&launch);
+    let buy = (l3.vault_tokens - l2.vault_tokens, l3.vault_sol as i128 - l2.vault_sol as i128);
+    [sell, buy]
+}
+
+/// Bare lamports on an agent wallet's WSOL account address (not a token account yet) are
+/// donated when the trade closes the account: the fills match a run without them exactly, and
+/// more parked than the clip (which used to underflow the measured spend) still trades.
+#[test]
+fn bare_lamports_on_a_wallet_wsol_address_are_donated_not_a_fill() {
+    let [(sold, sell_delta), (bought, buy_delta)] = wallet_pool_round_trip(|_| 0);
+    assert!(sold > 0 && bought > 0);
+    assert_eq!(sell_delta, sold as i128);
+    let parked = 1_000_000;
+    let [(sold_d, sell_delta_d), (bought_d, buy_delta_d)] = wallet_pool_round_trip(|_| parked);
+    assert_eq!(sold_d, sold, "the parked lamports are not proceeds");
+    assert_eq!(sell_delta_d, sell_delta + parked as i128);
+    assert_eq!(bought_d, bought);
+    assert_eq!(buy_delta_d, buy_delta + parked as i128);
+    let [(sold_b, _), (bought_b, buy_delta_b)] = wallet_pool_round_trip(|clip| clip * 2);
+    assert_eq!((sold_b, bought_b), (sold, bought));
+    assert!(buy_delta_b > 0, "more parked than spent: the vault gains SOL and still buys");
+}
+
+// ---------------- PumpSwap effective reserves ----------------
+
+/// The reserves PumpSwap prices on: (WSOL balance + `virtual_quote_reserves`, token balance).
+fn effective_pool(env: &Env, mint: &Pubkey) -> (u64, u64) {
+    let (quote, base, virtual_quote) = env.pool_state(mint);
+    ((quote as i128 + virtual_quote) as u64, base)
+}
+
+/// A rally sell by the agent on a graduated launch, from the same state every time, with the
+/// launch's impact cap set to `cap_bps`. Returns the result and the pool before and after.
+fn pool_rally_sell(cap_bps: u16) -> (TxResult, (u64, u64, i128), (u64, u64, i128)) {
+    let mut env = pump_env();
+    let (_c, launch, mint, _b) = env.live_pump_launch(&[10 * SOL]);
+    let cranker = env.user(2);
+    let whale = env.user(200);
+    let left = env.curve(&mint).real_token_reserves;
+    ok(env.pump_public_buy_tokens(&whale, &mint, left, 120 * SOL));
+    ok(env.pump_migrate(&cranker, &mint));
+    ok(env.graduate_pump(&cranker, &launch));
+    env.warp(60);
+    ok(env.amm_public_buy(&whale, &mint, 10 * SOL));
+    env.set_launch_at(&launch, |l| l.terms.agent_max_impact_bps = cap_bps);
+    let chunk = env.launch_at(&launch).window_sell_cap / 4;
+    let before = env.pool_state(&mint);
+    let res = env.agent_sell_pump(&launch, chunk, 0);
+    let after = env.pool_state(&mint);
+    (res, before, after)
+}
+
+/// pump.fun migrates a completed curve into a pool carrying a positive `virtual_quote_reserves`
+/// (17.58 SOL here, as on mainnet), and PumpSwap prices every trade on the WSOL balance plus it.
+/// The program reads the same effective reserves: the Trade event's price and SOL reserve, and
+/// the impact cap, are measured on them.
+#[test]
+fn graduated_pool_prices_and_caps_impact_on_effective_quote_reserves() {
+    let (res, before, after) = pool_rally_sell(MAX_AGENT_IMPACT_BPS);
+    let trade = trades(&ok(res)).pop().unwrap();
+    assert!(before.2 > 0, "migrated pools carry virtual quote reserves");
+    let eff = |(q, b, v): (u64, u64, i128)| ((q as i128 + v) as u64, b);
+    let (q1, b1) = eff(after);
+    assert_eq!(trade.price_q64, moshsol::math::price_q64(q1, b1).unwrap());
+    assert_eq!((trade.real_sol, trade.token_reserve), (q1, b1));
+    let (q0, b0) = eff(before);
+    let move_eff = moshsol::math::move_bps(moshsol::math::price_q64(q0, b0).unwrap(), trade.price_q64);
+    let move_raw = moshsol::math::move_bps(
+        moshsol::math::price_q64(before.0, before.1).unwrap(),
+        moshsol::math::price_q64(after.0, after.1).unwrap(),
+    );
+    assert!(move_eff > 0 && move_raw > move_eff, "the raw balance overstates the move: {move_raw} vs {move_eff} bps");
+    // The cap binds exactly at the effective move (a raw-balance measure would refuse it).
+    let (res, ..) = pool_rally_sell(move_eff as u16);
+    ok(res);
+    let (res, ..) = pool_rally_sell(move_eff as u16 - 1);
+    assert_err(res, MoshError::AgentPriceImpact);
+}
+
+/// `buyback_burn` on a graduated Holdfast token and `wind_down_pump` on a graduated launch floor
+/// their fills at 97% of the fee-free quote from the effective reserves: a positive virtual quote
+/// (the buyback; on the raw balance its floor was out of reach) and a negative one (the wind-down;
+/// on the raw balance its floor exceeded what the pool pays, so a dead launch could never wind
+/// down). Agent trades on a pool with a negative virtual quote report its effective price.
+#[test]
+fn buyback_and_wind_down_floor_on_effective_quote_reserves() {
+    let mut env = pump_env();
+    let cranker = env.user(2);
+    // The launch that pays, on its curve, and a graduated pump launch standing in for the
+    // Holdfast token.
+    let (_c, launch, mint, _b) = env.live_pump_launch(&[20 * SOL]);
+    let (_c2, hold_launch, hold_mint, _b2) = env.live_pump_launch(&[10 * SOL]);
+    let whale = env.user(300);
+    let left = env.curve(&hold_mint).real_token_reserves;
+    ok(env.pump_public_buy_tokens(&whale, &hold_mint, left, 120 * SOL));
+    ok(env.pump_migrate(&cranker, &hold_mint));
+    ok(env.graduate_pump(&cranker, &hold_launch));
+    // The pool's first trade creates its coin-creator vault account (the buyer pays its rent);
+    // here a public buy, as on any live pool.
+    ok(env.amm_public_buy(&whale, &hold_mint, SOL / 10));
+    public_pump(&mut env, &mint, 10 * SOL);
+    ok(env.collect_pump_fees(&cranker, &launch));
+    let admin = env.admin.insecure_clone();
+    let mut p = test_params();
+    p.buyback_mint = hold_mint;
+    ok(env.update_platform(&admin, p));
+    env.warp(BUYBACK_MIN_INTERVAL_SECS);
+
+    let pool_sol = env.launch_at(&launch).buyback_pool_sol;
+    let (quote, base) = effective_pool(&env, &hold_mint);
+    assert!(env.pool_state(&hold_mint).2 > 0);
+    let amount = pool_sol.min(quote / 20);
+    let expected = moshsol::math::tokens_out(quote, base, amount).unwrap();
+    let supply_before = env.spl_mint_supply(&hold_mint);
+    let meta = ok(env.buyback_burn(&launch, &hold_mint, u64::MAX, expected * 97 / 100));
+    eprintln!("CU buyback_burn (pool): {}", meta.compute_units_consumed);
+    let l = env.launch_at(&launch);
+    assert_eq!(l.burned_sol, amount);
+    assert!(l.burned_tokens >= expected * 97 / 100 && l.burned_tokens < expected, "fill {} vs quote {expected}", l.burned_tokens);
+    assert_eq!(supply_before - env.spl_mint_supply(&hold_mint), l.burned_tokens);
+    env.assert_pump_invariants(&launch);
+    env.assert_pump_invariants(&hold_launch);
+
+    // pump.fun's virtual quote turns negative on the graduated launch; the agent sells into the
+    // rally the graduation left (its EMA still sits at the curve's launch price).
+    let (raw, ..) = env.pool_state(&hold_mint);
+    env.set_pool_virtual_quote(&hold_mint, -(raw as i128) / 5);
+    let l0 = env.launch_at(&hold_launch);
+    let meta = ok(env.agent_sell_pump(&hold_launch, l0.window_sell_cap / 4, 0));
+    let (q1, b1) = effective_pool(&env, &hold_mint);
+    let t = trades(&meta).pop().unwrap();
+    assert_eq!((t.price_q64, t.real_sol, t.token_reserve), (moshsol::math::price_q64(q1, b1).unwrap(), q1, b1));
+    env.assert_pump_invariants(&hold_launch);
+
+    // The launch dies: the whale leaves.
+    let whale_tokens = env.spl_balance(&spl_ata(&whale.pubkey(), &hold_mint));
+    ok(env.amm_public_sell(&whale, &hold_mint, whale_tokens));
+    let (raw, ..) = env.pool_state(&hold_mint);
+    env.set_pool_virtual_quote(&hold_mint, -(raw as i128) / 5);
+
+    env.warp(WIND_DOWN_MIN_AGE_SECS);
+    let l1 = env.launch_at(&hold_launch);
+    let (quote, base) = effective_pool(&env, &hold_mint);
+    let expected = moshsol::math::sol_out(quote, base, l1.vault_tokens).unwrap();
+    let raw_quote = moshsol::math::sol_out(env.pool_state(&hold_mint).0, base, l1.vault_tokens).unwrap();
+    assert!(expected < raw_quote * 97 / 100, "the raw balance promises more than the pool pays");
+    ok(env.wind_down_pump(&cranker, &hold_launch));
+    let l2 = env.launch_at(&hold_launch);
+    assert_eq!(l2.status, LaunchStatus::WoundDown);
+    let proceeds = l2.backer_fees_accrued - l1.backer_fees_accrued - l1.vault_sol;
+    assert!(proceeds >= expected * 97 / 100 && proceeds < expected, "{proceeds} vs quote {expected}");
+    env.assert_pump_invariants(&hold_launch);
+}
+
+// ---------------- launch window ----------------
+
+/// A raise that met its minimum can be launched — by its creator, or by anyone after the
+/// deadline — until `LAUNCH_GRACE_SECS` past the deadline. After that nobody can launch it and
+/// every backer can refund in full, permissionlessly.
+#[test]
+fn a_met_raise_not_launched_within_the_grace_period_becomes_refundable() {
+    let mut env = pump_env();
+    let creator = env.user(5);
+    let stale = env.create_pump_ok(&creator, default_pump_args());
+    let launched = env.create_pump_ok(&creator, default_pump_args());
+    let b1 = env.user(25);
+    let b2 = env.user(25);
+    for l in [&stale, &launched] {
+        ok(env.deposit_at(&b1, l, 8 * SOL));
+        ok(env.deposit_at(&b2, l, 4 * SOL));
+    }
+    env.warp(3_600);
+    assert_err(env.refund_at(&b1, &stale), MoshError::MinimumReached);
+    env.warp(LAUNCH_GRACE_SECS - 1);
+    assert_err(env.refund_at(&b1, &stale), MoshError::MinimumReached);
+    // Still launchable by anyone on the grace period's last second.
+    let (_mint, res) = env.launch_pump(&b2, &launched);
+    ok(res);
+    assert_eq!(env.launch_at(&launched).status, LaunchStatus::Live);
+
+    env.warp(1);
+    let (_mint, res) = env.launch_pump(&creator, &stale);
+    assert_err(res, MoshError::LaunchWindowClosed);
+    let (_mint, res) = env.launch_pump(&b2, &stale);
+    assert_err(res, MoshError::LaunchWindowClosed);
+    let before = env.lamports(&b1.pubkey());
+    ok(env.refund_at(&b1, &stale));
+    assert!(env.lamports(&b1.pubkey()) - before >= 8 * SOL, "deposit + backer rent returned");
+    let l = env.launch_at(&stale);
+    assert_eq!(l.status, LaunchStatus::Refunding);
+    ok(env.refund_at(&b2, &stale));
+    let l = env.launch_at(&stale);
+    assert_eq!(l.refunded, l.raised);
+    let acct = env.svm.get_account(&stale).unwrap();
+    assert_eq!(acct.lamports, env.svm.minimum_balance_for_rent_exemption(acct.data.len()), "nothing left on the launch");
+    let (_mint, res) = env.launch_pump(&creator, &stale);
+    assert_err(res, MoshError::NotRaising);
 }

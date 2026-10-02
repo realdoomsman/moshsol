@@ -1,4 +1,12 @@
-import { LIMITS, lamportsToSol, previewPumpBundle, PUMP_CREATE_COST_LAMPORTS, WIND_DOWN_IDLE_SECS, WIND_DOWN_MIN_AGE_SECS } from "@holdfast/sdk";
+import {
+  LAUNCH_GRACE_SECS,
+  LIMITS,
+  lamportsToSol,
+  previewPumpBundle,
+  PUMP_CREATE_COST_LAMPORTS,
+  WIND_DOWN_IDLE_SECS,
+  WIND_DOWN_MIN_AGE_SECS,
+} from "@holdfast/sdk";
 import { fmtSolValue, fmtTokens } from "@/lib/format";
 import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import type { PlatformInfo } from "@/lib/types";
@@ -231,7 +239,13 @@ export const howItWorks: DocPage = {
               rows={[
                 ["Raising", <C key="c">create_launch_pump</C>, "Deposits until the deadline or the max raise; the creator may cancel."],
                 ["Live", <C key="l">launch_pump</C>, "Public trading on pump.fun, vault-agent trades, creator-fee sweeps, backer claims and paybacks."],
-                ["Refunding", <><C>cancel_launch</C>, or <C>refund</C> after a missed minimum</>, "Every backer takes back 100% of their deposit."],
+                [
+                  "Refunding",
+                  <>
+                    <C>cancel_launch</C>, or <C>refund</C> after a missed minimum or an unlaunched raise
+                  </>,
+                  "Every backer takes back 100% of their deposit.",
+                ],
                 [
                   "Wound down",
                   <C key="w">wind_down_pump</C>,
@@ -289,7 +303,8 @@ export const forBackers: DocPage = {
         body: (
           <P>
             If the raise misses its minimum by the deadline, anyone can open refunds and every backer claims <B>100%</B> of their deposit
-            with <C>refund</C>. The same applies if the creator cancels before launch. There is no fee on a refund.
+            with <C>refund</C>. The same applies if the creator cancels before launch, and if a raise that met its minimum is not launched
+            within {LAUNCH_GRACE_SECS / 86_400} days of its deadline (nobody can launch it after that). There is no fee on a refund.
           </P>
         ),
       },

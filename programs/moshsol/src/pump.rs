@@ -101,7 +101,14 @@ pub struct Pool {
     pub pool_base_token_account: Pubkey,
     pub pool_quote_token_account: Pubkey,
     pub coin_creator: Pubkey,
+    /// `virtual_quote_reserves` (signed; 0 on a pool account written before the field existed):
+    /// PumpSwap prices every trade on the quote account's balance plus this.
+    pub virtual_quote_reserves: i128,
 }
+
+/// Offset of `Pool::virtual_quote_reserves`, after `coin_creator`, `is_mayhem_mode` and
+/// `is_cashback_coin`.
+const POOL_VIRTUAL_QUOTE_AT: usize = 245;
 
 impl Pool {
     pub fn load(info: &AccountInfo) -> Result<Self> {
@@ -109,6 +116,9 @@ impl Pool {
         let data = info.try_borrow_data()?;
         require!(data.len() >= 243 && data[..8] == POOL_DISC, MoshError::InvalidVenueAccount);
         let pk = |at: usize| Pubkey::new_from_array(data[at..at + 32].try_into().unwrap());
+        let virtual_quote_reserves = data
+            .get(POOL_VIRTUAL_QUOTE_AT..POOL_VIRTUAL_QUOTE_AT + 16)
+            .map_or(0, |b| i128::from_le_bytes(b.try_into().unwrap()));
         // 8 disc + 1 pool_bump + 2 index + 32 creator
         Ok(Self {
             base_mint: pk(43),
@@ -116,8 +126,32 @@ impl Pool {
             pool_base_token_account: pk(139),
             pool_quote_token_account: pk(171),
             coin_creator: pk(211),
+            virtual_quote_reserves,
         })
     }
+}
+
+/// Reserves of the PumpSwap pool `pool` from the `pool` layout `r` as PumpSwap prices them:
+/// (effective quote, base) — the quote account's balance plus the pool's signed
+/// `virtual_quote_reserves`, and the base account's balance. Checks the pool's token accounts
+/// and the WSOL mint in `r`; an effective quote outside `1..=u64::MAX` is rejected (PumpSwap
+/// can't trade such a pool either).
+pub fn pool_reserves(pool: &Pubkey, r: &[AccountInfo]) -> Result<(u64, u64)> {
+    require!(r.len() >= pool::LEN, MoshError::InvalidVenueAccount);
+    require_keys_eq!(r[pool::POOL].key(), *pool, MoshError::InvalidVenueAccount);
+    let state = Pool::load(&r[pool::POOL])?;
+    require!(
+        state.pool_base_token_account == r[pool::POOL_BASE].key()
+            && state.pool_quote_token_account == r[pool::POOL_QUOTE].key()
+            && r[pool::WSOL_MINT].key() == WSOL_MINT,
+        MoshError::InvalidVenueAccount
+    );
+    let raw = token_amount(&r[pool::POOL_QUOTE])?;
+    let quote = u64::try_from(i128::from(raw) + state.virtual_quote_reserves)
+        .ok()
+        .filter(|q| *q > 0)
+        .ok_or(MoshError::InvalidVenueAccount)?;
+    Ok((quote, token_amount(&r[pool::POOL_BASE])?))
 }
 
 /// Whether `info` is an initialised SPL Token account (owner and size, never the balance:
@@ -259,18 +293,16 @@ pub mod pool {
     pub const LEN: usize = 20;
 }
 
-/// The fixed accounts every venue trade shares.
+/// The fixed accounts every venue trade shares. The venue CPIs carry only the venue's own
+/// accounts: lamports this program moves off the launch directly are flushed to the runtime
+/// before the call (`VenueTrade::fund`), so the launch never rides along in a venue's account
+/// list (where a venue that grows its remaining accounts would read it as one of them).
 pub struct Trader<'a, 'info> {
     pub mint: &'a AccountInfo<'info>,
     pub user: &'a AccountInfo<'info>,
     pub user_tokens: &'a AccountInfo<'info>,
     pub system_program: &'a AccountInfo<'info>,
     pub token_program: &'a AccountInfo<'info>,
-    /// The launch account, appended (writable, unused by the venue) to every venue CPI: the
-    /// runtime syncs a CPI's accounts from the caller's view before the call and checks that
-    /// the caller's lamport sum didn't change, so lamports this program moved off the launch
-    /// directly must be visible there.
-    pub launch: &'a AccountInfo<'info>,
 }
 
 fn meta(info: &AccountInfo, writable: bool, signer: bool) -> AccountMeta {
@@ -318,16 +350,14 @@ pub fn curve_trade<'info>(
     accounts.push(meta(&r[curve::FEE_PROGRAM], false, false));
     accounts.push(meta(&r[curve::BONDING_CURVE_V2], false, false));
     accounts.push(meta(&r[curve::BUYBACK_FEE_RECIPIENT], true, false));
-    accounts.push(meta(t.launch, true, false));
 
-    let mut infos: Vec<AccountInfo<'info>> = Vec::with_capacity(17);
+    let mut infos: Vec<AccountInfo<'info>> = Vec::with_capacity(curve::LEN + 5);
     infos.extend_from_slice(&r[..curve::LEN]);
     infos.push(t.mint.clone());
     infos.push(t.user_tokens.clone());
     infos.push(t.user.clone());
     infos.push(t.system_program.clone());
     infos.push(t.token_program.clone());
-    infos.push(t.launch.clone());
     invoke_signed(
         &Instruction { program_id: PUMP_PROGRAM_ID, accounts, data },
         &infos,
@@ -416,16 +446,14 @@ pub fn pool_trade<'info>(
     accounts.push(meta(&r[pool::POOL_V2], false, false));
     accounts.push(meta(&r[pool::BUYBACK_FEE_RECIPIENT], false, false));
     accounts.push(meta(&r[pool::BUYBACK_FEE_RECIPIENT_ATA], true, false));
-    accounts.push(meta(t.launch, true, false));
 
-    let mut infos: Vec<AccountInfo<'info>> = Vec::with_capacity(23);
+    let mut infos: Vec<AccountInfo<'info>> = Vec::with_capacity(pool::LEN + 5);
     infos.extend_from_slice(&r[..pool::LEN]);
     infos.push(t.mint.clone());
     infos.push(t.user_tokens.clone());
     infos.push(t.user.clone());
     infos.push(t.system_program.clone());
     infos.push(t.token_program.clone());
-    infos.push(t.launch.clone());
     invoke_signed(
         &Instruction { program_id: PUMP_AMM_PROGRAM_ID, accounts, data },
         &infos,

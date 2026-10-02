@@ -25,7 +25,9 @@
  * PRODUCTION_TERMS), --rug-budget <pp> (10: extra rug SOL loss a pick may add, pp of the starting vault SOL),
  * --reserves <bps,…> (reserve sweep), --sweep <sol,…> (guardrail base allowance sweep; 0.25,0.5,1,2,3),
  * --tuned <file> (speed: read a previous search result, results/speed-tuned.json, instead of searching),
- * --cooldowns <s,…> (speed: fallback spacing sweep; 5,8,10,15,20,30), --workers <n> (CPUs − 2).
+ * --cooldowns <s,…> (speed: fallback spacing sweep; 5,8,10,15,20,30), --workers <n> (CPUs − 2), --venue <holdfast|pump>
+ * (every scenario launches on the Holdfast curve, PRODUCTION_TERMS, by default; `pump` launches them on pump.fun with
+ * PUMP_TERMS, where only agent trades sample the EMA, and suffixes the result files with `-pump`; not for `terms`).
  * Every command prints markdown and writes it plus a JSON summary to apps/agent/backtest/results/.
  */
 import fs from "node:fs";
@@ -52,7 +54,7 @@ import {
 import { mean, type Score } from "./metrics";
 import { SearchSpace, cmaes, randomSearch, type Fitness } from "./optimize";
 import { SimPool } from "./pool";
-import { PRODUCTION_TERMS } from "./program";
+import { PRODUCTION_TERMS, PUMP_TERMS, type SimTerms } from "./program";
 import { loadIndex, type PoolEntry, type ScenarioSpec } from "./scenarios";
 import { mulberry32, type Policy, type RunResult, type SimOptions } from "./sim";
 import {
@@ -149,6 +151,28 @@ function paramsFlag(): StrategyParams {
   return withParams(DEFAULT_PARAMS, (parsed.params as Record<string, unknown> | undefined) ?? parsed);
 }
 
+/** `--venue pump`: the launch terms every scenario runs under instead of the default Holdfast-curve PRODUCTION_TERMS. */
+function venueFlag(): SimTerms | null {
+  const v = flag("venue");
+  if (v === undefined || v === "holdfast") return null;
+  if (v === "pump") return PUMP_TERMS;
+  throw new Error(`--venue must be holdfast or pump, got ${v}`);
+}
+
+const VENUE = venueFlag();
+/** Result file suffix of the venue run. */
+const VENUE_SUFFIX = VENUE ? `-${VENUE.venue}` : "";
+
+function onVenue(specs: ScenarioSpec[]): ScenarioSpec[] {
+  return VENUE ? specs.map((s) => ({ ...s, launch: { ...s.launch, terms: VENUE } })) : specs;
+}
+
+/** `walkForward` on the `--venue` terms. */
+function walkForwardSpecs(entries: PoolEntry[]): { wfTrain: ScenarioSpec[]; wfTest: ScenarioSpec[] } {
+  const { wfTrain, wfTest } = walkForward(entries, say);
+  return { wfTrain: onVenue(wfTrain), wfTest: onVenue(wfTest) };
+}
+
 const fmtParams = (p: StrategyParams) =>
   JSON.stringify(Object.fromEntries(Object.entries(p).map(([k, v]) => [k, Number(v.toPrecision(4))])), null, 2);
 
@@ -159,10 +183,11 @@ function say(line = ""): void {
 }
 
 function save(name: string, summary: unknown): void {
+  const file = `${name}${VENUE_SUFFIX}`;
   fs.mkdirSync(RESULTS_DIR, { recursive: true });
-  fs.writeFileSync(path.join(RESULTS_DIR, `${name}.md`), `${out.join("\n")}\n`);
-  fs.writeFileSync(path.join(RESULTS_DIR, `${name}.json`), `${JSON.stringify(summary, null, 2)}\n`);
-  console.log(`\nwrote ${path.relative(process.cwd(), path.join(RESULTS_DIR, name))}.{md,json}`);
+  fs.writeFileSync(path.join(RESULTS_DIR, `${file}.md`), `${out.join("\n")}\n`);
+  fs.writeFileSync(path.join(RESULTS_DIR, `${file}.json`), `${JSON.stringify(summary, null, 2)}\n`);
+  console.log(`\nwrote ${path.relative(process.cwd(), path.join(RESULTS_DIR, file))}.{md,json}`);
 }
 
 async function report(ev: Evaluator, label: string, specs: ScenarioSpec[], params: StrategyParams) {
@@ -284,7 +309,7 @@ async function speedCommand(pool: SimPool, entries: PoolEntry[], testSpecs: Scen
     if (!ev) evaluators.set(cooldownMs, (ev = new Evaluator(pool, cooldownMs === undefined ? undefined : { ...EVENT_SIM, cooldownMs })));
     return ev;
   };
-  const { wfTrain, wfTest } = walkForward(entries, say);
+  const { wfTrain, wfTest } = walkForwardSpecs(entries);
   const tunedFile = flag("tuned");
   let tuned: Paced;
   if (tunedFile) {
@@ -323,7 +348,7 @@ async function speedCommand(pool: SimPool, entries: PoolEntry[], testSpecs: Scen
     );
     say(`\`\`\`json\n${fmtParams(tuned.params)}\n\`\`\``);
     fs.mkdirSync(RESULTS_DIR, { recursive: true });
-    fs.writeFileSync(path.join(RESULTS_DIR, "speed-tuned.json"), `${JSON.stringify(tuned, null, 2)}\n`);
+    fs.writeFileSync(path.join(RESULTS_DIR, `speed${VENUE_SUFFIX}-tuned.json`), `${JSON.stringify(tuned, null, 2)}\n`);
   }
 
   const splits: [string, ScenarioSpec[]][] = [
@@ -439,7 +464,7 @@ async function termsCommand(ev: Evaluator, entries: PoolEntry[], trainSpecs: Sce
   say(`every statistic is taken at its worst flow model; ΔV is vault value (plus agent profit paid to backers) vs no agent under the same terms (VWAP mark); rug budget: rug SOL lost ≤ baseline + ${budget} pp of the starting vault SOL.`);
   say(`picks, rounded to 25 bps (band, impact), 50 bps (caps) and 5 min (window, EMA) and measured again:\n`);
   for (const rule of RULES) say(`- **${rule}**: ${RULE_DOC[rule]}`);
-  const { wfTrain, wfTest } = walkForward(entries, say);
+  const { wfTrain, wfTest } = walkForwardSpecs(entries);
   const phases = [
     { name: "split", tuneLabel: "TRAIN", testLabel: "TEST", tune: trainSpecs, test: testSpecs },
     { name: "walk-forward", tuneLabel: "WALK-FORWARD TRAIN (hours 0–24)", testLabel: "WALK-FORWARD TEST (hours 24–72)", tune: wfTrain, test: wfTest },
@@ -534,12 +559,13 @@ async function main(): Promise<void> {
   const entries = loadIndex();
   const { train, test } = split(entries);
   const tags = (es: PoolEntry[]) => Object.entries(es.reduce<Record<string, number>>((a, e) => ({ ...a, [e.tag]: (a[e.tag] ?? 0) + 1 }), {}));
-  say(`# backtest ${cmd}\n`);
+  say(`# backtest ${cmd}${VENUE ? ` (venue ${VENUE.venue}: every scenario launches with PUMP_TERMS)` : ""}\n`);
+  if (VENUE && cmd === "terms") throw new Error("--venue: the terms search builds its terms from PRODUCTION_TERMS (Holdfast curve)");
   say(`dataset: ${entries.length} pools; TRAIN ${train.length} (${tags(train).map(([t, n]) => `${t} ${n}`).join(", ")}), TEST ${test.length} (${tags(test).map(([t, n]) => `${t} ${n}`).join(", ")}); synthetic ${SYN_TRAIN_SEEDS.length}+${SYN_TEST_SEEDS.length} × 24 h`);
   const pool = new SimPool(flag("workers") ? intFlag("workers", 1) : undefined);
   const ev = new Evaluator(pool);
-  const trainSpecs = [...poolSpecs(train, 0, FULL_MIN), ...syntheticSpecs(SYN_TRAIN_SEEDS)];
-  const testSpecs = [...poolSpecs(test, 0, FULL_MIN), ...syntheticSpecs(SYN_TEST_SEEDS)];
+  const trainSpecs = onVenue([...poolSpecs(train, 0, FULL_MIN), ...syntheticSpecs(SYN_TRAIN_SEEDS)]);
+  const testSpecs = onVenue([...poolSpecs(test, 0, FULL_MIN), ...syntheticSpecs(SYN_TEST_SEEDS)]);
   const params = paramsFlag();
   const frozen = frozenFlag();
   try {
@@ -554,7 +580,7 @@ async function main(): Promise<void> {
       const te = await report(ev, "TEST", testSpecs, best);
       save("train", { params: best, train: tr, test: te });
     } else if (cmd === "walkforward") {
-      const { wfTrain, wfTest } = walkForward(entries, say);
+      const { wfTrain, wfTest } = walkForwardSpecs(entries);
       const best = await tune(ev, wfTrain, params, "walk-forward", frozen);
       const tr = await report(ev, "WALK-FORWARD TRAIN (hours 0–24)", wfTrain, best);
       const te = await report(ev, "WALK-FORWARD TEST (hours 24–72)", wfTest, best);
@@ -564,7 +590,7 @@ async function main(): Promise<void> {
     } else if (cmd === "support") {
       // Tuning happens on walk-forward TRAIN (every pool's first 24 h) only; TRAIN/TEST/walk-forward TEST are read-outs.
       // `--compare name=file.json,…` skips the tuning and reads out the named policies against the previous one.
-      const { wfTrain, wfTest } = walkForward(entries, say);
+      const { wfTrain, wfTest } = walkForwardSpecs(entries);
       say(`\nprevious policy (profit-share era defaults):\n\n\`\`\`json\n${fmtParams(PREVIOUS)}\n\`\`\``);
       const named: [string, StrategyParams][] = [["previous", PREVIOUS]];
       const compareFlag = flag("compare");
@@ -594,7 +620,7 @@ async function main(): Promise<void> {
       save(compareFlag ? "support-compare" : "support", { policies: Object.fromEntries(named), compared });
     } else if (cmd === "flow") {
       say(`\npolicy:\n\n\`\`\`json\n${fmtParams(params)}\n\`\`\``);
-      const { wfTest } = walkForward(entries, say);
+      const { wfTest } = walkForwardSpecs(entries);
       const splits: [string, ScenarioSpec[]][] = [
         ["TRAIN", trainSpecs],
         ["TEST", testSpecs],

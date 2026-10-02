@@ -78,6 +78,9 @@ pub const PUMP_BUY_FEE_HEADROOM_BPS: u16 = 300;
 
 pub const MIN_RAISE_DURATION_SECS: i64 = 60;
 pub const MAX_RAISE_DURATION_SECS: i64 = 14 * 86_400;
+/// A raise that met its minimum must be launched within this long after its deadline; past it,
+/// nobody can launch it any more and every backer can refund (`refund` flips it to Refunding).
+pub const LAUNCH_GRACE_SECS: i64 = 3 * 86_400;
 pub const MAX_RAISE_LAMPORTS: u64 = 100_000 * 1_000_000_000;
 pub const MIN_BUNDLE_SUPPLY_BPS: u16 = 100;
 
