@@ -184,3 +184,30 @@ export function IconButton({
     </button>
   );
 }
+
+/** `IconButton` as an external link (opens in a new tab). */
+export function IconAnchor({
+  label,
+  variant = "ghost",
+  size = "md",
+  className,
+  children,
+  ...rest
+}: Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "aria-label"> & {
+  label: string;
+  variant?: Extract<ButtonVariant, "ghost" | "secondary" | "primary">;
+  size?: Exclude<ButtonSize, "lg">;
+}) {
+  return (
+    <a
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={label}
+      title={label}
+      className={cn(BASE, "px-0", VARIANTS[variant], ICON_SIZES[size], className)}
+      {...rest}
+    >
+      {children}
+    </a>
+  );
+}

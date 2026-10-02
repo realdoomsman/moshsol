@@ -3,9 +3,7 @@ import Link from "next/link";
 import { Lockup } from "../brand/lockup";
 import { Address } from "../ui/address";
 import { StatusBar } from "./status";
-
-/** The official X account. */
-export const X_URL = "https://x.com/TryHoldFast";
+import { X_HANDLE, X_URL, XLogo } from "../brand/x-link";
 
 const COLUMNS = [
   {
@@ -67,13 +65,11 @@ export function SiteFooter() {
               href={X_URL}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="Holdfast on X (@TryHoldFast)"
+              aria-label={`Holdfast on X (${X_HANDLE})`}
               className="ui flex w-fit items-center gap-2 rounded-xs text-ink-2 transition-colors hover:text-ink"
             >
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="currentColor">
-                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-              </svg>
-              @TryHoldFast
+              <XLogo className="size-4" />
+              {X_HANDLE}
             </a>
           </div>
           {COLUMNS.map((col) => (

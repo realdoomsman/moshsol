@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Lockup } from "../brand/lockup";
 import { Mark } from "../brand/mark";
+import { X_HANDLE, X_URL, XLogo } from "../brand/x-link";
+import { IconAnchor } from "../ui/button";
 import { SearchIconButton, SearchTrigger } from "../search/search-trigger";
 import { cn } from "../ui/cn";
 import { FaucetButton } from "./faucet";
@@ -63,6 +65,9 @@ export function SiteHeader() {
           <div className="flex lg:hidden">
             <SearchIconButton />
           </div>
+          <IconAnchor href={X_URL} label={`Holdfast on X (${X_HANDLE})`} size="sm">
+            <XLogo className="size-4" />
+          </IconAnchor>
           <div className="hidden md:flex">
             <NetworkPill />
           </div>
