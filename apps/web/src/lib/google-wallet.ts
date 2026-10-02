@@ -11,6 +11,7 @@ import {
   type WalletName,
 } from "@solana/wallet-adapter-base";
 import { PublicKey, Transaction, VersionedTransaction } from "@solana/web3.js";
+import { RESTORE_TIMEOUT_MS } from "./wallet-restore";
 
 export const GOOGLE_WALLET_NAME = "Google" as WalletName<"Google">;
 
@@ -34,20 +35,36 @@ export class AccountsError extends Error {
   }
 }
 
+/** Longest any accounts call may take; a hung proxy or service must never leave a spinner up for good. */
+const ACCOUNTS_TIMEOUT_MS = 15_000;
+
 /**
  * Same-origin call to the accounts API (proxied by `app/api/{auth,wallet}`, cookies first-party).
- * Passing `init` makes it a POST with the CSRF header the service requires.
+ * Passing `init` makes it a POST with the CSRF header the service requires. Gives up after `timeoutMs`
+ * with `AccountsError` status 0.
  */
-async function accounts<T>(path: string, init?: { json?: unknown }): Promise<T> {
+async function accounts<T>(path: string, init?: { json?: unknown }, timeoutMs = ACCOUNTS_TIMEOUT_MS): Promise<T> {
   const post = init !== undefined;
-  const res = await fetch(path, {
-    method: post ? "POST" : "GET",
-    credentials: "same-origin",
-    cache: "no-store",
-    headers: post ? { "x-holdfast": "1", ...(init.json !== undefined ? { "content-type": "application/json" } : {}) } : undefined,
-    body: post && init.json !== undefined ? JSON.stringify(init.json) : undefined,
-  });
-  const body: unknown = await res.json().catch(() => null);
+  const signal = AbortSignal.timeout(timeoutMs);
+  let res: Response;
+  let body: unknown;
+  try {
+    res = await fetch(path, {
+      method: post ? "POST" : "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: post ? { "x-holdfast": "1", ...(init.json !== undefined ? { "content-type": "application/json" } : {}) } : undefined,
+      body: post && init.json !== undefined ? JSON.stringify(init.json) : undefined,
+      signal,
+    });
+    body = await res.json().catch((err: unknown) => {
+      if (signal.aborted) throw err;
+      return null;
+    });
+  } catch (err) {
+    if (signal.aborted) throw new AccountsError(0, `The account service did not answer within ${timeoutMs / 1000}s`);
+    throw err;
+  }
   if (!res.ok) {
     const error = body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : `${res.status} ${res.statusText}`;
     throw new AccountsError(res.status, error);
@@ -94,10 +111,14 @@ export class GoogleWalletAdapter extends BaseSignerWalletAdapter<"Google"> {
     return this._connecting;
   }
 
-  /** Page load with Google remembered: resume a live session, never redirect. */
+  /**
+   * Page load with Google remembered: resume a live session, never redirect. Settles inside the provider's restore
+   * window (lib/wallet-restore), so a slow accounts service fails it here rather than connecting after the provider
+   * has given up.
+   */
   override async autoConnect(): Promise<void> {
     // Not emitted as an error: WalletProvider just forgets the selection.
-    if (!(await this.resume())) throw new WalletConnectionError("no Google session");
+    if (!(await this.resume(RESTORE_TIMEOUT_MS - 500))) throw new WalletConnectionError("no Google session");
   }
 
   /** Picked in the wallet modal: resume the session, or go sign in with Google (the page navigates away). */
@@ -145,12 +166,12 @@ export class GoogleWalletAdapter extends BaseSignerWalletAdapter<"Google"> {
     });
   }
 
-  /** Connects when the browser has a session; false when it has none. */
-  private async resume(): Promise<boolean> {
+  /** Connects when the browser has a session; false when it has none. Throws when the service fails or misses `timeoutMs`. */
+  private async resume(timeoutMs?: number): Promise<boolean> {
     if (this._publicKey) return true;
     this._connecting = true;
     try {
-      const me = await accounts<{ email: string; address: string }>("/api/auth/me");
+      const me = await accounts<{ email: string; address: string }>("/api/auth/me", undefined, timeoutMs);
       this._publicKey = new PublicKey(me.address);
       this.email = me.email;
       this.emit("connect", this._publicKey);

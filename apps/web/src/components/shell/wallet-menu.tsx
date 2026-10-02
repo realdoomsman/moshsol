@@ -53,9 +53,12 @@ export function WalletButton() {
   }, [google, publicKey]);
 
   if (!mounted || !publicKey) {
+    // Not `busy`: that blocks clicks, and a wallet that never answers would lock the header. While a picked wallet's
+    // popup is open the button still reopens the modal, to pick another wallet instead.
+    const busy = mounted && connecting;
     return (
-      <Button variant="primary" size="sm" busy={mounted && connecting} onClick={() => setVisible(true)}>
-        {mounted && connecting ? "Connecting" : "Connect"}
+      <Button variant="primary" size="sm" icon={busy ? <Spinner /> : undefined} aria-busy={busy || undefined} onClick={() => setVisible(true)}>
+        {busy ? "Connecting" : "Connect"}
       </Button>
     );
   }

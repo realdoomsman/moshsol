@@ -100,6 +100,11 @@ function WalletModal({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
 
   const choose = (name: WalletName) => {
     setPicked(name);
+    // Still holding the page-load reconnect (a locked extension answers only once unlocked), the adapter ignores a new
+    // connect; it connects when that one is answered.
+    if (wallets.some((w) => w.adapter.name === name && w.adapter.connecting)) {
+      toast(`Waiting for ${name}`, { description: "Open the extension and unlock it to finish connecting." });
+    }
     if (wallet?.adapter.name === name) {
       // Re-picking the selected-but-disconnected wallet: select() is a no-op, so connect directly.
       void connect().catch(() => undefined);
