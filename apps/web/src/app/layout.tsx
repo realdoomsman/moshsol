@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   description,
   applicationName: "Holdfast",
   openGraph: { siteName: "Holdfast", type: "website" },
-  twitter: { card: "summary_large_image" },
+  twitter: { card: "summary_large_image", site: "@TryHoldFast", creator: "@TryHoldFast" },
 };
 
 export const viewport: Viewport = {
