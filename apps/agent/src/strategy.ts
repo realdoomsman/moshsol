@@ -458,10 +458,13 @@ export const DEFAULT_PARAMS: StrategyParams = {
   buyDumpShare: 1,
   buyClimaxBps: 0,
   vwapEntryBps: 0,
-  baseSellSol: 1,
-  fullMcapMult: 17.6,
-  fullVolumeSol: 1387,
-  rampShape: 2.15,
+  // Owner's call after the first live launch (TEST, 9× in minutes, ~1 SOL/h sold): sell into strength up to the
+  // program's window cap once the chart is 3× launch with 50 SOL traded; 2 SOL per window before that. Bolder than
+  // the backtest-tuned ramp (17.6× / 1,387 SOL), whose out-of-sample edge came from holding through rugs.
+  baseSellSol: 2,
+  fullMcapMult: 3,
+  fullVolumeSol: 50,
+  rampShape: 1,
   strongVolumeRatio: 1.39,
   strongFlowMult: 6.63,
   supportVolumeMult: 2,

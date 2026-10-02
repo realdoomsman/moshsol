@@ -63,8 +63,9 @@ function windowProceeds(mult: number, volumeSol: number, params: StrategyParams)
 // at most its allowance per window (valued at spot, so up to ~3% more as its own sells lower the price) and the
 // hold says why; the same launch at a high multiple with a lot of volume sells what the on-chain cap allows.
 test("sell guardrail bounds a window's proceeds until market cap and volume have grown", () => {
-  const p = DEFAULT_PARAMS;
-  assert.ok(p.fullMcapMult > 1 && p.fullVolumeSol > 1, "the guardrail ships on");
+  assert.ok(DEFAULT_PARAMS.fullMcapMult > 1 && DEFAULT_PARAMS.fullVolumeSol > 1, "the guardrail ships on");
+  // The mechanism, on a ramp slow enough to bind at 3× with 10 SOL traded (the shipped ramp opens at 3× / 50 SOL).
+  const p = withParams(DEFAULT_PARAMS, { baseSellSol: 1, fullMcapMult: 17.6, fullVolumeSol: 1387, rampShape: 2.15 });
   const quiet = windowProceeds(3, 10, p);
   assert.ok(Number.isFinite(quiet.allowance) && quiet.allowance < 2, `allowance ${quiet.allowance} SOL should bind at 3× with 10 SOL traded`);
   assert.ok(quiet.sol > 0, "the quiet launch still sells into the rally");

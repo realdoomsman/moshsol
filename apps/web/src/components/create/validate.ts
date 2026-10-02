@@ -2,6 +2,9 @@ import { LIMITS, solToLamports } from "@holdfast/sdk";
 import { PublicKey } from "@solana/web3.js";
 import { IMAGE_TYPES, MAX_IMAGE_BYTES, type TokenImage } from "./image";
 
+/** A vault needs SOL from launch to buy back the first dips (launches with 0% start with only rounding dust). */
+export const MIN_RESERVE_PCT = 15;
+
 export const MAX_DESCRIPTION = 500;
 /** `POST /api/upload` accepts at most this many whitelist entries. */
 export const MAX_WHITELIST = 50_000;
@@ -194,7 +197,7 @@ export function parsePrefill(q: Record<string, string | string[] | undefined>): 
   }
   const reserve = Number(one("reserve"));
   if (one("reserve") && Number.isFinite(reserve)) {
-    out.reservePct = Math.min(LIMITS.maxReserveBps / 100, Math.max(0, Math.round(reserve)));
+    out.reservePct = Math.min(LIMITS.maxReserveBps / 100, Math.max(MIN_RESERVE_PCT, Math.round(reserve)));
   }
   return out;
 }
@@ -264,7 +267,8 @@ export function validateDraft(d: CreateDraft, p: DraftLimits): Validation {
     errors.bundlePct = `Between ${LIMITS.minBundleSupplyBps / 100}% and ${p.maxBundleSupplyBps / 100}%`;
   }
   const reserveBps = Math.round(d.reservePct * 100);
-  if (reserveBps < 0 || reserveBps > LIMITS.maxReserveBps) errors.reservePct = `At most ${LIMITS.maxReserveBps / 100}%`;
+  if (reserveBps < MIN_RESERVE_PCT * 100) errors.reservePct = `At least ${MIN_RESERVE_PCT}%: the vault agent buys dips with this SOL`;
+  else if (reserveBps > LIMITS.maxReserveBps) errors.reservePct = `At most ${LIMITS.maxReserveBps / 100}%`;
 
   const whitelist: PublicKey[] = [];
   const badWhitelistLines: number[] = [];

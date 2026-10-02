@@ -27,6 +27,7 @@ import {
   extractAddresses,
   fmtDuration,
   MAX_DESCRIPTION,
+  MIN_RESERVE_PCT,
   STEPS,
   utf8Len,
   type CreateDraft,
@@ -419,7 +420,7 @@ export function StepVault({
           <div>
             <Slider
               id={id}
-              min={0}
+              min={MIN_RESERVE_PCT}
               max={maxReservePct}
               step={1}
               value={draft.reservePct}
@@ -428,7 +429,7 @@ export function StepVault({
               onChange={(x) => set("reservePct", x, "reservePct")}
             />
             <div className="micro num flex justify-between text-ink-3">
-              <span>0%</span>
+              <span>{MIN_RESERVE_PCT}%</span>
               <span>{maxReservePct}%</span>
             </div>
           </div>
