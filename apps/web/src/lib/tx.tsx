@@ -14,6 +14,7 @@ export interface TxRequest {
   /** Short action label, e.g. "Buy $MOSH". */
   label: string;
   build: (payer: PublicKey) => Promise<TransactionInstruction[]>;
+  /** Extra keypairs the transaction needs (a fresh mint, a create key); they sign after the wallet. */
   signers?: Keypair[];
   /**
    * Chain-read query keys to refresh after confirmation. Indexer data refreshes itself from the
@@ -49,15 +50,21 @@ export function ExplorerLink({ signature, children = "View on explorer" }: { sig
 
 /**
  * Wallet transaction pipeline: build → simulate (human errors before the wallet prompt; sizes the
- * compute limit) with the priority-fee estimate → partial-sign extra signers → wallet sign → send and
- * rebroadcast until confirmed, with a single evolving toast. Public trades that collide with a
- * vault-agent trade in one slot (anti-sandwich rule) are retried a slot later instead of shown.
+ * compute limit) with the priority-fee estimate → wallet → confirmed, with a single evolving toast.
+ * - Extra signers: the wallet signs first and the keypairs after, then we send and rebroadcast. Phantom
+ *   flags transactions that reach it already partially signed ("This dApp could be malicious").
+ * - Single signer on a wallet that broadcasts: the wallet signs and sends (`signAndSendTransaction`);
+ *   only confirmation is ours.
+ * - Otherwise the wallet signs and we send and rebroadcast until confirmed. Public trades that collide
+ *   with a vault-agent trade in one slot (anti-sandwich rule) are retried a slot later instead of shown.
+ * The transaction carries its own compute limit and price, so wallets add no fee instructions of their own;
+ * Phantom may still append Lighthouse assertions, which the extra signers then sign over too.
  * `stage` follows the pipeline for button copy; success toasts stay 6 s, errors until dismissed.
  * The landing code and program-error messages (`./program`) load with the first transaction, not the page.
  */
 export function useTx() {
   const { connection } = useConnection();
-  const { publicKey, signTransaction, sendTransaction } = useWallet();
+  const { publicKey, wallet, signTransaction, sendTransaction } = useWallet();
   const { setVisible } = useWalletModal();
   const qc = useQueryClient();
   const [pending, setPending] = useState<string | null>(null);
@@ -79,7 +86,7 @@ export function useTx() {
         const ixs = await req.build(publicKey);
         const { tx, lastValidBlockHeight } = await program.prepareTx(connection, publicKey, ixs, program.DEFAULT_PRIORITY_FEE);
 
-        if (req.signers?.length) tx.partialSign(...req.signers);
+        const signers = req.signers ?? [];
         setStage("signing");
         toast.loading(req.label, { id, description: `${TX_STAGE_LABEL.signing}…` });
 
@@ -88,14 +95,20 @@ export function useTx() {
           toast.loading(req.label, { id, description: <ExplorerLink signature={signature} /> });
         };
         let signature: string;
-        if (signTransaction) {
+        // Wallet Standard wallets (Phantom, Solflare, Backpack…) broadcast what they sign, and Phantom
+        // recommends `signAndSendTransaction` over sign-then-send-raw. Our own adapters (Google custodial,
+        // burner) only sign, so theirs go through `sendAndConfirm` and its rebroadcasting.
+        const adapter = wallet?.adapter;
+        const walletBroadcasts = !!adapter && "standard" in adapter && adapter.standard && "solana:signAndSendTransaction" in adapter.wallet.features;
+        if (signTransaction && (signers.length > 0 || !walletBroadcasts)) {
           const signed = await signTransaction(tx);
+          if (signers.length) signed.partialSign(...signers);
           setStage("sending");
           toast.loading(req.label, { id, description: `${TX_STAGE_LABEL.sending}…` });
           signature = await program.sendAndConfirm(connection, signed.serialize(), lastValidBlockHeight, confirming);
         } else {
-          // The wallet broadcasts it (compute limit and price included); only confirmation is ours.
-          signature = await sendTransaction(tx, connection, { preflightCommitment: "confirmed" });
+          // The wallet signs and broadcasts (with any extra signers only if it can't sign without sending).
+          signature = await sendTransaction(tx, connection, { signers, preflightCommitment: "confirmed" });
           confirming(signature);
           await program.confirmSignature(connection, signature, lastValidBlockHeight);
         }
@@ -117,7 +130,7 @@ export function useTx() {
         setStage(null);
       }
     },
-    [connection, publicKey, qc, sendTransaction, setVisible, signTransaction],
+    [connection, publicKey, qc, sendTransaction, setVisible, signTransaction, wallet],
   );
 
   return { run, pending, stage, connected: !!publicKey };
