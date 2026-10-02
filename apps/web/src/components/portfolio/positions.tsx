@@ -490,6 +490,7 @@ const ACTIVITY_VERB: Record<ActivityEvent["type"], string> = {
 
 function verbOf(e: ActivityEvent): string {
   if (e.type === "trade") return e.isBuy ? "Bought" : "Sold";
+  if (e.type === "vault_withdrawn" && e.ref === "dev") return "Withdrawn by the dev key";
   return ACTIVITY_VERB[e.type];
 }
 

@@ -42,14 +42,14 @@ export function StatStrip({ launch: l, className }: { launch: LaunchSummary; cla
       ) : (
         <Stat
           label="Liquidity"
-          rule={`SOL in the Holdfast bonding curve; sellers are paid from it. It never migrates and admin_withdraw_vault can't touch it. A wind-down (a dead launch: no vault trade for a day and at most ${split.deadHoldersPct}% of supply held outside the curve and vault) credits what's left to backers.`}
+          rule={`SOL in the Holdfast bonding curve; sellers are paid from it. It never migrates and vault withdrawals (admin or dev key) can't touch it. A wind-down (a dead launch: no vault trade for a day and at most ${split.deadHoldersPct}% of supply held outside the curve and vault) credits what's left to backers.`}
           value={<NumberTicker value={lamportsToSol(l.realSol)} format={sol} />}
           sub="in the curve"
         />
       )}
       <Stat
         label="Vault"
-        rule={`${wentIn} plus everything the vault agent has sold since; the agent's sale proceeds stay here. Only the agent trades it, within on-chain limits, and it keeps at least ${split.minVaultSol} SOL for fees. The platform multisig can withdraw it with admin_withdraw_vault; every withdrawal is listed on this page.`}
+        rule={`${wentIn} plus everything the vault agent has sold since; the agent's sale proceeds stay here. Only the agent trades it, within on-chain limits, and it keeps at least ${split.minVaultSol} SOL for fees. The admin (a 2-of-3 Squads multisig, admin_withdraw_vault) and a single dev key (dev_withdraw_vault) can withdraw it; every withdrawal is an on-chain event listed on this page.`}
         value={<NumberTicker value={lamportsToSol(l.vaultSol)} format={sol} />}
         sub={`+ ${fmtTokens(l.vaultTokens)} $${l.symbol}`}
       />

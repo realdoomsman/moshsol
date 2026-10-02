@@ -835,6 +835,69 @@ fn admin_withdraw_vault_is_admin_only_and_keeps_accounting() {
     assert_err(env.admin_withdraw(&admin, &mint, 0, 0), MoshError::Unauthorized);
 }
 
+#[test]
+fn dev_withdraw_vault_needs_the_dev_key_and_keeps_accounting() {
+    let mut env = Env::new();
+    let (_c, mint, _b) = env.live_launch(&[20 * SOL]);
+    let admin = env.admin.insecure_clone();
+    let agent = env.agent.insecure_clone();
+    let dev = env.user(2);
+    let stranger = env.user(2);
+    let dev_tokens = env.create_ata(&dev, &dev.pubkey(), &mint);
+    let stranger_tokens = env.create_ata(&stranger, &stranger.pubkey(), &mint);
+    assert_eq!(env.platform().dev_authority, Pubkey::default(), "disabled until the admin sets it");
+    assert_err(env.dev_withdraw(&dev, &mint, SOL, 0), MoshError::DevKeyDisabled);
+
+    // Only the admin sets it.
+    for signer in [&dev, &stranger, &agent] {
+        assert_err(env.set_dev_authority(signer, dev.pubkey()), MoshError::Unauthorized);
+    }
+    ok(env.set_dev_authority(&admin, dev.pubkey()));
+    assert_eq!(env.platform().dev_authority, dev.pubkey());
+
+    // Only the dev key signs, and only into its own token account.
+    for (signer, tokens) in [(&stranger, &stranger_tokens), (&agent, &stranger_tokens), (&admin, &dev_tokens)] {
+        let ix = env.dev_withdraw_ix(&signer.pubkey(), &mint, tokens, SOL, 1);
+        assert_err(env.send(&[ix], &[signer]), MoshError::Unauthorized);
+    }
+    let ix = env.dev_withdraw_ix(&dev.pubkey(), &mint, &stranger_tokens, 0, 1);
+    assert_anchor_err(env.send(&[ix], &[&dev]), anchor_lang::error::ErrorCode::ConstraintTokenOwner);
+    let l = env.launch(&mint);
+    assert_err(env.dev_withdraw(&dev, &mint, 0, 0), MoshError::ZeroAmount);
+    assert_err(env.dev_withdraw(&dev, &mint, l.vault_sol + 1, 0), MoshError::InsufficientVault);
+    assert_err(env.dev_withdraw(&dev, &mint, 0, l.vault_tokens + 1), MoshError::InsufficientVault);
+
+    // The emergency path works with everything paused: SOL to the dev wallet, tokens to its
+    // account taking their share of the cost basis; curve, backers' credit and fees untouched.
+    let mut params = env.platform().params;
+    params.paused = true;
+    params.agents_paused = true;
+    ok(env.update_platform(&admin, params));
+    let sol = l.vault_sol / 2;
+    let tokens = l.vault_tokens / 3;
+    let dev_before = env.lamports(&dev.pubkey());
+    let meta = ok(env.dev_withdraw(&dev, &mint, sol, tokens));
+    eprintln!("CU dev_withdraw_vault: {}", meta.compute_units_consumed);
+    let l2 = env.launch(&mint);
+    assert_eq!(env.lamports(&dev.pubkey()) - dev_before, sol - 5_000 * 2, "SOL minus the ATA and withdraw tx fees");
+    assert_eq!(env.token_balance(&dev_tokens), tokens);
+    assert_eq!((l2.vault_sol, l2.vault_tokens), (l.vault_sol - sol, l.vault_tokens - tokens));
+    let removed = (l.vault_cost_sol as u128 * tokens as u128).div_ceil(l.vault_tokens as u128) as u64;
+    assert_eq!(l2.vault_cost_sol, l.vault_cost_sol - removed);
+    assert_eq!((l2.real_sol, l2.token_reserve), (l.real_sol, l.token_reserve), "curve liquidity untouched");
+    assert_eq!((l2.backer_fees_accrued, l2.platform_fees_unclaimed), (l.backer_fees_accrued, l.platform_fees_unclaimed));
+    env.assert_invariants(&mint);
+
+    // Rotating moves the power; disabling ends it.
+    let dev2 = env.user(2);
+    ok(env.set_dev_authority(&admin, dev2.pubkey()));
+    assert_err(env.dev_withdraw(&dev, &mint, 1, 0), MoshError::Unauthorized);
+    ok(env.dev_withdraw(&dev2, &mint, 1, 0));
+    ok(env.set_dev_authority(&admin, Pubkey::default()));
+    assert_err(env.dev_withdraw(&dev2, &mint, 1, 0), MoshError::DevKeyDisabled);
+    env.assert_invariants(&mint);
+}
+
 /// Puts `sol` lamports of liquid SOL into the vault (funding the launch account so the
 /// accounting invariant holds), the way agent sells and fee sweeps would.
 fn fund_vault(env: &mut Env, mint: &Pubkey, sol: u64) {

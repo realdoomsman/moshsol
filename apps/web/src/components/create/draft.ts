@@ -104,12 +104,14 @@ export async function loadDraft(): Promise<RestoredDraft | null> {
       image = null;
     }
   }
+  // Drafts saved before the "no cap" choice always had a cap; one moved off the old default is kept as a custom cap.
+  const bundleCap = stored.fields.bundleCap ?? (stored.fields.bundlePct !== INITIAL_DRAFT.bundlePct ? "custom" : "none");
   return {
     savedAt: stored.savedAt,
     step: stored.step,
     visited: stored.visited,
     // Fields added in later versions of the wizard fall back to their defaults.
-    draft: { ...INITIAL_DRAFT, ...stored.fields, image },
+    draft: { ...INITIAL_DRAFT, ...stored.fields, bundleCap, image },
     imageDropped: stored.imageDropped || (!!stored.image && !image),
   };
 }

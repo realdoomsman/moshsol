@@ -6,7 +6,7 @@ import { cn } from "../ui/cn";
 export interface HowStep {
   title: string;
   description: ReactNode;
-  /** The on-chain rule behind the step, rendered from platform params ("Bundle: ≤ 25% of supply"). */
+  /** The on-chain rule behind the step, rendered from platform params ("Bundle: follows the raise, ≤ 75% of supply"). */
   rule: string | null;
   frame: ReactNode;
 }

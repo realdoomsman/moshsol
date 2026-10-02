@@ -644,6 +644,19 @@ impl Env {
         self.send(&[ix], &[signer])
     }
 
+    pub fn set_dev_authority(&mut self, signer: &Keypair, dev_authority: Pubkey) -> TxResult {
+        let ix = Instruction {
+            program_id: moshsol::ID,
+            accounts: moshsol::accounts::AdminOnly {
+                admin: signer.pubkey(),
+                platform: platform_pda(),
+            }
+            .to_account_metas(None),
+            data: moshsol::instruction::SetDevAuthority { dev_authority }.data(),
+        };
+        self.send(&[ix], &[signer])
+    }
+
     pub fn wind_down(&mut self, cranker: &Keypair, mint: &Pubkey) -> TxResult {
         let launch = launch_pda(mint);
         let ix = Instruction {
@@ -696,6 +709,33 @@ impl Env {
         let recipient_tokens = self.create_ata(signer, &fr, mint);
         let ix = self.admin_withdraw_ix(&signer.pubkey(), mint, &fr, &recipient_tokens, sol, tokens);
         self.send(&[ix], &[signer])
+    }
+
+    /// `dev_withdraw_vault` on a Holdfast launch, SOL to `dev`, tokens to `recipient_tokens`.
+    pub fn dev_withdraw_ix(&self, dev: &Pubkey, mint: &Pubkey, recipient_tokens: &Pubkey, sol: u64, tokens: u64) -> Instruction {
+        let launch = launch_pda(mint);
+        Instruction {
+            program_id: moshsol::ID,
+            accounts: moshsol::accounts::DevWithdrawVault {
+                dev: *dev,
+                platform: platform_pda(),
+                launch,
+                mint: *mint,
+                vault_tokens: vault_pda(&launch),
+                recipient_tokens: *recipient_tokens,
+                token_authority: launch,
+                token_program: TOKEN_2022_ID,
+            }
+            .to_account_metas(None),
+            data: moshsol::instruction::DevWithdrawVault { sol, tokens }.data(),
+        }
+    }
+
+    /// Withdraws as `dev` to its own wallet and token account (created if missing).
+    pub fn dev_withdraw(&mut self, dev: &Keypair, mint: &Pubkey, sol: u64, tokens: u64) -> TxResult {
+        let recipient_tokens = self.create_ata(dev, &dev.pubkey(), mint);
+        let ix = self.dev_withdraw_ix(&dev.pubkey(), mint, &recipient_tokens, sol, tokens);
+        self.send(&[ix], &[dev])
     }
 
     pub fn create_ata(&mut self, payer: &Keypair, owner: &Pubkey, mint: &Pubkey) -> Pubkey {

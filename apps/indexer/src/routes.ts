@@ -222,6 +222,8 @@ export function registerRoutes(app: FastifyInstance, { store, client, sync, pric
       admin: p.admin.toBase58(),
       feeRecipient: p.feeRecipient.toBase58(),
       agentAuthority: p.agentAuthority.toBase58(),
+      // The dev key (`dev_withdraw_vault`); null while disabled (`Pubkey::default()`).
+      devAuthority: p.devAuthority.equals(PublicKey.default) ? null : p.devAuthority.toBase58(),
       launchCount: Number(p.launchCount.toString()),
       params: {
         tradeFeeBps: pr.tradeFeeBps,

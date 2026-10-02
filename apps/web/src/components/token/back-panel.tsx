@@ -83,7 +83,8 @@ function WhatYouGet({ launch: l, deposited, add, example }: { launch: LaunchSumm
             </dd>
             <dd className="col-span-2 mt-0.5 text-ink-3">
               + {fmtLamports((bundle.vaultSol * mine) / total)} SOL, held in the vault. Only the vault agent trades it and its sale proceeds stay
-              there; the platform multisig can withdraw it (every withdrawal is shown on the launch page).
+              there; the admin (a 2-of-3 Squads multisig) and a single dev key can withdraw it (every withdrawal is an on-chain event on the
+              launch page).
             </dd>
           </div>
         ) : null}

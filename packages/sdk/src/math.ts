@@ -191,7 +191,8 @@ const PUMP_BUY_FEE_HEADROOM_BPS = 300;
  * Mirrors the bundle buy of `launch_pump` on a fresh pump.fun curve: net = raised − launch fee;
  * the create cost comes off first, the bundle budget is `1 − reserve` of the rest, the token amount
  * is the fee-free quote of the budget minus 3% headroom capped at `bundleSupplyBps` of supply and
- * the curve's real token reserves, and what is spent is that amount's cost plus the venue fee.
+ * one base unit short of the curve's real token reserves (the bundle never completes the curve), and
+ * what is spent is that amount's cost plus the venue fee; the rest stays as vault SOL.
  */
 export function previewPumpBundle(p: {
   raised: bigint;
@@ -209,7 +210,7 @@ export function previewPumpBundle(p: {
   let tokens = tokensOut(x, y, sized);
   const cap = bps(TOTAL_SUPPLY, p.bundleSupplyBps);
   if (tokens > cap) tokens = cap;
-  if (tokens > PUMP_INITIAL_REAL_TOKENS) tokens = PUMP_INITIAL_REAL_TOKENS;
+  if (tokens >= PUMP_INITIAL_REAL_TOKENS) tokens = PUMP_INITIAL_REAL_TOKENS - 1n;
   const cost = solInForTokens(x, y, tokens);
   let spent = cost + bpsCeil(cost, PUMP_VENUE_FEE_BPS);
   if (spent > budget) spent = budget;

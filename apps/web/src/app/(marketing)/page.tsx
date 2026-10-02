@@ -63,8 +63,9 @@ export default async function LandingPage() {
               <h2 className="display-l text-ink">Rules you can check, not promises.</h2>
               <p className="body-l mt-6 max-w-[30em] text-ink-2">
                 Every instruction the program exposes, read from its IDL — including{" "}
-                <span className="mono text-ink">admin_withdraw_vault</span>, which lets the platform admin (a Squads multisig on mainnet)
-                withdraw a vault. Every withdrawal is on-chain and shown on the launch page.
+                <span className="mono text-ink">admin_withdraw_vault</span> and <span className="mono text-ink">dev_withdraw_vault</span>:
+                the admin (a 2-of-3 Squads multisig) and a single dev key can withdraw a vault. Every withdrawal is an on-chain event on
+                the launch page.
               </p>
             </div>
             <div className="lg:col-span-7">

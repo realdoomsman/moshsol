@@ -18,7 +18,7 @@ export function RulesStrip() {
             {shortAddr(program)}
           </a>{" "}
           · the bundle is the token&rsquo;s first buy · terms frozen per launch · agent limits and payback enforced on-chain · vault
-          withdrawals only by the platform admin, each one public.
+          withdrawals only by the admin (a 2-of-3 Squads multisig) or a single dev key, each one an on-chain event on the launch page.
         </span>{" "}
         <a href="#verify" className="font-[560] text-ink transition-colors hover:text-accent-ink">
           Verify →

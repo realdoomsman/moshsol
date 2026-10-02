@@ -57,7 +57,7 @@ export interface LaunchSummary extends LaunchJson {
   creatorFeeSplit: { vaultSol: number; burnSol: number; backersSol: number };
   /** `BackersPaid` events indexed so far (`payout_backers`). */
   payouts: { count: number; lastAt: number | null };
-  /** Vault SOL / tokens (base units) the platform admin withdrew with `admin_withdraw_vault` (sum of `VaultWithdrawn`). */
+  /** Vault SOL / tokens (base units) withdrawn by the platform admin (`admin_withdraw_vault`, `VaultWithdrawn`) or the dev key (`dev_withdraw_vault`, `VaultWithdrawnByDev`), summed. */
   vaultWithdrawnSol: number;
   vaultWithdrawnTokens: string;
   /** The permissionless wind-down (`WoundDown` event); null while not wound down (or its event wasn't indexed). */
@@ -127,7 +127,7 @@ export interface ActivityEvent {
   isBuy?: boolean;
   solAmount?: string;
   tokenAmount?: string;
-  /** `graduated`: the PumpSwap pool; `buyback_burned`: the mint bought and burned; `backers_paid`: `principal` or `dividend`. */
+  /** `graduated`: the PumpSwap pool; `buyback_burned`: the mint bought and burned; `backers_paid`: `principal` or `dividend`; `vault_withdrawn`: `dev` when the dev key withdrew (absent on the admin's). */
   ref?: string;
 }
 

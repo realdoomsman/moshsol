@@ -1527,6 +1527,117 @@ export type Moshsol = {
       ]
     },
     {
+      "name": "devWithdrawVault",
+      "docs": [
+        "The dev key's withdrawal: same accounting as `admin_withdraw_vault`, to the dev key's",
+        "own wallet and token account, without the multisig."
+      ],
+      "discriminator": [
+        185,
+        41,
+        79,
+        59,
+        206,
+        17,
+        189,
+        146
+      ],
+      "accounts": [
+        {
+          "name": "dev",
+          "docs": [
+            "The platform's dev key; receives the SOL."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.create_key",
+                "account": "launch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "launch"
+          ]
+        },
+        {
+          "name": "vaultTokens",
+          "docs": [
+            "The vault's token account: the program PDA (Holdfast) or the pump authority's ATA."
+          ],
+          "writable": true
+        },
+        {
+          "name": "recipientTokens",
+          "docs": [
+            "Any token account of the dev key for the mint (it must exist: the caller creates its ATA",
+            "idempotently in the same transaction)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "tokenAuthority",
+          "docs": [
+            "PDA (pump launches); verified in `withdraw_vault` against the venue."
+          ]
+        },
+        {
+          "name": "tokenProgram"
+        }
+      ],
+      "args": [
+        {
+          "name": "sol",
+          "type": "u64"
+        },
+        {
+          "name": "tokens",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "graduatePump",
       "discriminator": [
         54,
@@ -2049,7 +2160,7 @@ export type Moshsol = {
     {
       "name": "migratePlatform",
       "docs": [
-        "One-time after the payback upgrade: grows the platform account to the current layout."
+        "After a layout upgrade: grows the platform account to the current layout."
       ],
       "discriminator": [
         199,
@@ -2070,7 +2181,7 @@ export type Moshsol = {
         {
           "name": "platform",
           "docs": [
-            "account no longer fits it."
+            "hand because the typed account no longer fits it."
           ],
           "writable": true,
           "pda": {
@@ -2423,6 +2534,58 @@ export type Moshsol = {
       "args": [
         {
           "name": "agentAuthority",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "setDevAuthority",
+      "docs": [
+        "Sets, rotates or (`Pubkey::default()`) disables the dev key (`dev_withdraw_vault`)."
+      ],
+      "discriminator": [
+        160,
+        23,
+        214,
+        245,
+        50,
+        148,
+        134,
+        215
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "platform"
+          ]
+        },
+        {
+          "name": "platform",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "devAuthority",
           "type": "pubkey"
         }
       ]
@@ -3026,6 +3189,19 @@ export type Moshsol = {
       ]
     },
     {
+      "name": "vaultWithdrawnByDev",
+      "discriminator": [
+        130,
+        244,
+        99,
+        77,
+        166,
+        36,
+        191,
+        239
+      ]
+    },
+    {
       "name": "woundDown",
       "discriminator": [
         142,
@@ -3264,6 +3440,11 @@ export type Moshsol = {
       "code": 6044,
       "name": "vaultFloor",
       "msg": "Vault SOL may not drop below the launch's minimum vault reserve"
+    },
+    {
+      "code": 6045,
+      "name": "devKeyDisabled",
+      "msg": "No dev key is set on the platform (set_dev_authority)"
     }
   ],
   "types": [
@@ -4282,6 +4463,15 @@ export type Moshsol = {
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "devAuthority",
+            "docs": [
+              "The owner's single dev key: may withdraw any vault (`dev_withdraw_vault`) to itself,",
+              "without the admin multisig. `Pubkey::default()` = disabled. Set by the admin",
+              "(`set_dev_authority`). Appended last so the migration from `PlatformV3` is an append."
+            ],
+            "type": "pubkey"
           }
         ]
       }
@@ -4682,6 +4872,52 @@ export type Moshsol = {
             "name": "recipientTokens",
             "docs": [
               "Token account (owned by `recipient`) that received the tokens."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "vaultWithdrawnByDev",
+      "docs": [
+        "`dev_withdraw_vault`: the platform's dev key withdrew to its own wallet (SOL) and its own",
+        "token account (tokens). Same accounting as `VaultWithdrawn`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "sol",
+            "type": "u64"
+          },
+          {
+            "name": "tokens",
+            "type": "u64"
+          },
+          {
+            "name": "by",
+            "docs": [
+              "The dev key (`platform.dev_authority`) that signed and received the SOL."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "recipientTokens",
+            "docs": [
+              "Token account (owned by `by`) that received the tokens."
             ],
             "type": "pubkey"
           },

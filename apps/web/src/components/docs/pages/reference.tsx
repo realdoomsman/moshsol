@@ -66,7 +66,11 @@ export const overview: DocPage = {
         title: "The numbers",
         body: (
           <Ul>
-            <li>Fixed supply of 1,000,000,000 per launch; the bundle buys at most the creator&rsquo;s cap of it, in the same instruction that creates the token.</li>
+            <li>
+              Fixed supply of 1,000,000,000 per launch; the bundle buys as much of it as the raise can, up to{" "}
+              {p ? pctFromBps(p.maxBundleSupplyBps) : "the platform max"} or a lower cap the creator sets, in the same instruction that
+              creates the token, and never completes the pump.fun curve at launch.
+            </li>
             <li>
               pump.fun&rsquo;s creator fee on the token: {s.vaultPct}% to the vault as SOL, {s.burnPct}% to buy back and burn the Holdfast
               token, {s.backerPct}% to backers. Creators earn 0% of fees; Holdfast earns the {s.launchFeePct}% launch fee and the create fee.
@@ -85,7 +89,8 @@ export const overview: DocPage = {
               supply held outside the vault and pump.fun) is wound down.
             </li>
             <li>
-              Vault withdrawals only by the platform admin (<C>admin_withdraw_vault</C>), each one shown on the launch page.
+              Vault withdrawals only by the admin, a 2-of-3 Squads multisig (<C>admin_withdraw_vault</C>), and a single dev key (
+              <C>dev_withdraw_vault</C>), each one an on-chain event on the launch page.
             </li>
           </Ul>
         ),
@@ -280,13 +285,14 @@ export const risks: DocPage = {
     return [
       {
         id: "admin-withdraw",
-        title: "The admin can withdraw vaults",
+        title: "The admin and the dev key can withdraw vaults",
         body: (
           <Callout tone="warn" title="Vault funds are not locked">
-            The platform admin can call <C>admin_withdraw_vault</C> on any launch and send its vault SOL and tokens to the platform fee
-            recipient, tokens it could then sell. The admin is a Squads 2-of-3 multisig on mainnet. The instruction can&rsquo;t touch what
-            backers have already accrued, and every withdrawal is on-chain (<C>VaultWithdrawn</C>) and shown on the launch page. See{" "}
-            <A href="/docs/verify">Verify on-chain</A>.
+            The admin (a 2-of-3 Squads multisig) and a single dev key can withdraw a vault. The admin calls{" "}
+            <C>admin_withdraw_vault</C> on any launch and sends its vault SOL and tokens to the platform fee recipient; the dev key calls{" "}
+            <C>dev_withdraw_vault</C> and sends them to its own wallet, even while the platform is paused. Either could then sell those
+            tokens. Neither can touch what backers have already accrued, and every withdrawal is an on-chain event (
+            <C>VaultWithdrawn</C> or <C>VaultWithdrawnByDev</C>) on the launch page. See <A href="/docs/verify">Verify on-chain</A>.
           </Callout>
         ),
       },
@@ -307,7 +313,7 @@ export const risks: DocPage = {
           <Ul>
             <li>
               <B>The vault can shrink.</B> It buys dips with its SOL; a token that keeps falling leaves it holding tokens worth less than
-              it paid, and the admin can withdraw it.
+              it paid, and the admin or the dev key can withdraw it.
             </li>
             <li>
               <B>Payback is not guaranteed.</B> {paybackSentence(s)} A vault that never reaches {fmtMult(s.payoutMult)}, or whose chart is

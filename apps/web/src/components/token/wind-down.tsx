@@ -159,16 +159,17 @@ export function WindDownCard({ launch: l, now, className }: { launch: LaunchSumm
 }
 
 /**
- * Admin withdrawals (§4.5 rail): every `admin_withdraw_vault` the platform multisig made from this
- * launch's vault — SOL, tokens, recipient and transaction — from the indexer's `vault_withdrawn` events.
+ * Vault withdrawals (§4.5 rail): every `admin_withdraw_vault` the platform multisig and every `dev_withdraw_vault`
+ * the dev key made from this launch's vault — SOL, tokens, who, recipient and transaction — from the indexer's
+ * `vault_withdrawn` events (`ref` "dev" on the dev key's).
  */
-export function AdminWithdrawals({ launch: l, now, className }: { launch: LaunchSummary; now: number; className?: string }) {
+export function VaultWithdrawals({ launch: l, now, className }: { launch: LaunchSummary; now: number; className?: string }) {
   const q = useVaultWithdrawals(launchId(l));
   const rows = q.data?.events ?? [];
   const tokens = BigInt(l.vaultWithdrawnTokens);
   return (
     <Panel
-      title="Admin withdrawals"
+      title="Vault withdrawals"
       aside={
         l.vaultWithdrawnSol > 0 || tokens > 0n ? (
           <span className="small num text-ink-3">
@@ -180,7 +181,8 @@ export function AdminWithdrawals({ launch: l, now, className }: { launch: Launch
     >
       <div className="grid gap-3 px-4 pb-4">
         <p className="small text-ink-3">
-          The platform multisig (Squads) can withdraw vault SOL and tokens with admin_withdraw_vault. It can&apos;t touch{" "}
+          The admin (a 2-of-3 Squads multisig, admin_withdraw_vault) and a single dev key (dev_withdraw_vault, to its own wallet)
+          can withdraw vault SOL and tokens. Neither can touch{" "}
           {l.venue === "pump" ? "the token's liquidity on pump.fun" : "the curve's liquidity"}. Every withdrawal is on-chain and listed here.
         </p>
         {q.error && !q.data ? (
@@ -190,7 +192,7 @@ export function AdminWithdrawals({ launch: l, now, className }: { launch: Launch
         ) : q.isLoading ? (
           <Skeleton className="h-10 w-full" />
         ) : rows.length === 0 ? (
-          <EmptyState>No admin withdrawals</EmptyState>
+          <EmptyState>No vault withdrawals</EmptyState>
         ) : (
           <ul className="small grid gap-2">
             {rows.map((e) => (
@@ -206,7 +208,7 @@ export function AdminWithdrawals({ launch: l, now, className }: { launch: Launch
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 text-ink-3">
-                  to <Address address={e.actor} />
+                  {e.ref === "dev" ? "Withdrawn by the dev key" : "Withdrawn by the admin"}, to <Address address={e.actor} />
                 </div>
               </li>
             ))}

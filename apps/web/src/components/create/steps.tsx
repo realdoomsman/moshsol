@@ -4,8 +4,9 @@ import { LIMITS, PUMP_VENUE_FEE_BPS } from "@holdfast/sdk";
 import type { PublicKey } from "@solana/web3.js";
 import { ChevronDown, Upload } from "lucide-react";
 import { useId, useRef, useState, type ReactNode } from "react";
-import { fmtLamports } from "@/lib/format";
+import { fmtLamports, fmtSolValue, fmtUsd } from "@/lib/format";
 import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
+import { useStats } from "@/lib/queries";
 import type { PlatformInfo } from "@/lib/types";
 import { ClampGlyph } from "../brand/glyphs";
 import { Button } from "../ui/button";
@@ -20,6 +21,7 @@ import type { BundleRange } from "./math";
 import { SupplyBar } from "./preview";
 import { Slider } from "./slider";
 import {
+  bundleBpsOf,
   DURATION_PRESETS,
   durationSecsOf,
   extractAddresses,
@@ -41,6 +43,8 @@ export interface StepContext {
   err: (f: DraftField) => string | null;
   v: Validation;
   params: PlatformInfo["params"] | undefined;
+  /** The platform's max bundle share in bps (the hard limit until /api/platform loads): what "No cap" submits. */
+  maxBundleBps: number;
 }
 
 const pctText = (v: number) => `${v.toFixed(v >= 10 ? 1 : 2)}%`;
@@ -332,9 +336,12 @@ export function StepVault({
   range: BundleRange | null;
   wallet: PublicKey | null;
 }) {
-  const { draft, set, err, v, params } = ctx;
-  const maxBundlePct = (params?.maxBundleSupplyBps ?? LIMITS.minBundleSupplyBps) / 100;
+  const { draft, set, err, v, params, maxBundleBps } = ctx;
+  const solUsd = useStats().data?.solUsd ?? null;
+  const maxBundlePct = maxBundleBps / 100;
+  const capPct = bundleBpsOf(draft, maxBundleBps) / 100;
   const maxReservePct = LIMITS.maxReserveBps / 100;
+  const mcap = (sol: number) => (solUsd ? `${fmtUsd(sol * solUsd)} (${fmtSolValue(sol)} SOL)` : `${fmtSolValue(sol)} SOL`);
   const csv = useRef<HTMLInputElement>(null);
   const selfExcluded = !!wallet && draft.access === "whitelist" && v.whitelist.length > 0 && !v.whitelist.some((k) => k.equals(wallet));
 
@@ -350,41 +357,48 @@ export function StepVault({
         index={2}
         help="When the raise closes, it buys the first slice of the curve. That bundle is held in the vault and traded only by the vault agent."
       />
-      <Field
-        label="Max bundle size"
-        aside={<span className="text-ink">{draft.bundlePct}% of supply</span>}
-        error={err("bundlePct")}
-        hint={
-          <>
-            The most supply the bundle may buy; SOL beyond it stays in the vault.
-            {range ? (
-              <span className="num text-ink-2">
-                {" "}
-                Buys {pctText(range.atMin.supplyPct)}–{pctText(range.atMax.supplyPct)} at min–max.
-              </span>
-            ) : null}
-          </>
-        }
-      >
-        {(id) => (
-          <div>
-            <Slider
-              id={id}
-              min={LIMITS.minBundleSupplyBps / 100}
-              max={maxBundlePct}
-              step={0.5}
-              value={draft.bundlePct}
-              valueText={`${draft.bundlePct}% of supply`}
-              invalid={!!err("bundlePct")}
-              onChange={(x) => set("bundlePct", x, "bundlePct")}
-            />
-            <div className="micro num flex justify-between text-ink-3">
-              <span>{LIMITS.minBundleSupplyBps / 100}%</span>
-              <span>{maxBundlePct}% platform max</span>
+      <div className="grid gap-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="label text-ink-3">Bundle size</span>
+          <Segmented<CreateDraft["bundleCap"]>
+            label="Bundle cap"
+            value={draft.bundleCap}
+            onChange={(x) => set("bundleCap", x, "bundlePct")}
+            items={[
+              { value: "none", label: "No cap" },
+              { value: "custom", label: "Custom cap" },
+            ]}
+          />
+        </div>
+        <p className="small text-ink-2">
+          {draft.bundleCap === "none"
+            ? `No cap: the raise buys as much as it can, up to the platform max of ${maxBundlePct}% of supply.`
+            : "The most supply the bundle may buy; SOL beyond it stays in the vault."}{" "}
+          {params?.holdfastCurveEnabled ? null : "The bundle never completes the pump.fun curve at launch."}
+        </p>
+      </div>
+      {draft.bundleCap === "custom" ? (
+        <Field label="Custom cap" aside={<span className="text-ink">{capPct}% of supply</span>} error={err("bundlePct")}>
+          {(id) => (
+            <div>
+              <Slider
+                id={id}
+                min={LIMITS.minBundleSupplyBps / 100}
+                max={maxBundlePct}
+                step={0.5}
+                value={capPct}
+                valueText={`${capPct}% of supply`}
+                invalid={!!err("bundlePct")}
+                onChange={(x) => set("bundlePct", x, "bundlePct")}
+              />
+              <div className="micro num flex justify-between text-ink-3">
+                <span>{LIMITS.minBundleSupplyBps / 100}%</span>
+                <span>{maxBundlePct}% platform max</span>
+              </div>
             </div>
-          </div>
-        )}
-      </Field>
+          )}
+        </Field>
+      ) : null}
       <Field
         label="Vault SOL reserve"
         aside={<span className="text-ink">{draft.reservePct}% of raise</span>}
@@ -424,15 +438,12 @@ export function StepVault({
       {range && params ? (
         <div className="grid gap-4 rounded-md border border-accent bg-accent-wash p-4">
           <p className="body text-ink">
-            At this config the bundle buys{" "}
-            <strong className="num font-semibold">
-              {pctText(range.atMin.supplyPct)}–{pctText(range.atMax.supplyPct)}
-            </strong>{" "}
-            of supply at launch, held in the vault. Start market cap{" "}
-            <strong className="num font-semibold">
-              {range.atMin.marketCapAfter.toFixed(1)}–{range.atMax.marketCapAfter.toFixed(1)} SOL
-            </strong>
-            .{" "}
+            At <span className="num">{fmtLamports(range.lo)}</span> SOL the bundle buys{" "}
+            <strong className="num font-semibold">≈{pctText(range.atMin.supplyPct)}</strong> of supply; at{" "}
+            <span className="num">{fmtLamports(range.hi)}</span> SOL{" "}
+            <strong className="num font-semibold">≈{pctText(range.atMax.supplyPct)}</strong>, held in the vault. Start market cap ≈{" "}
+            <strong className="num font-semibold">{mcap(range.atMin.marketCapAfter)}</strong> at the minimum and ≈{" "}
+            <strong className="num font-semibold">{mcap(range.atMax.marketCapAfter)}</strong> at the maximum.{" "}
             {params.holdfastCurveEnabled ? (
               <>
                 Backers earn <strong className="num font-semibold">{params.backerFeeShareBps / 100}%</strong> of every trade fee. When the
@@ -593,7 +604,7 @@ export function StepReview({
   cost: ReactNode;
   action: ReactNode;
 }) {
-  const { draft, v, params } = ctx;
+  const { draft, v, params, maxBundleBps } = ctx;
   const durationSecs = durationSecsOf(draft);
   const links = [draft.twitter, draft.telegram].filter((l) => l.trim());
   const errorFields = Object.keys(v.errors) as DraftField[];
@@ -626,7 +637,9 @@ export function StepReview({
           <Row label="Duration">{durationSecs ? fmtDuration(durationSecs) : "—"}</Row>
         </ReviewGroup>
         <ReviewGroup title="Vault & access" onEdit={() => onEdit(2)}>
-          <Row label="Max bundle">{draft.bundlePct}% of supply</Row>
+          <Row label="Bundle cap">
+            {draft.bundleCap === "none" ? `No cap · up to ${maxBundleBps / 100}% of supply` : `${bundleBpsOf(draft, maxBundleBps) / 100}% of supply`}
+          </Row>
           <Row label="SOL reserve">{draft.reservePct}% of raise</Row>
           <Row label="Access">
             {draft.access === "whitelist" ? `Whitelist · ${v.whitelist.length.toLocaleString("en-US")} wallets` : draft.access === "self" ? "Self-funded (creator only)" : "Open"}

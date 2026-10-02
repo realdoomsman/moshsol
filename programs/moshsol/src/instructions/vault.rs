@@ -8,7 +8,7 @@ use super::pay_out;
 use super::pump_venue::{venue_tokens, venue_view, VenueTrade};
 use crate::constants::*;
 use crate::errors::MoshError;
-use crate::events::{BackersPaid, VaultWithdrawn, WoundDown};
+use crate::events::{BackersPaid, VaultWithdrawn, VaultWithdrawnByDev, WoundDown};
 use crate::math;
 use crate::state::{Launch, LaunchStatus, Platform, Venue};
 
@@ -257,10 +257,115 @@ pub struct AdminWithdrawVault<'info> {
 }
 
 /// Platform admin (the multisig) withdraws vault SOL to the fee recipient and vault tokens to a
-/// token account the fee recipient owns. The withdrawn tokens take their pro-rata share of the
-/// cost basis with them, so the average cost of what stays is unchanged. Works on both venues.
+/// token account the fee recipient owns. See `withdraw_vault`.
 pub fn admin_withdraw_vault(ctx: Context<AdminWithdrawVault>, sol: u64, tokens: u64) -> Result<()> {
-    let launch = &mut ctx.accounts.launch;
+    let a = ctx.accounts;
+    withdraw_vault(
+        &mut a.launch,
+        &a.mint,
+        &a.vault_tokens,
+        &a.fee_recipient,
+        &a.recipient_tokens,
+        &a.token_authority,
+        &a.token_program,
+        sol,
+        tokens,
+    )?;
+    emit!(VaultWithdrawn {
+        launch: a.launch.key(),
+        mint: a.mint.key(),
+        sol,
+        tokens,
+        recipient: a.fee_recipient.key(),
+        recipient_tokens: a.recipient_tokens.key(),
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct DevWithdrawVault<'info> {
+    /// The platform's dev key; receives the SOL.
+    #[account(mut)]
+    pub dev: Signer<'info>,
+    #[account(
+        seeds = [PLATFORM_SEED],
+        bump = platform.bump,
+        constraint = platform.dev_authority != Pubkey::default() @ MoshError::DevKeyDisabled,
+        constraint = platform.dev_authority == dev.key() @ MoshError::Unauthorized
+    )]
+    pub platform: Box<Account<'info, Platform>>,
+    #[account(
+        mut,
+        seeds = [LAUNCH_SEED, launch.create_key.as_ref()],
+        bump = launch.bump,
+        has_one = mint
+    )]
+    pub launch: Box<Account<'info, Launch>>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
+    /// The vault's token account: the program PDA (Holdfast) or the pump authority's ATA.
+    #[account(mut, address = launch.vault_token_account(&launch.key()) @ MoshError::InvalidVenueAccount)]
+    pub vault_tokens: Box<InterfaceAccount<'info, TokenAccount>>,
+    /// Any token account of the dev key for the mint (it must exist: the caller creates its ATA
+    /// idempotently in the same transaction).
+    #[account(
+        mut,
+        token::mint = mint,
+        token::authority = dev,
+        token::token_program = token_program,
+    )]
+    pub recipient_tokens: Box<InterfaceAccount<'info, TokenAccount>>,
+    /// CHECK: the token transfer authority: the launch itself (Holdfast) or its pump authority
+    /// PDA (pump launches); verified in `withdraw_vault` against the venue.
+    pub token_authority: UncheckedAccount<'info>,
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+/// The emergency path: the platform's dev key (`platform.dev_authority`, set by the admin)
+/// withdraws vault SOL to itself and vault tokens to its own token account, without the
+/// multisig and regardless of `paused` / `agents_paused`. Same accounting as
+/// `admin_withdraw_vault` (see `withdraw_vault`); emits `VaultWithdrawnByDev`.
+pub fn dev_withdraw_vault(ctx: Context<DevWithdrawVault>, sol: u64, tokens: u64) -> Result<()> {
+    let a = ctx.accounts;
+    withdraw_vault(
+        &mut a.launch,
+        &a.mint,
+        &a.vault_tokens,
+        &a.dev,
+        &a.recipient_tokens,
+        &a.token_authority,
+        &a.token_program,
+        sol,
+        tokens,
+    )?;
+    emit!(VaultWithdrawnByDev {
+        launch: a.launch.key(),
+        mint: a.mint.key(),
+        sol,
+        tokens,
+        by: a.dev.key(),
+        recipient_tokens: a.recipient_tokens.key(),
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+    Ok(())
+}
+
+/// Moves `sol` of vault SOL to `recipient` and `tokens` of vault tokens to `recipient_tokens`.
+/// Only the vault's own balances move: curve liquidity, backer accruals and the buyback pool are
+/// untouched. The withdrawn tokens take their pro-rata share of the cost basis with them, so the
+/// average cost of what stays is unchanged. Works on both venues.
+#[allow(clippy::too_many_arguments)]
+fn withdraw_vault<'info>(
+    launch: &mut Account<'info, Launch>,
+    mint: &InterfaceAccount<'info, Mint>,
+    vault_tokens: &InterfaceAccount<'info, TokenAccount>,
+    recipient: &AccountInfo<'info>,
+    recipient_tokens: &InterfaceAccount<'info, TokenAccount>,
+    token_authority: &AccountInfo<'info>,
+    token_program: &Interface<'info, TokenInterface>,
+    sol: u64,
+    tokens: u64,
+) -> Result<()> {
     let launch_key = launch.key();
     require!(sol > 0 || tokens > 0, MoshError::ZeroAmount);
     require!(
@@ -271,27 +376,26 @@ pub fn admin_withdraw_vault(ctx: Context<AdminWithdrawVault>, sol: u64, tokens: 
     if tokens > 0 {
         launch.vault_cost_sol -= launch.vault_cost_of(tokens);
         launch.vault_tokens -= tokens;
-        let authority = ctx.accounts.token_authority.to_account_info();
         let bump = [launch.bump];
         let pump_bump = [launch.pump.authority_bump];
         let seeds: &[&[u8]] = match launch.venue {
             Venue::Holdfast => {
-                require_keys_eq!(authority.key(), launch_key, MoshError::InvalidVenueAccount);
+                require_keys_eq!(token_authority.key(), launch_key, MoshError::InvalidVenueAccount);
                 &[LAUNCH_SEED, launch.create_key.as_ref(), &bump]
             }
             Venue::Pump => {
-                require_keys_eq!(authority.key(), launch.pump_authority(&launch_key), MoshError::InvalidVenueAccount);
+                require_keys_eq!(token_authority.key(), launch.pump_authority(&launch_key), MoshError::InvalidVenueAccount);
                 &[PUMP_AUTHORITY_SEED, launch_key.as_ref(), &pump_bump]
             }
         };
         token_interface::transfer_checked(
             CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
+                token_program.to_account_info(),
                 TransferChecked {
-                    from: ctx.accounts.vault_tokens.to_account_info(),
-                    mint: ctx.accounts.mint.to_account_info(),
-                    to: ctx.accounts.recipient_tokens.to_account_info(),
-                    authority,
+                    from: vault_tokens.to_account_info(),
+                    mint: mint.to_account_info(),
+                    to: recipient_tokens.to_account_info(),
+                    authority: token_authority.clone(),
                 },
                 &[seeds],
             ),
@@ -301,22 +405,8 @@ pub fn admin_withdraw_vault(ctx: Context<AdminWithdrawVault>, sol: u64, tokens: 
     }
     if sol > 0 {
         launch.vault_sol -= sol;
-        pay_out(
-            &launch.to_account_info(),
-            &ctx.accounts.fee_recipient.to_account_info(),
-            sol,
-        )?;
+        pay_out(&launch.to_account_info(), recipient, sol)?;
     }
-
-    emit!(VaultWithdrawn {
-        launch: launch_key,
-        mint: ctx.accounts.mint.key(),
-        sol,
-        tokens,
-        recipient: ctx.accounts.fee_recipient.key(),
-        recipient_tokens: ctx.accounts.recipient_tokens.key(),
-        timestamp: Clock::get()?.unix_timestamp,
-    });
     Ok(())
 }
 

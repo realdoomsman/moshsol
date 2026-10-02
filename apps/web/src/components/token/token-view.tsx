@@ -31,7 +31,7 @@ import { NO_FILTERS, type TradeFilters } from "./trades-tab";
 import { BuybackCard, TradeOnPumpPanel } from "./venue-panel";
 import { VaultCard } from "./vault-card";
 import { VerifyCard } from "./verify-card";
-import { AdminWithdrawals, WindDownCard } from "./wind-down";
+import { VaultWithdrawals, WindDownCard } from "./wind-down";
 
 type Section = "chart" | "trades" | "vault" | "thread" | "holders" | "more";
 const SECTIONS: { value: Section; label: string }[] = [
@@ -178,7 +178,7 @@ const LiveLayout = memo(function LiveLayout({ launch: l, justLaunched }: { launc
               </div>
             )}
             <WindDownCard launch={l} now={now} className={shownIn("vault")} />
-            <AdminWithdrawals launch={l} now={now} className={shownIn("vault")} />
+            <VaultWithdrawals launch={l} now={now} className={shownIn("vault")} />
             <VerifyCard launch={l} className={shownIn("vault")} />
             <CreatorCard launch={l} className={shownIn("more")} />
           </>

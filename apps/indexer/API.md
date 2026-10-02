@@ -253,7 +253,7 @@ public trades indexed since.
 | `payoutShareBps`, `payoutIntervalSecs`, `creatorFeeVaultBps`, `burnShareBps`, `backerCreatorFeeBps`, `minVaultSol` | The launch's frozen terms repeated: dividend share of vault SOL per payout, payout interval, creator-fee split (`creatorFeeVaultBps` to vault SOL, `burnShareBps` to the buyback-and-burn pool, `backerCreatorFeeBps = 10000 − both` to backers) and the vault floor in lamports |
 | `creatorFeeSplit` | How `creatorFeesCollected` was split by `collect_pump_fees`, in SOL: `{ vaultSol, burnSol, backersSol }` |
 | `payouts` | `{ count, lastAt }` of the indexed `BackersPaid` events (`GET /api/launches/:id/activity?type=backers_paid` lists them) |
-| `vaultWithdrawnSol`, `vaultWithdrawnTokens` | Vault SOL / tokens (base units) the platform admin withdrew with `admin_withdraw_vault` (sum of `VaultWithdrawn`); each withdrawal is listed by `GET /api/launches/:id/activity?type=vault_withdrawn` |
+| `vaultWithdrawnSol`, `vaultWithdrawnTokens` | Vault SOL / tokens (base units) withdrawn by the platform admin (`admin_withdraw_vault`, `VaultWithdrawn`) or the dev key (`dev_withdraw_vault`, `VaultWithdrawnByDev`), summed; each withdrawal is listed by `GET /api/launches/:id/activity?type=vault_withdrawn` |
 | `woundDown` | `{ timestamp, solToBackers, tokensReturned, signature }` from the `WoundDown` event (`solToBackers` in SOL, `tokensReturned` base units); `null` if not wound down (or the event predates the indexed history) |
 | `graduation` | Pump launches: `{ timestamp, signature, pool }` from the `PumpGraduated` event (`graduate_pump` recorded the PumpSwap pool); `null` before (and always on Holdfast launches) |
 | `cranks` | Pump launches: `{ creatorFeeCollections, buybacks, lastCollectedAt, lastBuybackAt }` — counts and last unix times of the indexed `CreatorFeesCollected` (`collect_pump_fees`) and `BuybackBurned` (`buyback_burn`) events; the SOL totals are the snapshot's `creatorFeesCollected`, `burnedSol`, `burnedTokens`, `buybackPoolSol` |
@@ -303,13 +303,15 @@ per the launch's terms), `buyback_burned` (`buyback_burn` bought and burned the 
 (`graduate_pump` recorded the PumpSwap pool) and `migrated` (the admin's one-time layout migration after the program
 upgrade).
 `actor` is the trader/backer/creator (the launch creator for the launch-level `launched`/`cancelled`/`backers_paid`/
-`profit_shared`/`wound_down`/`creator_fees_collected`/`buyback_burned`/`graduated`/`migrated`; the platform fee
-recipient for `vault_withdrawn`). Optional: `isAgent`, `isBuy` (trades), `solAmount` (lamports: trade/deposit/claim
-amounts, the SOL credited to backers for `backers_paid` / `profit_shared`, curve + vault SOL credited to backers for
-`wound_down`, vault SOL withdrawn for `vault_withdrawn`, creator fees collected for `creator_fees_collected`, SOL spent
-for `buyback_burned`), `tokenAmount` (trades, `launched`; tokens returned to the curve for `wound_down`; vault tokens
-withdrawn for `vault_withdrawn`; tokens burned for `buyback_burned`), `ref` (`principal` / `dividend` for
-`backers_paid`; the PumpSwap pool for `graduated`; the mint burned for `buyback_burned`).
+`profit_shared`/`wound_down`/`creator_fees_collected`/`buyback_burned`/`graduated`/`migrated`; for `vault_withdrawn`
+the platform fee recipient on an admin withdrawal, the dev key on a dev-key withdrawal). Optional: `isAgent`, `isBuy`
+(trades), `solAmount` (lamports: trade/deposit/claim amounts, the SOL credited to backers for `backers_paid` /
+`profit_shared`, curve + vault SOL credited to backers for `wound_down`, vault SOL withdrawn for `vault_withdrawn`,
+creator fees collected for `creator_fees_collected`, SOL spent for `buyback_burned`), `tokenAmount` (trades, `launched`;
+tokens returned to the curve for `wound_down`; vault tokens withdrawn for `vault_withdrawn`; tokens burned for
+`buyback_burned`), `ref` (`principal` / `dividend` for `backers_paid`; `dev` for a `vault_withdrawn` made by the dev key
+(`VaultWithdrawnByDev`), absent on the admin's; the PumpSwap pool for `graduated`; the mint burned for
+`buyback_burned`).
 
 ### Comment
 
@@ -355,13 +357,16 @@ launches are pump.fun tokens (`create_launch_pump`). Pump.fun creator fees swept
 principal first and then `payoutShareBps` of the vault, at most once per `payoutIntervalSecs`, never below
 `minVaultSol` lamports; `deadHoldersBps` is the share of supply outside the vault and venue below which a launch counts
 as dead for `wind_down_pump`; `buybackMint` is the token `buyback_burn` buys and burns (the default pubkey
-`11111111111111111111111111111111` while unset: pools accrue, the crank refuses).
+`11111111111111111111111111111111` while unset: pools accrue, the crank refuses). `devAuthority` is the platform's dev
+key — the one key besides the admin (`admin`, a 2-of-3 Squads multisig) that can withdraw a vault
+(`dev_withdraw_vault`, to its own wallet; each is a `VaultWithdrawnByDev` event) — or `null` while disabled (the
+default pubkey on chain).
 
 ```json
 { "address": "675WZQsKXyFfCXD2a2iQdhFdYFdgz8HWiCJwrcCBuUgs", "admin": "FwYL…", "feeRecipient": "J2zc…",
-  "agentAuthority": "3qLL…", "launchCount": 4,
+  "agentAuthority": "3qLL…", "devAuthority": "9xQe…", "launchCount": 4,
   "params": { "tradeFeeBps": 100, "backerFeeShareBps": 5000, "creatorFeeShareBps": 3000, "launchFeeBps": 100,
-    "createFeeLamports": "5000000", "virtualSolReserves": "30000000000", "maxBundleSupplyBps": 2500,
+    "createFeeLamports": "5000000", "virtualSolReserves": "30000000000", "maxBundleSupplyBps": 7500,
     "minRaiseLamports": "50000000", "agentBuyBpsPerWindow": 1000, "agentSellBpsPerWindow": 500,
     "agentMaxImpactBps": 300, "agentBandBps": 200, "agentWindowSecs": 3600, "emaPeriodSecs": 1800,
     "paused": false, "agentsPaused": false, "maxRaiseLamports": "0", "maxWalletDepositLamports": "0",
@@ -388,7 +393,7 @@ to zero, and both are `null` only until the first successful fetch ever. `backer
 credited to backers (fee share + backer payouts + wind-down payouts + the historical profit split); `backersRepaidSol`
 / `backerPayoutsSol` are the principal and dividends `payout_backers` has paid; `profitSharedSol` is the historical part.
 `vaultSol` / `vaultTokensValueSol` are what the vaults hold now (tokens at spot / venue price); `vaultWithdrawnSol` is
-the SOL the platform admin has withdrawn from vaults with `admin_withdraw_vault`. `pumpLaunches` counts launches with
+the SOL withdrawn from vaults by the platform admin (`admin_withdraw_vault`) or the dev key (`dev_withdraw_vault`). `pumpLaunches` counts launches with
 `venue: "pump"`; `buybackPoolSol` (SOL waiting for `buyback_burn`), `burnedSol` (SOL already spent on buybacks) and
 `creatorFeesCollectedSol` (pump.fun / PumpSwap creator fees swept in) are sums over the launch snapshots. A failed raise
 (deadline passed below its minimum, still `raising` on chain until the first refund) counts in neither
@@ -423,7 +428,7 @@ carries both `address` and `mint`.
 ### `GET /api/launches/:id/activity?type=&before=&limit=`
 
 The launch's indexed events, newest first. `type` narrows to one `ActivityEvent` type (`400` if unknown), e.g.
-`type=vault_withdrawn` lists every admin vault withdrawal (`actor` = recipient, `solAmount` lamports,
+`type=vault_withdrawn` lists every vault withdrawal, admin or dev key (`ref` = `dev` on the dev key's; `actor` = recipient, `solAmount` lamports,
 `tokenAmount` base units, `signature` = the transaction). `limit` default 50, ≤ 500; `before` unix seconds.
 → `{ "events": ActivityEvent[] }`
 

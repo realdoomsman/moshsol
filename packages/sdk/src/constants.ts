@@ -37,6 +37,8 @@ export const LIMITS = {
   minRaiseDurationSecs: 60,
   maxRaiseDurationSecs: 14 * 86_400,
   minBundleSupplyBps: 100,
+  /** `MAX_BUNDLE_SUPPLY_BPS`: no platform may let a bundle buy more than 75% of supply. */
+  maxBundleSupplyBps: 7_500,
   maxReserveBps: 8_000,
   maxProofLen: 24,
   maxRaiseLamports: 100_000n * 1_000_000_000n,

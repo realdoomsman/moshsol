@@ -63,6 +63,7 @@ pub fn initialize_platform(
     p.params = params;
     p.launch_count = 0;
     p.bump = ctx.bumps.platform;
+    p.dev_authority = Pubkey::default();
     Ok(())
 }
 
@@ -79,6 +80,13 @@ pub fn set_fee_recipient(ctx: Context<AdminOnly>, fee_recipient: Pubkey) -> Resu
 
 pub fn set_agent_authority(ctx: Context<AdminOnly>, agent_authority: Pubkey) -> Result<()> {
     ctx.accounts.platform.agent_authority = agent_authority;
+    Ok(())
+}
+
+/// Sets, rotates or (with `Pubkey::default()`) disables the dev key that may call
+/// `dev_withdraw_vault`.
+pub fn set_dev_authority(ctx: Context<AdminOnly>, dev_authority: Pubkey) -> Result<()> {
+    ctx.accounts.platform.dev_authority = dev_authority;
     Ok(())
 }
 

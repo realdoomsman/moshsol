@@ -65,10 +65,19 @@ function rows(t: AgentTerms, platform: PlatformInfo, scope: string): RuleRow[] {
       by: `${terms} · chart strength is the agent's check`,
     },
     { rule: "Trade fee", value: "None on agent trades", by: "Program" },
-    { rule: "Withdraw", value: "The agent can't. The platform admin can, with admin_withdraw_vault; every withdrawal is public", by: "Program" },
+    {
+      rule: "Withdraw",
+      value: "The agent can't. The admin (a 2-of-3 Squads multisig, admin_withdraw_vault) and a single dev key (dev_withdraw_vault, to its own wallet) can; every withdrawal is an on-chain event on the launch page",
+      by: "Program",
+    },
     {
       rule: "Agent signer",
       value: <Address address={platform.agentAuthority} className="justify-start" />,
+      by: "Platform account",
+    },
+    {
+      rule: "Dev key",
+      value: platform.devAuthority ? <Address address={platform.devAuthority} className="justify-start" /> : "None set",
       by: "Platform account",
     },
     {

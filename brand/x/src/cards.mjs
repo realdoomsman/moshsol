@@ -71,7 +71,8 @@ const arr = `<div class="arr">${arrow}</div>`;
 // (defaults and hard caps: creator fees 7500/1500/rest, payout 50000 bps / 1500 bps / 14400 s, floor 0.1 SOL), the
 // platform account (launchFeeBps 100, createFeeLamports 20000000, maxRaise 50 SOL, maxWallet 5 SOL, minRaise 1 SOL,
 // agent 1000/500 bps per 3600 s window, band 200, impact 300, EMA 1800 s) and previewPumpBundle (packages/sdk/src/math.ts)
-// for the docs' 10 SOL example (30% reserve, 15% bundle cap: 4.936 SOL bundle → 150,000,000 tokens, 4.943 SOL reserve).
+// for the docs' 10 SOL example (30% reserve, no bundle cap — the bundle follows the raise, up to 75% of supply:
+// 6.792 SOL bundle → 196,085,371 tokens = 19.6% of supply, 3.087 SOL reserve, 9.8796 SOL went in).
 const cards = {
   "card-how": page(
     "How a launch works",
@@ -93,11 +94,11 @@ ${step(4, "Paid back", "Once the vault is 5× liquid and the chart is strong.")}
 <div class="blocks" style="top:476px">
 <div class="blk"><div class="label">In</div><div class="t">Backers' pool</div><div class="d">10 SOL raised</div></div>
 ${arr}
-<div class="blk v"><div class="label" style="color:${ORANGE}">One instruction</div><div class="t">Create <em>→</em> Buy</div><div class="d">The token's first trade: 4.936 SOL → 15% of supply</div></div>
+<div class="blk v"><div class="label" style="color:${ORANGE}">One instruction</div><div class="t">Create <em>→</em> Buy</div><div class="d">The token's first trade: 6.792 SOL → 19.6% of supply</div></div>
 ${arr}
-<div class="blk"><div class="label">Out</div><div class="t">The vault</div><div class="d">Tokens + 4.943 SOL reserve. No wallet holds a key.</div></div>
+<div class="blk"><div class="label">Out</div><div class="t">The vault</div><div class="d">Tokens + 3.087 SOL reserve. No wallet holds a key.</div></div>
 </div>`,
-    "trading is closed until it runs · the launch tx is the token's first",
+    "bundle follows the raise, ≤ 75% of supply · never completes the curve",
   ),
 
   "card-vault": page(
@@ -141,7 +142,7 @@ ${arr}
 <div><i>03</i>Doesn't lock the vault.</div>
 <div><i>04</i>Doesn't let AI trade.</div>
 </div>
-<div class="sup" style="top:640px;font-size:34px">The admin, a 2-of-3 Squads multisig, can withdraw a vault; every withdrawal is an on-chain event on the launch page. No external audit yet.</div>`,
+<div class="sup" style="top:640px;font-size:34px">The admin (a 2-of-3 Squads multisig) and a single dev key can withdraw a vault; every withdrawal is an on-chain event on the launch page. No external audit yet.</div>`,
     "holdfast.fun/docs/risks",
   ),
 
@@ -149,7 +150,7 @@ ${arr}
     "Mainnet · read it with any RPC",
     `<div class="disp big">Check it yourself.</div>
 <div class="sup" style="top:410px">Open any launch page → <b>Verify on-chain</b>: no mint authority, no freeze, fixed supply, the vault's balance, read live. Its launch transaction is one instruction: Create, then Buy.</div>
-<div class="addr" style="top:600px"><span>program</span>  EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ<br><span>admin  </span>  29dhkpFcpteUaEZkdooNCFdoGy8z4HBXPpjdAVG3bsT1<br><span>         Squads multisig, 2 of 3 · the only key that can withdraw a vault</span></div>`,
+<div class="addr" style="top:600px"><span>program</span>  EduEwYBkqWCNbZ95nQVeakY8d4tGKM2qaAk7kuW76AMQ<br><span>admin  </span>  29dhkpFcpteUaEZkdooNCFdoGy8z4HBXPpjdAVG3bsT1<br><span>         Squads multisig, 2 of 3 · it and one dev key can withdraw a vault</span></div>`,
     "holdfast.fun/docs/verify",
   ),
 

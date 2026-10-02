@@ -119,7 +119,7 @@ export function LockFallback() {
         <div>
           <p className="h3 num text-ink">Bundle in the vault · {pctOf(l.bundleTokens, TOTAL_SUPPLY).toFixed(2)}% of supply</p>
           <p className="small num text-ink-3">
-            Withdrawn by the admin: {fmtSolValue(l.vaultWithdrawnSol)} SOL · {fmtTokens(l.vaultWithdrawnTokens)} tokens
+            Withdrawn by the admin or dev key: {fmtSolValue(l.vaultWithdrawnSol)} SOL · {fmtTokens(l.vaultWithdrawnTokens)} tokens
           </p>
         </div>
       </div>

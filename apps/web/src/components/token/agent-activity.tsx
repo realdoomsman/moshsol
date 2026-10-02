@@ -95,9 +95,12 @@ function eventCopy(e: ActivityEvent, symbol: string): { label: string; tone: Chi
       return { label: "Fees collected", tone: "neutral", text: `pump.fun creator fees swept into the launch and split between vault, buyback pool and backers.`, size: sol };
     case "vault_withdrawn":
       return {
-        label: "Admin withdrew",
+        label: e.ref === "dev" ? "Dev key withdrew" : "Admin withdrew",
         tone: "neutral",
-        text: `The platform multisig withdrew from the vault (admin_withdraw_vault).`,
+        text:
+          e.ref === "dev"
+            ? `Withdrawn by the dev key to its own wallet (dev_withdraw_vault).`
+            : `Withdrawn by the admin, the 2-of-3 Squads multisig (admin_withdraw_vault).`,
         size: e.tokenAmount && BigInt(e.tokenAmount) > 0n ? `${sol} · ${fmtTokens(e.tokenAmount)}` : sol,
       };
     case "buyback_burned":
@@ -127,7 +130,7 @@ const absolute = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeri
  * Agent activity (§4.5): the vault agent's own log (`/launches/:id/activity`: every buy, sell,
  * buy-back, hold and crank with its reason, the optional narration and the numbers it decided
  * on), its on-chain trades (`trades?agent=1`) and the launch's other vault events (backer payouts,
- * fee sweeps, admin withdrawals, burns, wind-down), one feed newest first. An agent entry and the
+ * fee sweeps, vault withdrawals by the admin or the dev key, burns, wind-down), one feed newest first. An agent entry and the
  * trade or event it signed are one row. Under it: what the research loop learned.
  */
 export function AgentActivity({ launch: l, now }: { launch: LaunchSummary; now: number }) {

@@ -657,6 +657,29 @@ impl Env {
         self.send(&[ix], &[admin])
     }
 
+    /// `dev_withdraw_vault` on a pump launch: SOL to `dev`, tokens to its SPL ATA (created).
+    pub fn dev_withdraw_pump(&mut self, dev: &Keypair, launch: &Pubkey, sol: u64, tokens: u64) -> TxResult {
+        let l = self.launch_at(launch);
+        let recipient_tokens = self.create_spl_ata(dev, &dev.pubkey(), &l.mint);
+        let authority = pump_authority_pda(launch);
+        let ix = Instruction {
+            program_id: moshsol::ID,
+            accounts: moshsol::accounts::DevWithdrawVault {
+                dev: dev.pubkey(),
+                platform: platform_pda(),
+                launch: *launch,
+                mint: l.mint,
+                vault_tokens: spl_ata(&authority, &l.mint),
+                recipient_tokens,
+                token_authority: authority,
+                token_program: TOKEN_ID,
+            }
+            .to_account_metas(None),
+            data: moshsol::instruction::DevWithdrawVault { sol, tokens }.data(),
+        };
+        self.send(&[ix], &[dev])
+    }
+
     pub fn migrate_platform(&mut self, admin: &Keypair) -> TxResult {
         let ix = Instruction {
             program_id: moshsol::ID,

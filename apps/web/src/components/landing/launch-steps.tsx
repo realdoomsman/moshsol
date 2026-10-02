@@ -68,8 +68,8 @@ export function launchSteps(p: Params): HowStep[] {
     },
     {
       title: "The bundle buys first",
-      description: `At launch the token is created on pump.fun and the pool, minus the ${s.launchFeePct}% launch fee and pump.fun's create rent, makes the first buy in the same instruction, before any public trade can exist. The tokens and the SOL reserve go into the vault. Only the vault agent trades them; the platform admin can withdraw, and every withdrawal is public.`,
-      rule: p ? `Bundle: ≤ ${pctFromBps(p.maxBundleSupplyBps)} of supply` : null,
+      description: `At launch the token is created on pump.fun and the pool, minus the ${s.launchFeePct}% launch fee and pump.fun's create rent, makes the first buy in the same instruction, before any public trade can exist. The tokens and the SOL reserve go into the vault. Only the vault agent trades them; the admin (a 2-of-3 Squads multisig) and a single dev key can withdraw a vault, and every withdrawal is an on-chain event on the launch page.`,
+      rule: p ? `Bundle: follows the raise, ≤ ${pctFromBps(p.maxBundleSupplyBps)} of supply` : null,
       frame: DEMO.theBundle,
     },
     {

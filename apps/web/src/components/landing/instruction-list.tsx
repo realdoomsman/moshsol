@@ -45,8 +45,9 @@ export function InstructionList({ rows }: { rows: InstructionRow[] }) {
         <span className="label text-accent-ink">Vault exits</span>
         <span className="small text-accent-ink">
           Agent trades on the launch&rsquo;s venue, <span className="mono">payout_backers</span> (to backers, principal first),{" "}
-          <span className="mono">wind_down_pump</span> (all vault SOL to backers) and <span className="mono">admin_withdraw_vault</span>{" "}
-          (platform admin → fee recipient). Each one is on-chain and shown on the launch page.
+          <span className="mono">wind_down_pump</span> (all vault SOL to backers), <span className="mono">admin_withdraw_vault</span>{" "}
+          (admin, a 2-of-3 Squads multisig → fee recipient) and <span className="mono">dev_withdraw_vault</span> (the single dev key → its
+          own wallet). Each one is an on-chain event shown on the launch page.
         </span>
       </div>
     </div>

@@ -75,13 +75,16 @@ export const theVault: DocPage = {
                 [<C key="f">collect_pump_fees</C>, "Anyone", `pump.fun creator fees: ${s.vaultPct}% into the vault, ${s.burnPct}% to the buyback pool, ${s.backerPct}% to backers`],
                 [<C key="p">payout_backers</C>, "Agent authority, once eligible", `Vault SOL to backers: the principal, then ${s.payoutSharePct}% of the vault at most every ${fmtInterval(s.payoutIntervalHours)}`],
                 [<C key="w">wind_down_pump</C>, "Anyone, once eligible", "Vault tokens sold into the venue; all vault SOL to backers"],
-                [<C key="x">admin_withdraw_vault</C>, "Platform admin", "Any amount of vault SOL and tokens to the platform fee recipient"],
+                [<C key="x">admin_withdraw_vault</C>, "Platform admin (2-of-3 Squads multisig)", "Any amount of vault SOL and tokens to the platform fee recipient"],
+                [<C key="d">dev_withdraw_vault</C>, "Dev key (one key, set by the admin)", "Any amount of vault SOL and tokens to the dev key's own wallet"],
               ]}
             />
-            <Callout tone="warn" title="The admin can withdraw a vault">
-              <C>admin_withdraw_vault</C> lets the platform admin, a Squads 2-of-3 multisig on mainnet, send a vault&rsquo;s SOL and
-              tokens to the platform fee recipient. It can&rsquo;t touch what backers have already accrued. Every withdrawal emits{" "}
-              <C>VaultWithdrawn</C> and is listed on the launch page. See <A href="/docs/risks">Risks</A>.
+            <Callout tone="warn" title="The admin and the dev key can withdraw a vault">
+              <C>admin_withdraw_vault</C> lets the platform admin, a 2-of-3 Squads multisig on mainnet, send a vault&rsquo;s SOL and
+              tokens to the platform fee recipient; <C>dev_withdraw_vault</C> lets a single dev key (the platform&rsquo;s{" "}
+              <C>dev_authority</C>, set by the admin) send them to its own wallet, even while the platform is paused. Neither can touch
+              the token&rsquo;s liquidity, what backers have already accrued or the buyback pool. Every withdrawal is an on-chain event (
+              <C>VaultWithdrawn</C> or <C>VaultWithdrawnByDev</C>) listed on the launch page. See <A href="/docs/risks">Risks</A>.
             </Callout>
           </>
         ),
@@ -394,25 +397,27 @@ export const verify: DocPage = {
             </li>
             <li>
               The vault is the program address <C>[&quot;vault&quot;, launch]</C>: only the program can sign for it, through the
-              agent trades, <C>payout_backers</C>, <C>wind_down_pump</C> and <C>admin_withdraw_vault</C>.
+              agent trades, <C>payout_backers</C>, <C>wind_down_pump</C>, <C>admin_withdraw_vault</C> and <C>dev_withdraw_vault</C>.
             </li>
             <li>The launch account&rsquo;s <C>terms</C> hold the fee split, the payback rule and the agent limits you backed under.</li>
             <li>
               The platform account&rsquo;s <C>admin</C> is the only key that can call <C>admin_withdraw_vault</C>, and its{" "}
-              <C>fee_recipient</C> is where withdrawals go
+              <C>fee_recipient</C> is where those withdrawals go; its <C>dev_authority</C> is the only key that can call{" "}
+              <C>dev_withdraw_vault</C>, which pays the dev key itself
               {platform ? (
                 <>
                   {" "}
                   (admin <A href={explorerAddress(platform.admin)}>{shortAddr(platform.admin)}</A>, recipient{" "}
-                  <A href={explorerAddress(platform.feeRecipient)}>{shortAddr(platform.feeRecipient)}</A>)
+                  <A href={explorerAddress(platform.feeRecipient)}>{shortAddr(platform.feeRecipient)}</A>, dev key{" "}
+                  {platform.devAuthority ? <A href={explorerAddress(platform.devAuthority)}>{shortAddr(platform.devAuthority)}</A> : "none set"})
                 </>
               ) : null}
               .
             </li>
             <li>
-              Every withdrawal is a <C>VaultWithdrawn</C> event: it&rsquo;s listed on the launch page and at{" "}
-              <C>/api/launches/:mint/activity?type=vault_withdrawn</C>. Every payback is a <C>BackersPaid</C> event (
-              <C>?type=backers_paid</C>).
+              Every withdrawal is a <C>VaultWithdrawn</C> (admin) or <C>VaultWithdrawnByDev</C> (dev key) event: it&rsquo;s listed on
+              the launch page and at <C>/api/launches/:mint/activity?type=vault_withdrawn</C>. Every payback is a <C>BackersPaid</C>{" "}
+              event (<C>?type=backers_paid</C>).
             </li>
           </Ol>
           <Figure caption={`Read live from ${CLUSTER_NAME} on the server; each tile links to the account.`}>
@@ -456,8 +461,13 @@ const curve = curvePda(launch);       // ["curve", launch]`}</Code>
           </li>
           <li>
             <B>The admin</B> can withdraw any vault&rsquo;s SOL and tokens to the fee recipient with <C>admin_withdraw_vault</C>
-            (never what backers have already accrued), pause new launches and deposits, pause the agent, and change defaults for future
-            launches, not the terms of existing ones.
+            (never what backers have already accrued), pause new launches and deposits, pause the agent, set the dev key, and change
+            defaults for future launches, not the terms of existing ones.
+          </li>
+          <li>
+            <B>The dev key</B>, a single key, can withdraw any vault&rsquo;s SOL and tokens to its own wallet with{" "}
+            <C>dev_withdraw_vault</C>, under the same limits and even while the platform is paused. Every one of its withdrawals is a{" "}
+            <C>VaultWithdrawnByDev</C> event on the launch page.
           </li>
           <li>
             <B>The agent operator</B> decides when to trade and when to pay backers within the rules; it can&rsquo;t break them, and

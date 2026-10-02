@@ -288,7 +288,7 @@ function describe(e: ActivityEvent): string {
     case "wound_down":
       return `${tick} wound down: ${amount} credited to backers`;
     case "vault_withdrawn":
-      return `Admin withdrew ${amount}${e.tokenAmount && BigInt(e.tokenAmount) > 0n ? ` + ${fmtTokens(e.tokenAmount)} ${tick}` : ""} from the ${tick} vault`;
+      return `${e.ref === "dev" ? "The dev key" : "Admin"} withdrew ${amount}${e.tokenAmount && BigInt(e.tokenAmount) > 0n ? ` + ${fmtTokens(e.tokenAmount)} ${tick}` : ""} from the ${tick} vault`;
     case "creator_fees_collected":
       return `Collected ${amount} of pump.fun creator fees for ${tick}`;
     case "buyback_burned":

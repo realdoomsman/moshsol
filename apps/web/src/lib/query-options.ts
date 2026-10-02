@@ -46,7 +46,7 @@ export const portfolioQuery = (wallet: string) =>
 
 export const activityQuery = () => queryOptions({ queryKey: ["activity"], queryFn: () => api.activity(40) });
 
-/** Admin `admin_withdraw_vault` withdrawals of one launch, newest first. */
+/** Vault withdrawals of one launch (`admin_withdraw_vault` and `dev_withdraw_vault`), newest first. */
 export const vaultWithdrawalsQuery = (id: string) =>
   queryOptions({
     queryKey: ["launch-activity", id, "vault_withdrawn"],

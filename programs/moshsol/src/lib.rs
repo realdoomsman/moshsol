@@ -41,6 +41,11 @@ pub mod moshsol {
         platform::set_agent_authority(ctx, agent_authority)
     }
 
+    /// Sets, rotates or (`Pubkey::default()`) disables the dev key (`dev_withdraw_vault`).
+    pub fn set_dev_authority(ctx: Context<AdminOnly>, dev_authority: Pubkey) -> Result<()> {
+        platform::set_dev_authority(ctx, dev_authority)
+    }
+
     pub fn propose_admin(ctx: Context<AdminOnly>, new_admin: Pubkey) -> Result<()> {
         platform::propose_admin(ctx, new_admin)
     }
@@ -49,7 +54,7 @@ pub mod moshsol {
         platform::accept_admin(ctx)
     }
 
-    /// One-time after the payback upgrade: grows the platform account to the current layout.
+    /// After a layout upgrade: grows the platform account to the current layout.
     pub fn migrate_platform(ctx: Context<MigratePlatform>) -> Result<()> {
         migrate::migrate_platform(ctx)
     }
@@ -168,6 +173,12 @@ pub mod moshsol {
 
     pub fn admin_withdraw_vault(ctx: Context<AdminWithdrawVault>, sol: u64, tokens: u64) -> Result<()> {
         vault::admin_withdraw_vault(ctx, sol, tokens)
+    }
+
+    /// The dev key's withdrawal: same accounting as `admin_withdraw_vault`, to the dev key's
+    /// own wallet and token account, without the multisig.
+    pub fn dev_withdraw_vault(ctx: Context<DevWithdrawVault>, sol: u64, tokens: u64) -> Result<()> {
+        vault::dev_withdraw_vault(ctx, sol, tokens)
     }
 
     pub fn payout_backers(ctx: Context<PayoutBackers>) -> Result<()> {

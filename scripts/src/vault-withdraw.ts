@@ -8,38 +8,19 @@
  *   RPC_URL=<rpc> KEYS_DIR=.mainnet APPROVER_KEYPAIRS=.mainnet/member-1.json,.mainnet/member-2.json \
  *     LAUNCH=<launch address> SOL=all TOKENS=all pnpm --filter @holdfast/scripts vault-withdraw --dry-run
  *
- * LAUNCH: the launch account address. SOL: lamports to withdraw as a decimal SOL amount, or `all`
- * (default 0). TOKENS: whole tokens, or `all` (default 0). At least one must be non-zero. The fee
+ * LAUNCH: the launch account address or its mint. SOL: lamports to withdraw as a decimal SOL amount, or
+ * `all` (default 0). TOKENS: whole tokens, or `all` (default 0). At least one must be non-zero. The fee
  * recipient's token account (its ATA under the launch's token program) is created by the admin key if
  * it is missing. Env otherwise as `pnpm upgrade` (KEYS_DIR — admin.json pays fees, config.json names the
  * multisig — MULTISIG, PROPOSER_KEYPAIR / APPROVER_KEYPAIRS). `--dry-run` only prints the plan.
  */
 import { Connection, PublicKey } from "@solana/web3.js";
 import * as multisig from "@sqds/multisig";
-import {
-  PROGRAM_ID,
-  createLaunchAtaIx,
-  launchToJson,
-  lamportsToSol,
-  solToLamports,
-  splAta,
-  tokenAta,
-  tokensToUi,
-  uiToTokens,
-  type LaunchAccount,
-} from "@holdfast/sdk";
+import { PROGRAM_ID, createLaunchAtaIx, lamportsToSol, splAta, tokenAta, tokensToUi } from "@holdfast/sdk";
 import path from "node:path";
 import { LOCALNET_DIR, RPC_URL, clientFor, send } from "./common";
 import { DRY_RUN, done, fail, readConfig, readKeypair, readVaultSigners, runVaultTransaction, squadsUrl, todo } from "./squads";
-
-function amountArg(name: string, all: bigint, parse: (s: string) => bigint): bigint {
-  const raw = process.env[name]?.trim();
-  if (!raw) return 0n;
-  if (raw === "all") return all;
-  const v = parse(raw);
-  if (v > all) fail(`${name}=${raw} exceeds what the vault holds (${all} base units)`);
-  return v;
-}
+import { loadLaunch, withdrawAmounts } from "./vault";
 
 async function main() {
   const connection = new Connection(RPC_URL, "confirmed");
@@ -47,25 +28,11 @@ async function main() {
   const client = clientFor(connection, admin);
   console.log(`${DRY_RUN ? "DRY RUN — nothing is sent\n" : ""}rpc ${new URL(RPC_URL).host}, program ${PROGRAM_ID.toBase58()}`);
 
-  if (!process.env.LAUNCH) fail("set LAUNCH=<launch address>");
-  const launchKey = new PublicKey(process.env.LAUNCH);
-  const info = await connection.getAccountInfo(launchKey);
-  if (!info || !info.owner.equals(PROGRAM_ID)) fail(`${launchKey.toBase58()} is not a launch of ${PROGRAM_ID.toBase58()} on this cluster`);
-  let account: LaunchAccount;
-  try {
-    account = client.program.coder.accounts.decode<LaunchAccount>("launch", info.data);
-  } catch {
-    fail(`${launchKey.toBase58()} is not in the current layout; run \`pnpm migrate:launches\` first`);
-  }
-  const launch = launchToJson(launchKey, account);
+  const launch = await loadLaunch(connection, client);
+  const launchKey = new PublicKey(launch.address);
   const platform = await client.fetchPlatform();
   if (!platform) fail("the platform is not initialized on this cluster");
-
-  const vaultSol = BigInt(launch.vaultSol);
-  const vaultTokens = BigInt(launch.vaultTokens);
-  const sol = amountArg("SOL", vaultSol, solToLamports);
-  const tokens = amountArg("TOKENS", vaultTokens, uiToTokens);
-  if (sol === 0n && tokens === 0n) fail("nothing to withdraw: set SOL and/or TOKENS (a decimal amount or `all`)");
+  const { vaultSol, vaultTokens, sol, tokens } = withdrawAmounts(launch);
 
   const pump = launch.venue === "pump";
   const mint = new PublicKey(launch.mint);

@@ -134,6 +134,21 @@ pub struct VaultWithdrawn {
     pub timestamp: i64,
 }
 
+/// `dev_withdraw_vault`: the platform's dev key withdrew to its own wallet (SOL) and its own
+/// token account (tokens). Same accounting as `VaultWithdrawn`.
+#[event]
+pub struct VaultWithdrawnByDev {
+    pub launch: Pubkey,
+    pub mint: Pubkey,
+    pub sol: u64,
+    pub tokens: u64,
+    /// The dev key (`platform.dev_authority`) that signed and received the SOL.
+    pub by: Pubkey,
+    /// Token account (owned by `by`) that received the tokens.
+    pub recipient_tokens: Pubkey,
+    pub timestamp: i64,
+}
+
 /// pump.fun / PumpSwap creator fees swept into the launch and split between the buyback pool,
 /// vault SOL (or backers once the launch is wound down) and backers.
 #[event]

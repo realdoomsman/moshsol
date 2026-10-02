@@ -90,7 +90,7 @@ const sol = (v: number | undefined) => (v === undefined ? "—" : `${fmtSolValue
  * Vault card (§4.5): what the vault holds (liquid SOL, tokens at spot) against what went in at
  * launch, the backer payback (progress to the payout multiple, principal repaid, dividends, the
  * next possible payout, the floor), creator fees swept in and how they were split, the vault's
- * average cost against spot, admin withdrawals, the band meter, this window's agent budgets and the
+ * average cost against spot, vault withdrawals (admin and dev key), the band meter, this window's agent budgets and the
  * agent's latest decision (live from `/status`). `justLaunched` plays the clamp once — the launch
  * happened while this page was open.
  */
@@ -283,8 +283,8 @@ export function VaultCard({
             {l.vaultWithdrawnSol > 0 || withdrawnTokens > 0n ? (
               <Row
                 label={
-                  <RuleTooltip rule="Vault SOL and tokens the platform multisig withdrew with admin_withdraw_vault. Each withdrawal is listed under Admin withdrawals.">
-                    Admin withdrawn
+                  <RuleTooltip rule="Vault SOL and tokens withdrawn by the admin (a 2-of-3 Squads multisig, admin_withdraw_vault) or the single dev key (dev_withdraw_vault, to its own wallet). Every withdrawal is an on-chain event, listed under Vault withdrawals.">
+                    Withdrawn
                   </RuleTooltip>
                 }
               >

@@ -4,7 +4,7 @@
 
 [cover: cover.png — title card]
 
-What a Holdfast launch is, what the vault agent may do, when backers are paid back, what the admin can do, and how to check each of those against the chain. Live on Solana mainnet, in beta, at holdfast.fun.
+What a Holdfast launch is, what the vault agent may do, when backers are paid back, what the admin and the dev key can do, and how to check each of those against the chain. Live on Solana mainnet, in beta, at holdfast.fun.
 
 ## The first buyer is usually the first seller
 
@@ -17,10 +17,10 @@ Holdfast changes who makes that first buy, where the tokens go, and what can be 
 Holdfast is a Solana program. Every Holdfast launch is an ordinary pump.fun token, created by the program itself, and its first buy is made with SOL that backers pooled before the token existed.
 
 - **Backers buy first.** A creator opens a raise; backers put in SOL (1 SOL minimum raise; in the beta, at most 50 SOL per launch and 5 SOL per wallet). At launch, one instruction creates the token on pump.fun and spends the pool on the very first buy, the bundle. Nobody can trade before it.
-- **The bundle sits in a vault.** The bundle and the SOL left over at launch belong to the launch account. Nobody holds a key to them. Three things move value out: the vault agent's trades against the token's own market, the on-chain payback rule, and the platform admin.
+- **The bundle sits in a vault.** The bundle and the SOL left over at launch belong to the launch account. Nobody holds a key to them. Four things move value out: the vault agent's trades against the token's own market, the on-chain payback rule, the platform admin, and the dev key.
 - **A vault agent works the chart.** It sells slowly into strength, more the higher the market cap has run and the more real buy volume there is, sized so no trade moves the price more than 3%, and buys dips back with what it sold. Everything it sells for stays in the vault as SOL. There is no profit split; the vault is meant to grow.
 - **Backers are paid back from the vault.** Once the vault's liquid SOL reaches 5× what went in at launch and the chart is strong, the agent may pay backers: their principal first, then 15% of the vault, never more than once per 4 hours. On top, 10% of pump.fun's creator fees go to backers on every trade, claimable any time.
-- **The admin can withdraw.** The admin is a 2-of-3 Squads multisig. It can call `admin_withdraw_vault` and take any amount of a vault's SOL and tokens to the platform fee recipient. Every withdrawal is an on-chain `VaultWithdrawn` event, listed on the launch page. The vault is not locked; it is watched.
+- **The admin and the dev key can withdraw.** The admin is a 2-of-3 Squads multisig; the dev key is a single key the admin sets. The admin can call `admin_withdraw_vault` and take any amount of a vault's SOL and tokens to the platform fee recipient; the dev key can call `dev_withdraw_vault` and take the same to its own wallet. Neither can touch the token's liquidity on pump.fun, what backers have accrued, or the buyback pool. Every withdrawal is an on-chain event (`VaultWithdrawn` or `VaultWithdrawnByDev`), listed on the launch page. The vault is not locked; it is watched.
 - **Holdfast earns the launch fee and nothing else.** 1% of the raise plus a 0.02 SOL create fee, once per launch. The creator's share of fees is 0%.
 
 "Backers buy first" is a statement about the bundle. Every other holder, the creator included if they buy on pump.fun like anyone else, can sell at any time, and the price can fall like any token's. "Paid back" is a statement about a rule: it fires only if the vault gets there.
@@ -29,22 +29,22 @@ Holdfast is a Solana program. Every Holdfast launch is an ordinary pump.fun toke
 
 ## How a launch works
 
-Four beats, with the numbers of the 10 SOL worked example from holdfast.fun/docs/how-it-works. The launch arithmetic is `previewPumpBundle`, the same bundle maths `launch_pump` runs, on the create wizard's default terms (30% reserve, bundle capped at 15% of supply). A real launch's fills differ by its venue fees and price.
+Four beats, with the numbers of the 10 SOL worked example from holdfast.fun/docs/how-it-works. The launch arithmetic is `previewPumpBundle`, the same bundle maths `launch_pump` runs, on the create wizard's default terms (30% reserve, no bundle cap: the bundle buys as much as the raise can, up to 75% of supply). A real launch's fills differ by its venue fees and price.
 
-**1. Raise.** A creator sets a minimum and a maximum raise, a duration (1 minute to 14 days), an optional per-wallet cap and whitelist, the bundle cap (1% to 25% of supply) and the reserve (the share of the raise kept as SOL in the vault, up to 80%). Backers deposit SOL. If the minimum isn't met by the deadline, or the creator cancels, every backer refunds 100%.
+**1. Raise.** A creator sets a minimum and a maximum raise, a duration (1 minute to 14 days), an optional per-wallet cap and whitelist, the reserve (the share of the raise kept as SOL in the vault, up to 80%) and, optionally, a bundle cap (1% to 75% of supply). Without a cap the bundle follows the raise: the more SOL raised, the bigger the share of supply it buys, up to 75%. Backers deposit SOL. If the minimum isn't met by the deadline, or the creator cancels, every backer refunds 100%.
 
 Say the raise closes at 10 SOL and you put in 1 SOL, a 10% share.
 
-**2. Launch.** Trading is closed until `launch_pump` runs. The creator can call it once the minimum is met; anyone can once the deadline passes or the raise fills, so a funded raise can't be held hostage. The instruction takes the 1% launch fee, pays pump.fun's create rent, keeps the reserve, and spends the rest on the first buy of the brand-new bonding curve, capped at the bundle cap. If the budget would buy more than the cap, the bundle buys exactly the cap and the unspent SOL stays in the vault.
+**2. Launch.** Trading is closed until `launch_pump` runs. The creator can call it once the minimum is met; anyone can once the deadline passes or the raise fills, so a funded raise can't be held hostage. The instruction takes the 1% launch fee, pays pump.fun's create rent, keeps the reserve, and spends the rest on the first buy of the brand-new bonding curve, up to the bundle cap (75% of supply without one). If the budget would buy more than the cap, the bundle buys exactly the cap and the unspent SOL stays in the vault. The buy never completes pump.fun's curve at launch either: whatever the curve can't take also stays as vault SOL. pump.fun's curve completes at roughly 85 SOL of buys.
 
 | Where the 10 SOL goes | Amount |
 |---|---|
 | Launch fee (1%) to Holdfast | 0.1 SOL |
 | pump.fun create rent | ≈ 0.0204 SOL |
-| The bundle: the first buy on the curve, including pump.fun's fee | 4.936 SOL → 150,000,000 tokens (15% of supply) |
-| Reserve kept as vault SOL for dip buys | 4.943 SOL |
+| The bundle: the first buy on the curve, including pump.fun's fee | 6.792 SOL → 196,085,371 tokens (19.6% of supply) |
+| Reserve kept as vault SOL for dip buys | 3.087 SOL |
 | What went in at launch (`initial_vault_sol`) | 9.8796 SOL |
-| Market cap right after the bundle | ≈ 37.78 SOL |
+| Market cap right after the bundle | ≈ 41.86 SOL |
 
 [image: card-bundle.png — one instruction: pump.fun Create, then the bundle Buy, nothing between]
 
@@ -52,9 +52,9 @@ Say the raise closes at 10 SOL and you put in 1 SOL, a 10% share.
 
 | The rally sell | Amount |
 |---|---|
-| Tokens sold (15,000,000) | cost 0.4936 SOL → sold for 1.4809 SOL |
-| Proceeds, kept in the vault as SOL | 1.4809 SOL |
-| Vault SOL after the sell (liquid SOL only, the payback rule's measure) | 6.424 SOL (0.65× what went in) |
+| Tokens sold (19,608,537) | cost 0.6792 SOL → sold for 2.0376 SOL |
+| Proceeds, kept in the vault as SOL | 2.0376 SOL |
+| Vault SOL after the sell (liquid SOL only, the payback rule's measure) | 5.125 SOL (0.51× what went in) |
 
 Nothing leaves the vault on a sell. That SOL is what the agent buys the next dip with, and the cycle repeats as long as the token trades. Meanwhile pump.fun pays the launch a creator fee on every trade of the token; say `collect_pump_fees` has swept 2 SOL of it so far:
 
@@ -136,7 +136,7 @@ The agent doesn't hold a price. It's counter-cyclical inside a small budget, and
 
 [image: card-money.png — the split, frozen into every launch]
 
-`create_launch_pump` copies the launch fee, the creator-fee split, every agent limit and the payback terms into the launch account's `terms`. Changing platform defaults later only affects launches created afterwards. Hard caps the admin can never exceed: launch fee ≤ 5%, create fee ≤ 1 SOL, vault share of creator fees ≤ 90%, burn share ≤ 50%, payout multiple ≥ 1×, payout share ≤ 50%, payout interval ≥ 1 h, dead-holder threshold ≤ 20%, vault floor ≥ 0.05 SOL, bundle ≤ 30% of supply, and the agent limits in the table above. Tokens are never taken as fees, so Holdfast never has launch tokens to sell.
+`create_launch_pump` copies the launch fee, the creator-fee split, every agent limit and the payback terms into the launch account's `terms`. Changing platform defaults later only affects launches created afterwards. Hard caps the admin can never exceed: launch fee ≤ 5%, create fee ≤ 1 SOL, vault share of creator fees ≤ 90%, burn share ≤ 50%, payout multiple ≥ 1×, payout share ≤ 50%, payout interval ≥ 1 h, dead-holder threshold ≤ 20%, vault floor ≥ 0.05 SOL, bundle ≤ 75% of supply, and the agent limits in the table above. Tokens are never taken as fees, so Holdfast never has launch tokens to sell.
 
 ## When backers get paid back
 
@@ -158,19 +158,22 @@ Every payout is a `BackersPaid` event on the launch page. Separately, and from t
 
 ## What the program can and cannot do
 
-The program has 31 instructions. Here is every one, by who may sign it.
+The program has 33 instructions. Here is every one, by who may sign it.
 
 - **Anyone:** `launch_pump` (once the deadline passed or the raise filled), `graduate_pump` (records the PumpSwap pool once pump.fun migrated a completed curve), `collect_pump_fees` (sweeps the creator fee into the 75/15/10 split), `sweep_platform_fees` (moves Holdfast's accrued fee to the fee recipient), `wind_down_pump` (dead launches only: live 3 days, no vault trade for 24 h, at most 5% of supply outside the curve and the vault), `accept_admin` (the proposed new admin). On the legacy Holdfast curve: `launch`, `buy`, `sell`, `wind_down`.
 - **Creator:** `create_launch_pump` (and the legacy `create_launch`, disabled on mainnet), `launch_pump` as soon as the minimum is met, `cancel_launch` before launch, `claim_creator_fees` (0% by default, so nothing to claim).
 - **Backer:** `deposit`, `refund` (missed minimum or cancelled raise), `claim_backer_fees` (the 10% fee share and any payback).
 - **Vault agent (one key):** `agent_buy_pump`, `agent_sell_pump` (and `agent_buy`, `agent_sell` on the legacy curve), `payout_backers`, `buyback_burn`. Every trade passes the checks in the table above or fails.
-- **Admin (2-of-3 multisig):** `initialize_platform`, `update_platform`, `set_fee_recipient`, `set_agent_authority`, `propose_admin`, `migrate_platform`, `migrate_launch`, `admin_withdraw_vault`.
+- **Admin (2-of-3 multisig):** `initialize_platform`, `update_platform`, `set_fee_recipient`, `set_agent_authority`, `set_dev_authority`, `propose_admin`, `migrate_platform`, `migrate_launch`, `admin_withdraw_vault`.
+- **Dev key (one key, set by the admin):** `dev_withdraw_vault`.
 
-Instructions that move vault funds to wallets: `payout_backers` (to backers' claimable balance, under the payback rule), `wind_down_pump` (to backers, dead launches only) and `admin_withdraw_vault` (admin only, to the platform's fee recipient, with an event every time).
+Instructions that move vault funds to wallets: `payout_backers` (to backers' claimable balance, under the payback rule), `wind_down_pump` (to backers, dead launches only), `admin_withdraw_vault` (admin only, to the platform's fee recipient) and `dev_withdraw_vault` (the dev key only, to its own wallet), with an event every time.
 
 What nobody can do: mint more tokens (pump.fun's `create` leaves no mint authority and no freeze authority), change an existing launch's terms, redirect what backers have accrued, block refunds, trading or claims with a pause, pay backers before the vault is 5× liquid or more often than once per 4 hours, or spend the buyback pool on anything but buying and burning the Holdfast token.
 
-What the admin can do: withdraw any vault's SOL and tokens to the fee recipient, pause new launches and deposits, pause the agent as a circuit breaker (which also stops payouts and buybacks), rotate the agent key, change the fee recipient, and change defaults for future launches within the hard caps. The admin is also the program's upgrade authority, and an upgrade could change any rule. Both are the same 2-of-3 Squads multisig, and every action is a proposal its members sign.
+What the admin can do: withdraw any vault's SOL and tokens to the fee recipient, pause new launches and deposits, pause the agent as a circuit breaker (which also stops payouts and buybacks), rotate the agent key, set, rotate or disable the dev key, change the fee recipient, and change defaults for future launches within the hard caps. The admin is also the program's upgrade authority, and an upgrade could change any rule. Both are the same 2-of-3 Squads multisig, and every action is a proposal its members sign.
+
+What the dev key can do: withdraw any vault's SOL and tokens to its own wallet with `dev_withdraw_vault`, under the same accounting as the admin's withdrawal (never the token's liquidity, backers' accruals or the buyback pool), even while the platform is paused. It can do nothing else. Every use is a `VaultWithdrawnByDev` event on the launch page.
 
 What anyone can do: once a launch has been live for 3 days, saw no vault trade for 24 hours, and at most 5% of the supply sits outside pump.fun's curve and the vault, anyone can call `wind_down_pump`. The vault's tokens are sold into the venue, all of the vault's SOL goes to backers pro-rata (possibly less than they put in), and trading stops for good. Claims keep working.
 
@@ -185,7 +188,8 @@ Every claim above maps to an account you can open, on mainnet, with any RPC. `ge
 - **Any launch's mint.** Open a launch page on holdfast.fun and its "Verify on-chain" panel: mint authority revoked, freeze authority none, supply 1,000,000,000 fixed, the vault's token balance, all read live, each account with an explorer link. Explorers show both authority rows empty.
 - **Any launch's terms.** The launch account the panel links stores them frozen: launch fee 100 bps, band 200 bps, window 3,600 s, EMA period 1,800 s, buy budget 1,000 bps, sell budget 500 bps, max impact 300 bps, the 75/15/10 creator-fee split and the payback terms. `/api/launches/<launch address>` on api.holdfast.fun returns the same fields decoded.
 - **Any launch's transaction.** The launch page's activity lists the launch event with an explorer link. Open it: one `LaunchPump` instruction whose inner instructions are pump.fun's `Create` and then `Buy`. No other transaction can run between the two.
-- **The vault.** A token account owned by the launch's pump-authority PDA (`["pump-authority", launch]`), which only the program can sign for. Every exit from it (agent trade, payout, wind-down, admin withdrawal) is an event listed on the launch page.
+- **The vault.** A token account owned by the launch's pump-authority PDA (`["pump-authority", launch]`), which only the program can sign for. Every exit from it (agent trade, payout, wind-down, admin or dev-key withdrawal) is an event listed on the launch page.
+- **The dev key.** Shown on the platform account as `dev_authority` and on the verify page; the default pubkey means no dev key is set. It is the only key besides the admin that can withdraw a vault.
 - **The agent key.** Shown on the platform account as `agent_authority` and on the verify page. The program accepts it only in the agent instructions; it can never withdraw. Its decisions are at agent.holdfast.fun/status and holdfast.fun/agents.
 
 [image: card-check.png — program id, multisig, and where to open any launch's own accounts]
@@ -194,7 +198,7 @@ The same checklist, with live tiles linking each account, is at holdfast.fun/doc
 
 ## Risks and what's not done
 
-- **The admin can withdraw a vault.** `admin_withdraw_vault` exists and stays. Every use is a `VaultWithdrawn` event on the launch page. We would rather show the power and the event log than claim a lock we don't have.
+- **The admin and the dev key can withdraw a vault.** `admin_withdraw_vault` (the 2-of-3 multisig) and `dev_withdraw_vault` (a single dev key, to its own wallet) exist and stay. Every use is a `VaultWithdrawn` or `VaultWithdrawnByDev` event on the launch page. We would rather show the power and the event log than claim a lock we don't have.
 - **The program is upgradeable, and unaudited.** The upgrade authority is the admin multisig; an upgrade could change any rule. The program and SDK ship with a litesvm integration suite that asserts the accounting invariants after every step, and the agent policy with a backtest; no external review has been done yet.
 - **Price can fall.** The vault holds one slice of supply and trades inside hourly budgets. Every other holder can sell at any time. The agent doesn't hold a price.
 - **Payback is conditional.** No payout happens unless a vault reaches 5× liquid SOL and the chart is strong at the check. Many tokens never get there. A wind-down returns the vault's SOL pro-rata, which can be less than what went in.

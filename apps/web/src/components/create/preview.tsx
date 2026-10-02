@@ -19,11 +19,14 @@ const pct = (v: number) => `${v.toFixed(v >= 10 ? 1 : 2)}%`;
 /** The Discover card (§4.4, raising state) as the launch will first appear. */
 export function DraftCard({
   draft,
+  bundleSupplyBps,
   imageUrl,
   creator,
   durationSecs,
 }: {
   draft: CreateDraft;
+  /** The cap the launch will carry (the platform max without a custom cap), as Discover shows it. */
+  bundleSupplyBps: number;
   imageUrl: string | null;
   creator: string | null;
   durationSecs: number | null;
@@ -64,7 +67,7 @@ export function DraftCard({
           className="mt-2"
         />
         <p className="small num mt-3 truncate text-ink-3">
-          {durationSecs ? `Closes ${fmtDuration(durationSecs)} after creation` : "Set a duration"} · bundle ≤ {draft.bundlePct}%
+          {durationSecs ? `Closes ${fmtDuration(durationSecs)} after creation` : "Set a duration"} · bundle ≤ {bundleSupplyBps / 100}%
           {draft.access === "whitelist" ? " · whitelist" : draft.access === "self" ? " · self-funded" : ""}
         </p>
       </div>
@@ -93,7 +96,7 @@ export function BundleTable({ range, loading }: { range: BundleRange | null; loa
     },
     { label: "Start price", min: fmtPrice(range.atMin.priceAfter), max: fmtPrice(range.atMax.priceAfter) },
     {
-      label: <RuleTooltip rule="SOL kept in the vault as the agent's capital for dip buys: the reserve plus anything the bundle cap leaves over. What the agent sells later stays in the vault too.">Vault SOL</RuleTooltip>,
+      label: <RuleTooltip rule="SOL kept in the vault as the agent's capital for dip buys: the reserve plus anything the bundle doesn't spend (beyond a custom cap, or what the launch keeps back from the pump.fun curve). What the agent sells later stays in the vault too.">Vault SOL</RuleTooltip>,
       min: fmtLamports(range.atMin.vaultSol),
       max: fmtLamports(range.atMax.vaultSol),
     },

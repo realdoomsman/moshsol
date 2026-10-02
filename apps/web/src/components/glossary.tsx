@@ -11,7 +11,7 @@ export function glossaryRule(key: GlossaryKey, s: PumpSplit): string {
     case "bundle":
       return "The pooled SOL's first buy on pump.fun, made in the same instruction that creates the token, before anyone else can trade. Its tokens go into the vault.";
     case "vault":
-      return "The on-chain account that holds the bundle's tokens and the vault's SOL. Only the vault agent trades it; the platform admin can withdraw, and every withdrawal is public.";
+      return "The on-chain account that holds the bundle's tokens and the vault's SOL. Only the vault agent trades it; the admin (a 2-of-3 Squads multisig) and a single dev key can withdraw it, and every withdrawal is an on-chain event on the launch page.";
     case "vaultAgent":
       return "The one rate-limited signer allowed to trade the vault. It sells slowly into strength and buys back dips with what it sold, under hard on-chain limits. Everything it sells stays in the vault as SOL.";
     case "windDown":

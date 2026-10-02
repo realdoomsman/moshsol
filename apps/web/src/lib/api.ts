@@ -203,7 +203,7 @@ export const api = {
     request<{ holders: HolderRow[] }>(INDEXER_URL, `/api/launches/${id}/holders?limit=${limit}`),
   portfolio: (wallet: string) => request<Portfolio>(INDEXER_URL, `/api/portfolio/${wallet}`),
   activity: (limit = 40) => request<{ events: ActivityEvent[] }>(INDEXER_URL, `/api/activity?limit=${limit}`),
-  /** One launch's events, newest first; `type` narrows to one event type (e.g. admin `vault_withdrawn`). */
+  /** One launch's events, newest first; `type` narrows to one event type (e.g. `vault_withdrawn`). */
   launchActivity: (id: string, p: { type?: ActivityType; limit: number; before?: number }) => {
     const qs = new URLSearchParams({ limit: String(p.limit) });
     if (p.type) qs.set("type", p.type);

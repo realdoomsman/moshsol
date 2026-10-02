@@ -64,8 +64,8 @@ export function ProofTiles({
     {
       title: "Vault PDA",
       detail: example
-        ? `$${example.symbol}’s vault, owned by its launch account · withdrawals by the admin only`
-        : "One per launch, derived from the launch · withdrawals by the admin only",
+        ? `$${example.symbol}’s vault, owned by its launch account · withdrawals only by the admin multisig or the dev key, each an on-chain event`
+        : "One per launch, derived from the launch · withdrawals only by the admin multisig or the dev key, each an on-chain event",
       address: vault,
     },
     {

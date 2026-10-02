@@ -19,7 +19,7 @@ export function faqItems(p: PlatformInfo["params"] | null): Qa[] {
   return [
     {
       q: "Can the creator dump the bundle?",
-      a: "No. The bundle is bought by the launch instruction and held in the vault, and the creator has no instruction that touches it. Only the vault agent trades it, on the launch's venue (pump.fun for new launches, the Holdfast curve for the two legacy launches), within its rules. The platform admin can withdraw vault SOL and tokens with admin_withdraw_vault; every withdrawal is on-chain and shown on the launch page.",
+      a: "No. The bundle is bought by the launch instruction and held in the vault, and the creator has no instruction that touches it. Only the vault agent trades it, on the launch's venue (pump.fun for new launches, the Holdfast curve for the two legacy launches), within its rules. The admin (a 2-of-3 Squads multisig) and a single dev key can withdraw a vault; every withdrawal is an on-chain event on the launch page.",
       href: "/docs/the-vault",
       more: "The vault",
     },
@@ -69,7 +69,7 @@ export function faqItems(p: PlatformInfo["params"] | null): Qa[] {
     },
     {
       q: "What doesn't Holdfast protect against?",
-      a: "Other holders can still sell, and the platform admin can withdraw a vault (every withdrawal is public). Price can fall like any token, payback only happens if the vault grows, and a wind-down can return less than you put in. Holdfast makes the backers' bundle the first buy; it doesn't promise a price.",
+      a: "Other holders can still sell, and the admin (a 2-of-3 Squads multisig) and a single dev key can withdraw a vault (every withdrawal is an on-chain event on the launch page). Price can fall like any token, payback only happens if the vault grows, and a wind-down can return less than you put in. Holdfast makes the backers' bundle the first buy; it doesn't promise a price.",
       href: "/docs/risks",
       more: "Risks",
     },

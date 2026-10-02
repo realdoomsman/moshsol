@@ -226,6 +226,14 @@ export class MoshClient {
       .instruction();
   }
 
+  /** Admin only: sets, rotates or (`PublicKey.default`) disables the dev key that may `devWithdrawVaultIx`. */
+  async setDevAuthorityIx(admin: PublicKey, devAuthority: PublicKey) {
+    return this.program.methods
+      .setDevAuthority(devAuthority)
+      .accountsStrict({ admin, platform: platformPda(this.programId) })
+      .instruction();
+  }
+
   /** Step 1 of the two-step admin handoff: the current admin nominates `newAdmin`. */
   async proposeAdminIx(admin: PublicKey, newAdmin: PublicKey) {
     return this.program.methods
@@ -508,7 +516,7 @@ export class MoshClient {
       .instruction();
   }
 
-  /** Admin only, once after the payback upgrade: grows the platform account to the current layout. */
+  /** Admin only, once after a layout upgrade: grows the platform account to the current layout. */
   async migratePlatformIx(admin: PublicKey) {
     return this.program.methods
       .migratePlatform()
@@ -721,6 +729,33 @@ export class MoshClient {
         vaultTokens: pump ? splAta(authority, mint) : vaultPda(launch, this.programId),
         feeRecipient: platform.feeRecipient,
         recipientTokens,
+        tokenAuthority: authority,
+        tokenProgram: pump ? TOKEN_PROGRAM_ID : TOKEN_2022_PROGRAM_ID,
+      })
+      .instruction();
+  }
+
+  /**
+   * The platform's dev key only (`platform.devAuthority`, signer and fee payer): sends `sol` lamports of
+   * vault SOL to `dev` itself and `tokens` base units of vault tokens to `dev`'s ATA for the mint under
+   * the launch's token program (`splAta(dev, mint)` on pump launches, `tokenAta(dev, mint)` on Holdfast
+   * launches), which must exist: put a create-idempotent instruction for it in the same transaction.
+   * Not blocked by `paused` / `agents_paused`; emits `VaultWithdrawnByDev`.
+   */
+  async devWithdrawVaultIx(dev: PublicKey, l: Pick<LaunchJson, "address" | "mint" | "venue">, sol: bigint, tokens: bigint) {
+    const launch = new PublicKey(l.address);
+    const mint = new PublicKey(l.mint);
+    const pump = l.venue === "pump";
+    const authority = pump ? pumpAuthorityPda(launch, this.programId) : launch;
+    return this.program.methods
+      .devWithdrawVault(bn(sol), bn(tokens))
+      .accountsStrict({
+        dev,
+        platform: platformPda(this.programId),
+        launch,
+        mint,
+        vaultTokens: pump ? splAta(authority, mint) : vaultPda(launch, this.programId),
+        recipientTokens: pump ? splAta(dev, mint) : tokenAta(dev, mint),
         tokenAuthority: authority,
         tokenProgram: pump ? TOKEN_PROGRAM_ID : TOKEN_2022_PROGRAM_ID,
       })

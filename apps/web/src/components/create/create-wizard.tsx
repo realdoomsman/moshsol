@@ -26,6 +26,7 @@ import { CostSummary, DraftCard, PreviewPanel } from "./preview";
 import { StepProgress, Stepper } from "./stepper";
 import { StepRaise, StepReview, StepToken, StepVault, type StepContext } from "./steps";
 import {
+  bundleBpsOf,
   durationSecsOf,
   fmtDuration,
   INITIAL_DRAFT,
@@ -101,17 +102,20 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
   // Beta caps ("0" = none).
   const maxRaiseCap = params?.maxRaiseLamports ?? "0";
   const maxWalletCap = params?.maxWalletDepositLamports ?? "0";
+  // "No cap" submits the platform max; the hard limit stands in until /api/platform loads.
+  const maxBundleBps = params?.maxBundleSupplyBps ?? LIMITS.maxBundleSupplyBps;
+  const bundleBps = bundleBpsOf(draft, maxBundleBps);
   const v = useMemo(
     () =>
       validateDraft(draft, {
         creator: publicKey,
         // Until /api/platform loads, the raise minimum can't be checked; min 1 lamport keeps the rest honest.
         minRaiseLamports: minRaiseLamports ?? 1n,
-        maxBundleSupplyBps: params?.maxBundleSupplyBps ?? LIMITS.minBundleSupplyBps,
+        maxBundleSupplyBps: maxBundleBps,
         maxRaiseLamports: BigInt(maxRaiseCap),
         maxWalletDepositLamports: BigInt(maxWalletCap),
       }),
-    [draft, publicKey, minRaiseLamports, params?.maxBundleSupplyBps, maxRaiseCap, maxWalletCap],
+    [draft, publicKey, minRaiseLamports, maxBundleBps, maxRaiseCap, maxWalletCap],
   );
   const range = useMemo(() => bundleRange(params, draft), [params, draft]);
   const cost = useCreateCost(draft.name, draft.symbol, params);
@@ -123,7 +127,7 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
   }, []);
 
   const err = (f: DraftField) => (touched[f] || shown[stepOf(f)] ? (v.errors[f] ?? null) : null);
-  const ctx: StepContext = { draft, set, err, v, params };
+  const ctx: StepContext = { draft, set, err, v, params, maxBundleBps };
   const invalidSteps = STEPS.map((s) => (s.fields as readonly DraftField[]).some((f) => v.errors[f]));
 
   const onImage = async (file: File | null) => {
@@ -288,14 +292,22 @@ export function CreateWizard({ prefill }: { prefill: CreatePrefill }) {
     draft.raiseMin && draft.raiseMax
       ? `${draft.raiseMin}–${draft.raiseMax} SOL${durationSecs ? ` · ${fmtDuration(durationSecs)}` : ""}`
       : null,
-    `≤ ${draft.bundlePct}% · ${draft.reservePct}% reserve · ${draft.access === "self" ? "self-funded" : draft.access}`,
+    `${draft.bundleCap === "none" ? "no cap" : `≤ ${bundleBps / 100}%`} · ${draft.reservePct}% reserve · ${draft.access === "self" ? "self-funded" : draft.access}`,
     null,
   ];
 
   const costSummary = <CostSummary cost={cost} balance={balance.data} connected={!!publicKey} />;
   const preview = (
     <PreviewPanel
-      card={<DraftCard draft={draft} imageUrl={imageUrl} creator={publicKey?.toBase58() ?? null} durationSecs={durationSecs} />}
+      card={
+        <DraftCard
+          draft={draft}
+          bundleSupplyBps={bundleBps}
+          imageUrl={imageUrl}
+          creator={publicKey?.toBase58() ?? null}
+          durationSecs={durationSecs}
+        />
+      }
       range={range}
       loading={platform.isLoading}
       cost={costSummary}

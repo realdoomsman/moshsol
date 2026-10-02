@@ -27,12 +27,13 @@ const share = (lamports: bigint, pct: number) => (lamports * BigInt(Math.round(p
 const yours = (lamports: bigint) => (lamports * EXAMPLE_DEPOSIT) / EXAMPLE_RAISE;
 
 /**
- * A 10 SOL raise through `launch_pump`'s exact bundle maths (30% reserve, 15% bundle cap), then the
- * agent's sell, the creator-fee split and the payback rule, all from the frozen terms.
+ * A 10 SOL raise through `launch_pump`'s exact bundle maths (30% reserve, no bundle cap: the platform
+ * max), then the agent's sell, the creator-fee split and the payback rule, all from the frozen terms.
  */
 function workedExample(p: PlatformInfo["params"] | null) {
   const s = pumpSplit(p);
-  const b = previewPumpBundle({ raised: EXAMPLE_RAISE, launchFeeBps: p?.launchFeeBps ?? 100, reserveBps: 3_000, bundleSupplyBps: 1_500 });
+  const maxBundleBps = p?.maxBundleSupplyBps ?? LIMITS.maxBundleSupplyBps;
+  const b = previewPumpBundle({ raised: EXAMPLE_RAISE, launchFeeBps: p?.launchFeeBps ?? 100, reserveBps: 3_000, bundleSupplyBps: maxBundleBps });
   /** What went in at launch: the bundle plus the SOL reserve. */
   const initial = b.bundleSol + b.vaultSol;
   const sellTokens = b.bundleTokens / EXAMPLE_SELL_FRACTION;
@@ -45,7 +46,7 @@ function workedExample(p: PlatformInfo["params"] | null) {
   const target = (initial * BigInt(Math.round(s.payoutMult * 10_000))) / 10_000n;
   const afterPrincipal = target - initial;
   const dividend = share(afterPrincipal, s.payoutSharePct);
-  return { s, b, initial, sellTokens, sellCost, proceeds, vaultAfterSell, feesToVault, feesToBurn, feesToBackers, target, afterPrincipal, dividend };
+  return { s, b, maxBundleBps, initial, sellTokens, sellCost, proceeds, vaultAfterSell, feesToVault, feesToBurn, feesToBackers, target, afterPrincipal, dividend };
 }
 
 export const howItWorks: DocPage = {
@@ -95,8 +96,9 @@ export const howItWorks: DocPage = {
         body: (
           <>
             <P>
-              Say a raise closes at {sol(EXAMPLE_RAISE)} and you put in {sol(EXAMPLE_DEPOSIT)}, a 10% share. The creator kept a 30% SOL
-              reserve and capped the bundle at 15% of supply. At launch:
+              Say a raise closes at {sol(EXAMPLE_RAISE)} and you put in {sol(EXAMPLE_DEPOSIT)}, a 10% share. The creator kept the default
+              30% SOL reserve and set no bundle cap, so the bundle buys as much as the raise can (up to {pctFromBps(x.maxBundleBps)} of
+              supply). At launch:
             </P>
             <Table
               head={["Where the 10 SOL goes", "Amount"]}
@@ -202,8 +204,9 @@ export const howItWorks: DocPage = {
               </li>
             </Ul>
             <Callout tone="warn" title="The vault can be withdrawn">
-              The platform admin (a Squads multisig on mainnet) can withdraw a vault&rsquo;s SOL and tokens with{" "}
-              <C>admin_withdraw_vault</C>. Every withdrawal is on-chain and listed on the launch page. See <A href="/docs/risks">Risks</A>.
+              The admin (a 2-of-3 Squads multisig) and a single dev key can withdraw a vault&rsquo;s SOL and tokens (
+              <C>admin_withdraw_vault</C>, <C>dev_withdraw_vault</C>). Every withdrawal is an on-chain event on the launch page. See{" "}
+              <A href="/docs/risks">Risks</A>.
             </Callout>
           </>
         ),
@@ -344,11 +347,12 @@ export const forBackers: DocPage = {
       },
       {
         id: "admin-withdraw",
-        title: "What the admin can do",
+        title: "Who can withdraw a vault",
         body: (
           <Callout tone="warn" title="The vault can be withdrawn">
-            The platform admin can withdraw vault SOL and tokens with <C>admin_withdraw_vault</C>. What you have already accrued is out of
-            its reach, and every withdrawal is shown on the launch page. See <A href="/docs/risks">Risks</A>.
+            The admin (a 2-of-3 Squads multisig, <C>admin_withdraw_vault</C>) and a single dev key (<C>dev_withdraw_vault</C>, to its
+            own wallet) can withdraw vault SOL and tokens. What you have already accrued is out of their reach, and every withdrawal is
+            an on-chain event on the launch page. See <A href="/docs/risks">Risks</A>.
           </Callout>
         ),
       },
@@ -390,7 +394,10 @@ export const forCreators: DocPage = {
                   ? [["Per wallet", `≤ ${lamportsToSol(p.maxWalletDepositLamports)} SOL per backer (beta cap)`]]
                   : []),
                 ["Duration", `${days(LIMITS.minRaiseDurationSecs)} to ${days(LIMITS.maxRaiseDurationSecs)}`],
-                ["Max bundle", p ? `${LIMITS.minBundleSupplyBps / 100}% to ${pctFromBps(p.maxBundleSupplyBps)} of supply` : `From ${LIMITS.minBundleSupplyBps / 100}% of supply`],
+                [
+                  "Bundle cap",
+                  `No cap (the default: up to ${pctFromBps(p?.maxBundleSupplyBps ?? LIMITS.maxBundleSupplyBps)} of supply), or your own from ${LIMITS.minBundleSupplyBps / 100}%`,
+                ],
                 ["SOL reserve", `0% to ${LIMITS.maxReserveBps / 100}% of the raise`],
                 ["Create fee", p ? `${lamportsToSol(p.createFeeLamports)} SOL + rent` : "Flat fee + rent"],
               ]}
@@ -409,8 +416,11 @@ export const forCreators: DocPage = {
           <P>
             At launch <C>launch_pump</C> takes the {s.launchFeePct}% launch fee and the pump.fun create rent from the raise, keeps your
             chosen reserve share as SOL in the vault, and spends the rest on the token&rsquo;s first buy, in the same instruction that
-            creates it, capped at your max bundle share of supply. SOL beyond the cap also stays in the vault. The bigger the raise, the
-            higher the starting market cap, and the bundle plus the reserve is what the payback rule measures against.
+            creates it. The bundle follows the raise: with no cap it buys as much as the SOL can, up to{" "}
+            {pctFromBps(p?.maxBundleSupplyBps ?? LIMITS.maxBundleSupplyBps)} of supply; you can set a lower cap, and SOL beyond it
+            stays in the vault. The buy never completes the pump.fun curve at launch; anything the curve can&rsquo;t take stays as
+            vault SOL too. The bigger the raise, the higher the starting market cap, and the bundle plus the reserve is what the
+            payback rule measures against.
           </P>
         ),
       },
@@ -421,7 +431,7 @@ export const forCreators: DocPage = {
           <P>
             You earn 0% of fees. pump.fun&rsquo;s creator fee is paid to the launch, not to you, and every sweep splits it {s.vaultPct}%
             to the vault, {s.burnPct}% to the buyback-and-burn pool and {s.backerPct}% to your backers. You can&rsquo;t touch the vault;
-            only the vault agent trades it, and only the platform admin can withdraw it. Only the two legacy Holdfast-curve launches pay
+            only the vault agent trades it, and only the admin (a 2-of-3 Squads multisig) and a single dev key can withdraw it. Only the two legacy Holdfast-curve launches pay
             their creator {p ? pctFromBps(p.creatorFeeShareBps) : "a share"} of that curve&rsquo;s trade fee, claimable with{" "}
             <C>claim_creator_fees</C>.
           </P>
@@ -478,7 +488,8 @@ export const forTraders: DocPage = {
         body: (
           <Callout tone="warn" title="Other holders can still sell">
             The bundle is held in the vault and traded only by the rate-limited agent, but any other holder can sell at any time, the
-            platform admin can withdraw a vault, and price can fall like any token. See <A href="/docs/risks">Risks</A>.
+            admin (a 2-of-3 Squads multisig) and a single dev key can withdraw a vault, and price can fall like any token. See{" "}
+            <A href="/docs/risks">Risks</A>.
           </Callout>
         ),
       },

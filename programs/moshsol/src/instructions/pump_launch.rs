@@ -402,7 +402,9 @@ pub fn launch_pump(ctx: Context<LaunchPump>) -> Result<()> {
     ))?;
 
     // Bundle: `amount` tokens priced from the curve's fee-free quote with fee headroom, capped
-    // at the launch's supply share, for at most `budget` lamports including the venue's fee.
+    // at the launch's supply share and one base unit short of the curve's real token reserves
+    // (buying them all would complete the curve at launch), for at most `budget` lamports
+    // including the venue's fee; what the cap leaves unspent stays as vault SOL.
     venue.sweep()?;
     let remaining = net - create_cost;
     let budget = remaining - math::bps(remaining, launch.reserve_bps)?;
@@ -411,7 +413,7 @@ pub fn launch_pump(ctx: Context<LaunchPump>) -> Result<()> {
     let sized = budget - math::bps(budget, PUMP_BUY_FEE_HEADROOM_BPS)?;
     let amount = math::tokens_out(curve.virtual_quote_reserves, curve.virtual_token_reserves, sized)?
         .min(cap)
-        .min(curve.real_token_reserves);
+        .min(curve.real_token_reserves.saturating_sub(1));
     require!(amount > 0, MoshError::InsufficientLiquidity);
     let (spent, tokens) = venue.buy_tokens(amount, budget)?;
     require!(tokens > 0 && spent <= budget, MoshError::InsufficientLiquidity);

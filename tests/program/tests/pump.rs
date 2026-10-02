@@ -442,6 +442,8 @@ fn migrate_launch_converts_mainnet_layout() {
     assert_eq!(p.params.dead_holders_bps, DEFAULT_DEAD_HOLDERS_BPS);
     assert_eq!(p.params.min_vault_sol, DEFAULT_MIN_VAULT_SOL);
     p.params.validate().unwrap();
+    assert_eq!(p.dev_authority, Pubkey::default(), "the dev key starts disabled");
+    assert_eq!(env.svm.get_account(&platform_key).unwrap().data.len(), 8 + moshsol::state::Platform::INIT_SPACE);
     assert_err(env.migrate_platform(&admin), MoshError::AlreadyMigrated);
 
     for (key, old, initial) in launches {
@@ -516,6 +518,56 @@ fn migrate_launch_converts_mainnet_layout() {
         assert_err(env.migrate_launch(&admin, &key, initial), MoshError::AlreadyMigrated);
     }
     assert_eq!(env.platform().launch_count, 4);
+}
+
+/// The platform as it sits on mainnet before the dev-key upgrade (270 bytes, dumped
+/// 2026-10-01) gains the 32-byte dev key, disabled, every other byte kept; the admin pays the
+/// rent delta; then the admin can turn the dev key on and raise the bundle cap.
+#[test]
+fn migrate_platform_appends_dev_key_to_current_mainnet_layout() {
+    use moshsol::state::{Platform, PlatformV3};
+    let mut env = Env::bare();
+    env.svm.set_sysvar(&solana_sdk::rent::Rent { lamports_per_byte_year: 2_540, exemption_threshold: 2.0, burn_percent: 50 });
+    let admin = env.admin.insecure_clone();
+    let (key, mut acct) = fixture_account("mainnet-v3/449KHjhaaW58syfaWstZDzcUwTW613XbVB7S6Zp1gpZe");
+    assert_eq!(key, platform_pda());
+    assert_eq!(acct.data.len(), 8 + PlatformV3::INIT_SPACE);
+    acct.data[8..40].copy_from_slice(admin.pubkey().as_ref());
+    let old = PlatformV3::deserialize(&mut &acct.data[8..]).unwrap();
+    let old_acct = acct.clone();
+    env.svm.set_account(key, acct).unwrap();
+
+    // Nothing reads the old layout; only the admin migrates.
+    assert_anchor_err(
+        env.set_dev_authority(&admin, admin.pubkey()),
+        anchor_lang::error::ErrorCode::AccountDidNotDeserialize,
+    );
+    let stranger = env.user(2);
+    assert_err(env.migrate_platform(&stranger), MoshError::Unauthorized);
+    let admin_before = env.lamports(&admin.pubkey());
+    let meta = ok(env.migrate_platform(&admin));
+    eprintln!("CU migrate_platform (v3): {}", meta.compute_units_consumed);
+    let new_acct = env.svm.get_account(&key).unwrap();
+    assert_eq!(new_acct.data.len(), 8 + Platform::INIT_SPACE);
+    assert_eq!(new_acct.data[..old_acct.data.len()], old_acct.data[..], "every old byte kept");
+    let p = env.platform();
+    assert_eq!((p.admin, p.pending_admin, p.fee_recipient, p.agent_authority), (old.admin, old.pending_admin, old.fee_recipient, old.agent_authority));
+    assert_eq!((p.params, p.launch_count, p.bump), (old.params, old.launch_count, old.bump));
+    assert_eq!(p.dev_authority, Pubkey::default());
+    let rent_delta = env.svm.minimum_balance_for_rent_exemption(new_acct.data.len())
+        - env.svm.minimum_balance_for_rent_exemption(old_acct.data.len());
+    assert_eq!(new_acct.lamports, old_acct.lamports + rent_delta);
+    assert_eq!(admin_before - env.lamports(&admin.pubkey()), rent_delta + 5_000);
+    assert_err(env.migrate_platform(&admin), MoshError::AlreadyMigrated);
+
+    // What the mainnet migration transaction does next: set the dev key, raise the bundle cap.
+    let dev = env.user(1);
+    ok(env.set_dev_authority(&admin, dev.pubkey()));
+    assert_eq!(env.platform().dev_authority, dev.pubkey());
+    let mut params = p.params;
+    params.max_bundle_supply_bps = MAX_BUNDLE_SUPPLY_BPS;
+    ok(env.update_platform(&admin, params));
+    assert_eq!(env.platform().params.max_bundle_supply_bps, 7_500);
 }
 
 #[test]
@@ -675,6 +727,128 @@ fn admin_withdraw_works_on_pump_vault() {
     assert_eq!(env.spl_balance(&spl_ata(&fr, &mint)), l.vault_tokens / 4);
     assert_eq!(l2.vault_tokens, l.vault_tokens - l.vault_tokens / 4);
     assert_eq!(l2.vault_cost_sol, l.vault_cost_sol - (l.vault_cost_sol as u128 * (l.vault_tokens / 4) as u128).div_ceil(l.vault_tokens as u128) as u64);
+    env.assert_pump_invariants(&launch);
+}
+
+#[test]
+fn dev_withdraw_works_on_pump_vault() {
+    let mut env = pump_env();
+    let (_c, launch, mint, _b) = env.live_pump_launch(&[20 * SOL]);
+    let admin = env.admin.insecure_clone();
+    let dev = env.user(2);
+    let stranger = env.user(2);
+    assert_err(env.dev_withdraw_pump(&dev, &launch, SOL, 0), MoshError::DevKeyDisabled);
+    ok(env.set_dev_authority(&admin, dev.pubkey()));
+    assert_err(env.dev_withdraw_pump(&stranger, &launch, SOL, 0), MoshError::Unauthorized);
+    // Works while the agent is paused (the emergency path).
+    let mut params = env.platform().params;
+    params.agents_paused = true;
+    ok(env.update_platform(&admin, params));
+    let l = env.launch_at(&launch);
+    let curve_before = env.curve(&mint);
+    let dev_before = env.lamports(&dev.pubkey());
+    let meta = ok(env.dev_withdraw_pump(&dev, &launch, l.vault_sol / 2, l.vault_tokens / 4));
+    eprintln!("CU dev_withdraw_vault (pump): {}", meta.compute_units_consumed);
+    let l2 = env.launch_at(&launch);
+    // The dev's ATA exists since the first (refused) attempt: only the two tx fees are paid.
+    assert_eq!(env.lamports(&dev.pubkey()) + 2 * 5_000 - dev_before, l.vault_sol / 2);
+    assert_eq!(env.spl_balance(&spl_ata(&dev.pubkey(), &mint)), l.vault_tokens / 4);
+    assert_eq!(l2.vault_tokens, l.vault_tokens - l.vault_tokens / 4);
+    assert_eq!(l2.vault_cost_sol, l.vault_cost_sol - (l.vault_cost_sol as u128 * (l.vault_tokens / 4) as u128).div_ceil(l.vault_tokens as u128) as u64);
+    assert_eq!((l2.buyback_pool_sol, l2.backer_fees_accrued), (l.buyback_pool_sol, l.backer_fees_accrued));
+    let curve = env.curve(&mint);
+    assert_eq!((curve.real_token_reserves, curve.real_sol_reserves), (curve_before.real_token_reserves, curve_before.real_sol_reserves));
+    env.assert_pump_invariants(&launch);
+}
+
+/// The bundle follows the raise: any cap up to the 75% hard maximum is accepted (the platform
+/// max included), and a big raise with no reserve buys exactly the cap without completing the
+/// curve, the rest staying as vault SOL.
+#[test]
+fn pump_bundle_follows_the_raise_up_to_the_platform_max() {
+    let mut env = pump_env();
+    let admin = env.admin.insecure_clone();
+    let mut params = env.platform().params;
+    params.max_bundle_supply_bps = MAX_BUNDLE_SUPPLY_BPS + 1;
+    assert_err(env.update_platform(&admin, params), MoshError::InvalidParam);
+    params.max_bundle_supply_bps = MAX_BUNDLE_SUPPLY_BPS;
+    ok(env.update_platform(&admin, params));
+    let creator = env.user(5);
+    let mut args = default_pump_args();
+    args.bundle_supply_bps = MAX_BUNDLE_SUPPLY_BPS + 1;
+    assert_err(env.create_pump(&creator, args).1, MoshError::InvalidParam);
+
+    // 50 SOL, default 30% reserve, no cap below the max: the budget binds, far above 25%.
+    let mut args = default_pump_args();
+    args.bundle_supply_bps = MAX_BUNDLE_SUPPLY_BPS;
+    let launch = env.create_pump_ok(&creator, args);
+    let b = env.user(52);
+    ok(env.deposit_at(&b, &launch, 50 * SOL));
+    let (mint, res) = env.launch_pump(&creator, &launch);
+    ok(res);
+    let l = env.launch_at(&launch);
+    let pct = l.bundle_tokens as f64 / TOTAL_SUPPLY as f64 * 100.0;
+    eprintln!("50 SOL raise, 30% reserve: bundle {:.2}% of supply for {} lamports", pct, l.bundle_sol);
+    assert!(l.bundle_tokens > TOTAL_SUPPLY / 4 && l.bundle_tokens < TOTAL_SUPPLY * 3 / 4, "bundle {pct}%");
+    assert!(!env.curve(&mint).complete);
+    env.assert_pump_invariants(&launch);
+
+    // 110 SOL with no reserve: the 75% cap binds exactly, the curve stays open.
+    let mut args = default_pump_args();
+    args.bundle_supply_bps = MAX_BUNDLE_SUPPLY_BPS;
+    args.reserve_bps = 0;
+    args.raise_max = 110 * SOL;
+    let launch = env.create_pump_ok(&creator, args);
+    let b = env.user(112);
+    ok(env.deposit_at(&b, &launch, 110 * SOL));
+    let (mint, res) = env.launch_pump(&creator, &launch);
+    ok(res);
+    let l = env.launch_at(&launch);
+    eprintln!("110 SOL raise, no reserve: bundle {} tokens for {} lamports, vault {} lamports", l.bundle_tokens, l.bundle_sol, l.vault_sol);
+    assert_eq!(l.bundle_tokens, TOTAL_SUPPLY * 3 / 4);
+    assert!(l.vault_sol > 0 && l.vault_sol == l.initial_vault_sol - l.bundle_sol);
+    let curve = env.curve(&mint);
+    assert!(!curve.complete);
+    assert_eq!(curve.real_token_reserves, 793_100_000 * 1_000_000 - l.bundle_tokens);
+    env.assert_pump_invariants(&launch);
+}
+
+/// If pump.fun ever shipped a curve with fewer sellable tokens than the bundle cap, a raise big
+/// enough to buy them all stops one base unit short: the bundle never completes the curve at
+/// launch, and what it didn't spend stays as vault SOL.
+#[test]
+fn pump_bundle_never_completes_the_curve_at_launch() {
+    let mut env = pump_env();
+    let admin = env.admin.insecure_clone();
+    let real = 500_000_000 * 1_000_000u64;
+    let global = pump_global();
+    let mut acct = env.svm.get_account(&global).unwrap();
+    // `Global.initial_real_token_reserves` (after the discriminator, `initialized`, `authority`,
+    // `fee_recipient`, the two initial virtual reserves).
+    assert_eq!(u64::from_le_bytes(acct.data[89..97].try_into().unwrap()), 793_100_000 * 1_000_000);
+    acct.data[89..97].copy_from_slice(&real.to_le_bytes());
+    env.svm.set_account(global, acct).unwrap();
+    let mut params = env.platform().params;
+    params.max_bundle_supply_bps = MAX_BUNDLE_SUPPLY_BPS;
+    ok(env.update_platform(&admin, params));
+
+    let creator = env.user(5);
+    let mut args = default_pump_args();
+    args.bundle_supply_bps = MAX_BUNDLE_SUPPLY_BPS;
+    args.reserve_bps = 0;
+    args.raise_max = 110 * SOL;
+    let launch = env.create_pump_ok(&creator, args);
+    let b = env.user(112);
+    ok(env.deposit_at(&b, &launch, 110 * SOL));
+    let (mint, res) = env.launch_pump(&creator, &launch);
+    ok(res);
+    let l = env.launch_at(&launch);
+    let curve = env.curve(&mint);
+    assert_eq!(l.bundle_tokens, real - 1);
+    assert_eq!(curve.real_token_reserves, 1);
+    assert!(!curve.complete, "the bundle must not complete the curve");
+    assert!(l.vault_sol > 10 * SOL, "the unspent budget stays as vault SOL: {}", l.vault_sol);
+    assert_eq!(l.vault_sol, l.initial_vault_sol - l.bundle_sol);
     env.assert_pump_invariants(&launch);
 }
 

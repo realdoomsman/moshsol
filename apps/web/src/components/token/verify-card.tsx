@@ -188,7 +188,7 @@ export function VerifyCard({ launch: l, className }: { launch: LaunchSummary; cl
               <VerifyGlyph className="mt-0.5 text-accent-ink" />
               <span className="flex flex-wrap justify-between gap-x-3">
                 <span className="text-ink-2">Vault moves only by</span>
-                <span className="text-ink">Agent trades, backer payback, wind-down, admin withdraw</span>
+                <span className="text-ink">Agent trades, backer payback, wind-down, admin or dev-key withdraw</span>
               </span>
             </li>
           </ul>

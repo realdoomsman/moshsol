@@ -8,7 +8,7 @@ import { INDEXER_URL } from "@/lib/env";
 // Static on /create: the rent preview needs the launch account size from the IDL on first render.
 import { moshClient } from "@/lib/program";
 import type { PlatformInfo } from "@/lib/types";
-import { previewLamports, utf8Len, type CreateDraft } from "./validate";
+import { bundleBpsOf, previewLamports, utf8Len, type CreateDraft } from "./validate";
 
 /**
  * Transaction fee headroom on top of rent + create fee: base fees for the creator and mint signatures
@@ -21,8 +21,6 @@ export interface BundleRange {
   hi: bigint;
   atMin: BundlePreview;
   atMax: BundlePreview;
-  /** At the max raise the bundle is capped by `bundlePct`; the rest of the SOL stays in the vault. */
-  cappedAtMax: boolean;
 }
 
 /**
@@ -33,19 +31,18 @@ export interface BundleRange {
  */
 export function bundleRange(
   params: PlatformInfo["params"] | undefined,
-  d: Pick<CreateDraft, "raiseMin" | "raiseMax" | "bundlePct" | "reservePct">,
+  d: Pick<CreateDraft, "raiseMin" | "raiseMax" | "bundleCap" | "bundlePct" | "reservePct">,
 ): BundleRange | null {
   if (!params) return null;
   const lo = previewLamports(d.raiseMin);
   const hi = previewLamports(d.raiseMax);
   if (lo === null || hi === null || hi < lo) return null;
-  const bundleSupplyBps = Math.round(d.bundlePct * 100);
+  const bundleSupplyBps = bundleBpsOf(d, params.maxBundleSupplyBps);
   const run = (raised: bigint) => {
     const terms = { raised, launchFeeBps: params.launchFeeBps, reserveBps: Math.round(d.reservePct * 100), bundleSupplyBps };
     return params.holdfastCurveEnabled ? previewBundle({ ...terms, virtualSol: BigInt(params.virtualSolReserves) }) : previewPumpBundle(terms);
   };
-  const atMax = run(hi);
-  return { lo, hi, atMin: run(lo), atMax, cappedAtMax: Math.round(atMax.supplyPct * 100) >= bundleSupplyBps };
+  return { lo, hi, atMin: run(lo), atMax: run(hi) };
 }
 
 export interface CreateCost {

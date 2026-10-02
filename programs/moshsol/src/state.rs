@@ -15,6 +15,10 @@ pub struct Platform {
     pub params: PlatformParams,
     pub launch_count: u64,
     pub bump: u8,
+    /// The owner's single dev key: may withdraw any vault (`dev_withdraw_vault`) to itself,
+    /// without the admin multisig. `Pubkey::default()` = disabled. Set by the admin
+    /// (`set_dev_authority`). Appended last so the migration from `PlatformV3` is an append.
+    pub dev_authority: Pubkey,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
@@ -323,8 +327,9 @@ impl PlatformV2 {
     pub const PARAMS_END: usize = 4 * 32 + PlatformParamsV2::INIT_SPACE;
 
     /// The same platform in the current layout: payback params at their defaults appended to
-    /// `params`, the burn share reset to the default (it now only splits creator fees), every
-    /// other field byte for byte. `old` and the result carry the discriminator.
+    /// `params`, the burn share reset to the default (it now only splits creator fees), the dev
+    /// key disabled, every other field byte for byte. `old` and the result carry the
+    /// discriminator.
     pub fn upgrade_bytes(old: &[u8]) -> Vec<u8> {
         let (head, tail) = old.split_at(8 + Self::PARAMS_END);
         let mut new = Vec::with_capacity(8 + Platform::INIT_SPACE);
@@ -333,8 +338,23 @@ impl PlatformV2 {
         new.extend_from_slice(tail);
         let at = 8 + Self::BURN_SHARE_AT;
         new[at..at + 2].copy_from_slice(&DEFAULT_BURN_SHARE_BPS.to_le_bytes());
+        new.resize(8 + Platform::INIT_SPACE, 0);
         new
     }
+}
+
+/// `Platform` as laid out before `dev_authority` was appended (data after the discriminator;
+/// mainnet's platform until the dev-key upgrade). Read by tests; `migrate_platform` only appends
+/// the disabled dev key.
+#[derive(AnchorDeserialize, InitSpace)]
+pub struct PlatformV3 {
+    pub admin: Pubkey,
+    pub pending_admin: Pubkey,
+    pub fee_recipient: Pubkey,
+    pub agent_authority: Pubkey,
+    pub params: PlatformParams,
+    pub launch_count: u64,
+    pub bump: u8,
 }
 
 #[account]
@@ -655,6 +675,10 @@ mod layout_tests {
         let pl = Platform::try_deserialize(&mut &PlatformV2::upgrade_bytes(&p)[..]).unwrap();
         assert_eq!((pl.params.burn_share_bps, pl.launch_count, pl.bump), (DEFAULT_BURN_SHARE_BPS, 5, 251));
         assert_eq!((pl.params.creator_fee_vault_bps, pl.params.min_vault_sol), (DEFAULT_CREATOR_FEE_VAULT_BPS, DEFAULT_MIN_VAULT_SOL));
+        assert_eq!(pl.dev_authority, Pubkey::default());
+        // Mainnet's platform before the dev-key upgrade is 270 bytes; `migrate_platform` appends
+        // the 32-byte dev key to the end.
+        assert_eq!((8 + PlatformV3::INIT_SPACE, 8 + Platform::INIT_SPACE), (270, 302));
     }
 }
 

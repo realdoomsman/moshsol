@@ -92,4 +92,6 @@ pub enum MoshError {
     PayoutNotDue,
     #[msg("Vault SOL may not drop below the launch's minimum vault reserve")]
     VaultFloor,
+    #[msg("No dev key is set on the platform (set_dev_authority)")]
+    DevKeyDisabled,
 }

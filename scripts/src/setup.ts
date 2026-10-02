@@ -34,7 +34,8 @@ const LOCALNET_PARAMS: PlatformParams = {
   launchFeeBps: 100,
   createFeeLamports: sol("CREATE_FEE_SOL", 0.02),
   virtualSolReserves: new BN(30 * LAMPORTS_PER_SOL),
-  maxBundleSupplyBps: 2_500,
+  // The bundle follows the raise up to the program's hard cap (75%); creators may set a lower cap.
+  maxBundleSupplyBps: 7_500,
   minRaiseLamports: sol("MIN_RAISE_SOL", 1),
   agentBuyBpsPerWindow: 1_000,
   agentSellBpsPerWindow: 500,

@@ -175,10 +175,17 @@ function known(s: PumpSplit): Record<string, Known> {
     },
     admin_withdraw_vault: {
       group: "Platform admin",
-      caller: "Admin (a Squads multisig on mainnet)",
+      caller: "Admin (a 2-of-3 Squads multisig on mainnet)",
       moves: "Vault SOL and tokens → fee recipient",
       description:
-        "Withdraws any amount of a launch's vault SOL and tokens to the platform fee recipient. Every withdrawal emits VaultWithdrawn and is listed on the launch page.",
+        "Withdraws any amount of a launch's vault SOL and tokens to the platform fee recipient; it can't touch the token's liquidity, backers' accruals or the buyback pool. Every withdrawal emits VaultWithdrawn and is listed on the launch page.",
+    },
+    dev_withdraw_vault: {
+      group: "Platform admin",
+      caller: "Dev key (a single key the admin sets)",
+      moves: "Vault SOL and tokens → the dev key's own wallet",
+      description:
+        "The same withdrawal as admin_withdraw_vault, signed by the platform's single dev key instead of the multisig: SOL goes to the dev key's own wallet, tokens to its own token account. Works while the platform is paused. Every withdrawal emits VaultWithdrawnByDev and is listed on the launch page.",
     },
     initialize_platform: {
       group: "Platform admin",
@@ -207,14 +214,20 @@ function known(s: PumpSplit): Record<string, Known> {
     set_fee_recipient: {
       group: "Platform admin",
       caller: "Admin",
-      moves: "Nothing — where platform fees and vault withdrawals go",
-      description: "Points platform fee sweeps and vault withdrawals at a new recipient.",
+      moves: "Nothing — where platform fees and admin vault withdrawals go",
+      description: "Points platform fee sweeps and admin vault withdrawals at a new recipient (dev-key withdrawals always go to the dev key).",
     },
     set_agent_authority: {
       group: "Platform admin",
       caller: "Admin",
       moves: "Nothing — which key may call the agent instructions",
       description: "Rotates the vault agent's key. Whoever holds it can still only call the agent buy and sell instructions, payout_backers and buyback_burn.",
+    },
+    set_dev_authority: {
+      group: "Platform admin",
+      caller: "Admin",
+      moves: "Nothing — which key may call dev_withdraw_vault",
+      description: "Sets, rotates or (with the default pubkey) disables the dev key, the one key besides the admin that can withdraw a vault.",
     },
     propose_admin: {
       group: "Platform admin",

@@ -602,6 +602,19 @@ export class ChainSync {
             token_amount: ev.data.tokens.toString(),
           }),
         };
+      case "vaultWithdrawnByDev":
+        // `dev_withdraw_vault`: the platform's dev key withdrew to its own wallet. Same row as the admin's
+        // withdrawal (so the vault sums include it), `actor` = the dev key, tagged `ref` "dev".
+        return {
+          launch,
+          inserted: activity({
+            type: "vault_withdrawn",
+            actor: ev.data.by.toBase58(),
+            sol_amount: ev.data.sol.toString(),
+            token_amount: ev.data.tokens.toString(),
+            ref: "dev",
+          }),
+        };
       case "creatorFeesCollected":
         // `collect_pump_fees`: pump.fun / PumpSwap creator fees swept into the launch and split by the frozen terms
         // (vault SOL / buyback pool / backers).

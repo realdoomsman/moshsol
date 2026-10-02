@@ -67,7 +67,7 @@ export function TokenInfo({ launch: l, now, className }: { launch: LaunchSummary
   const cells = [
     {
       label: "Vault",
-      rule: "Share of the supply held in the vault. Only the vault agent trades it; the platform multisig can withdraw it (listed on this page).",
+      rule: "Share of the supply held in the vault. Only the vault agent trades it; the admin (a 2-of-3 Squads multisig) and a single dev key can withdraw it, every withdrawal an on-chain event listed on this page.",
       value: fmtPct(h.vaultPct),
     },
     {

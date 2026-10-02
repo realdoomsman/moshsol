@@ -30,6 +30,9 @@ export interface CreateDraft {
   duration: DurationChoice;
   customValue: string;
   customUnit: DurationUnit;
+  /** "none": the bundle buys as much as the raise can, up to the platform max; "custom": at most `bundlePct` of supply. */
+  bundleCap: "none" | "custom";
+  /** The creator's cap in % of supply, used when `bundleCap` is "custom". */
   bundlePct: number;
   reservePct: number;
   /** Who can deposit: anyone, a merkle whitelist, or only the creator ("fund it yourself"). */
@@ -50,6 +53,7 @@ export const INITIAL_DRAFT: CreateDraft = {
   duration: "1h",
   customValue: "30",
   customUnit: "m",
+  bundleCap: "none",
   bundlePct: 15,
   reservePct: 30,
   access: "open",
@@ -162,11 +166,20 @@ export function extractAddresses(text: string): string[] {
   return text.match(/\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g) ?? [];
 }
 
-export type CreatePrefill = Partial<Pick<CreateDraft, "raiseMin" | "raiseMax" | "bundlePct" | "reservePct">>;
+export type CreatePrefill = Partial<Pick<CreateDraft, "raiseMin" | "raiseMax" | "bundleCap" | "bundlePct" | "reservePct">>;
+
+/**
+ * The bundle cap a draft submits, in bps of supply: the platform max without a cap, otherwise the
+ * creator's cap clamped to that max (a draft saved under an earlier, higher max stays submittable).
+ */
+export function bundleBpsOf(d: Pick<CreateDraft, "bundleCap" | "bundlePct">, maxBundleSupplyBps: number): number {
+  return d.bundleCap === "none" ? maxBundleSupplyBps : Math.min(Math.round(d.bundlePct * 100), maxBundleSupplyBps);
+}
 
 /**
  * `/create?min=0.5&max=5&bundle=10&reserve=30` (landing "For creators" preview links): raise min/max
- * in SOL, max bundle in % of supply, vault reserve in % of the raise. Malformed values are ignored.
+ * in SOL, a custom bundle cap in % of supply (omitted = no cap), vault reserve in % of the raise.
+ * Malformed values are ignored.
  */
 export function parsePrefill(q: Record<string, string | string[] | undefined>): CreatePrefill {
   const one = (k: string) => (typeof q[k] === "string" ? (q[k] as string).trim() : "");
@@ -176,6 +189,7 @@ export function parsePrefill(q: Record<string, string | string[] | undefined>): 
   if (sol.test(one("max")) && Number(one("max")) > 0) out.raiseMax = one("max");
   const bundle = Number(one("bundle"));
   if (one("bundle") && Number.isFinite(bundle)) {
+    out.bundleCap = "custom";
     out.bundlePct = Math.max(LIMITS.minBundleSupplyBps / 100, Math.round(bundle * 2) / 2);
   }
   const reserve = Number(one("reserve"));
@@ -245,8 +259,8 @@ export function validateDraft(d: CreateDraft, p: DraftLimits): Validation {
   else if (durationSecs < LIMITS.minRaiseDurationSecs) errors.duration = "At least 1 minute";
   else if (durationSecs > LIMITS.maxRaiseDurationSecs) errors.duration = "At most 14 days";
 
-  const bundleSupplyBps = Math.round(d.bundlePct * 100);
-  if (bundleSupplyBps < LIMITS.minBundleSupplyBps || bundleSupplyBps > p.maxBundleSupplyBps) {
+  const bundleSupplyBps = bundleBpsOf(d, p.maxBundleSupplyBps);
+  if (bundleSupplyBps < LIMITS.minBundleSupplyBps) {
     errors.bundlePct = `Between ${LIMITS.minBundleSupplyBps / 100}% and ${p.maxBundleSupplyBps / 100}%`;
   }
   const reserveBps = Math.round(d.reservePct * 100);

@@ -12,7 +12,8 @@
     "preflight": "tsx src/preflight.ts",
     "record:demos": "tsx src/record-demos.ts",
     "typecheck": "tsc --noEmit",
-    "vault-withdraw": "tsx src/vault-withdraw.ts"
+    "vault-withdraw": "tsx src/vault-withdraw.ts",
+    "dev-withdraw": "tsx src/dev-withdraw.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",

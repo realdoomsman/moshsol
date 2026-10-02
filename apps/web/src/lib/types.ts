@@ -56,7 +56,7 @@ export interface LaunchSummary extends LaunchJson {
   creatorFeeSplit: { vaultSol: number; burnSol: number; backersSol: number };
   /** `payout_backers` events seen so far. */
   payouts: { count: number; lastAt: number | null };
-  /** Vault SOL / tokens (base units) withdrawn by the platform admin (`admin_withdraw_vault`). */
+  /** Vault SOL / tokens (base units) withdrawn by the platform admin (`admin_withdraw_vault`) or the dev key (`dev_withdraw_vault`). */
   vaultWithdrawnSol: number;
   vaultWithdrawnTokens: string;
   /** The permissionless wind-down; null while not wound down (or its event wasn't indexed). */
@@ -228,7 +228,7 @@ export interface ActivityEvent {
   isBuy?: boolean;
   solAmount?: string;
   tokenAmount?: string;
-  /** `backers_paid`: "principal" | "dividend"; `graduated`: the pool; `buyback_burned`: the token burned. */
+  /** `backers_paid`: "principal" | "dividend"; `graduated`: the pool; `buyback_burned`: the token burned; `vault_withdrawn`: "dev" when the dev key withdrew. */
   ref?: string | null;
 }
 
@@ -259,6 +259,8 @@ export interface PlatformInfo {
   admin: string;
   feeRecipient: string;
   agentAuthority: string;
+  /** The dev key (`dev_withdraw_vault`: withdraws a vault to its own wallet); null while disabled. */
+  devAuthority: string | null;
   launchCount: number;
   params: {
     tradeFeeBps: number;

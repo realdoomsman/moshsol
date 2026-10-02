@@ -22,10 +22,11 @@ function lamportsOf(v: string): bigint | null {
 }
 
 /**
- * §8 For creators: three facts and a bundle preview mini-form — min raise, max raise, bundle % —
- * computed with the SDK's `previewPumpBundle` (the exact `launch_pump` maths; `previewBundle` while
- * the platform still allows the Holdfast curve, as the create wizard does) at both ends of the
- * raise. The CTA opens the create wizard prefilled with the same numbers.
+ * §8 For creators: three facts and a bundle preview mini-form — min raise, max raise, an optional
+ * bundle cap (empty = no cap, the platform max) — computed with the SDK's `previewPumpBundle` (the
+ * exact `launch_pump` maths; `previewBundle` while the platform still allows the Holdfast curve, as
+ * the create wizard does) at both ends of the raise. The CTA opens the create wizard prefilled with
+ * the same numbers.
  */
 export function Creators() {
   const platform = usePlatform();
@@ -34,7 +35,8 @@ export function Creators() {
   const mcap = (sol: number) => (solUsd ? `${fmtUsd(sol * solUsd)} (${fmtSolValue(sol)} SOL)` : `${fmtSolValue(sol)} SOL`);
   const [min, setMin] = useState(INITIAL_DRAFT.raiseMin);
   const [max, setMax] = useState(INITIAL_DRAFT.raiseMax);
-  const [bundle, setBundle] = useState(String(INITIAL_DRAFT.bundlePct));
+  /** Empty = no cap: the bundle buys as much as the raise can, up to the platform max. */
+  const [bundle, setBundle] = useState("");
   const reservePct = INITIAL_DRAFT.reservePct;
 
   const s = pumpSplit(p);
@@ -46,7 +48,7 @@ export function Creators() {
 
   const lo = lamportsOf(min);
   const hi = lamportsOf(max);
-  const bundleBps = Math.round(Number(bundle) * 100);
+  const bundleBps = bundle.trim() ? Math.round(Number(bundle) * 100) : (p?.maxBundleSupplyBps ?? LIMITS.maxBundleSupplyBps);
   const minRaise = p ? BigInt(p.minRaiseLamports) : 0n;
   // Platform beta cap on the max raise ("0" or absent = none), as the create wizard enforces it.
   const raiseCap = p?.maxRaiseLamports ? BigInt(p.maxRaiseLamports) : 0n;
@@ -74,7 +76,7 @@ export function Creators() {
   };
   const atMin = valid ? run(lo!) : null;
   const atMax = valid ? run(hi!) : null;
-  const href = `/create?${new URLSearchParams({ min, max, bundle, reserve: String(reservePct) })}`;
+  const href = `/create?${new URLSearchParams({ min, max, ...(bundle.trim() ? { bundle } : {}), reserve: String(reservePct) })}`;
 
   return (
     <div className="grid gap-12 lg:grid-cols-12 lg:gap-6">
@@ -110,9 +112,17 @@ export function Creators() {
                     <Input id={id} inputMode="decimal" value={max} onChange={(e) => setMax(e.target.value)} suffix="SOL" invalid={!!errors.max} />
                   )}
                 </Field>
-                <Field label="Max bundle" error={errors.bundle}>
+                <Field label="Bundle cap" error={errors.bundle}>
                   {(id) => (
-                    <Input id={id} inputMode="decimal" value={bundle} onChange={(e) => setBundle(e.target.value)} suffix="%" invalid={!!errors.bundle} />
+                    <Input
+                      id={id}
+                      inputMode="decimal"
+                      value={bundle}
+                      placeholder="No cap"
+                      onChange={(e) => setBundle(e.target.value)}
+                      suffix="%"
+                      invalid={!!errors.bundle}
+                    />
                   )}
                 </Field>
               </div>
@@ -151,7 +161,10 @@ export function Creators() {
               </table>
               <p className="micro mt-3 text-ink-3">
                 With a {reservePct}% SOL reserve (adjustable in the wizard), the {pctFromBps(p.launchFeeBps)} launch fee
-                {p.holdfastCurveEnabled ? "" : " and pump.fun's create cost"}. The reserve plus the bundle is what went in at launch.
+                {p.holdfastCurveEnabled ? "" : " and pump.fun's create cost"}. With no cap the bundle buys as much as the raise can, up to{" "}
+                {pctFromBps(p.maxBundleSupplyBps)} of supply
+                {p.holdfastCurveEnabled ? "" : ", and never completes the pump.fun curve at launch"}. The reserve plus the bundle is what went in at
+                launch.
               </p>
               <div className="mt-6">
                 <ButtonLink href={href} variant="accent" arrow>
