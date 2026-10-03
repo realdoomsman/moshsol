@@ -651,6 +651,9 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
       // Deeper pullbacks get bigger clips: 20% of the window room at 7% off the high, up to 50% from ~22%.
       const depthShare = Math.min(OFFICIAL_PULLBACK_CLIP_MAX, OFFICIAL_PULLBACK_CLIP + (flow.drawdownHigh - OFFICIAL_PULLBACK) * 2);
       const pull = largestFeasible(minBig(minBig(ideal, clipOf(depthShare)), spendable), impactOk);
+      if (pull < OFFICIAL_MIN_BUY_LAMPORTS) {
+        return hold("too_small", `${head} but saving up: pullback buy would be ${solStr(pull)}, official buys start at ${solStr(OFFICIAL_MIN_BUY_LAMPORTS)}`);
+      }
       if (pull < s.minTradeLamports) return hold("impact", `${head}, impact limit leaves pullback buy below minimum`);
       const out = buyFill(m, proj, pull);
       const moved = moveBps(price, priceQ64(proj.x + buyNet(m, pull), proj.y - out));
@@ -665,6 +668,10 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
       };
     }
     return hold("cost_basis", `${head} but ${cost}, ${buyback}`);
+  }
+  // Official token: no dust. Fee income trickles in; it is saved up and spent in clips that move the chart.
+  if (m.official && solIn < OFFICIAL_MIN_BUY_LAMPORTS) {
+    return hold("too_small", `${head} but saving up: buy would be ${solStr(solIn)}, official buys start at ${solStr(OFFICIAL_MIN_BUY_LAMPORTS)}`);
   }
   const expectedTokens = buyFill(m, proj, solIn);
   // Label by the path the fill passes (the below-cost path first, like the program checks it).
@@ -703,6 +710,8 @@ const OFFICIAL_SOL_TARGET = 0.5;
 const OFFICIAL_SELL_IMPACT_BPS = 300n;
 /** Official token: the vault's sells over the last 3 min take at most this share of the public's net buying there. */
 const OFFICIAL_SELL_PARTICIPATION = 0.4;
+/** Official token: the smallest buy (lamports); smaller ones wait for the vault to save up. */
+const OFFICIAL_MIN_BUY_LAMPORTS = 500_000_000n;
 
 /** Official token: from this far off the 15 min high a pullback is a dump: bought into even while it is still selling. */
 const OFFICIAL_DEEP = 0.2;
