@@ -636,6 +636,9 @@ export class ChainSync {
       case "launchMigrated":
         // The admin's one-time layout migration after the program upgrade.
         return { launch, inserted: activity({ type: "migrated", actor: null, sol_amount: null }) };
+      case "officialAgentTermsSet":
+        // The admin retuned the official token's agent terms: no feed row; the launch refresh picks the terms up.
+        return { launch, inserted: false };
     }
   }
 

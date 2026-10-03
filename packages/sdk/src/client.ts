@@ -217,6 +217,25 @@ export class MoshClient {
       .instruction();
   }
 
+  /** Agent terms of the official token's launch (`launch` = its address; the mint must be the platform's buyback mint). */
+  async setOfficialAgentTermsIx(
+    admin: PublicKey,
+    launch: PublicKey,
+    terms: {
+      agentBuyBpsPerWindow: number;
+      agentSellBpsPerWindow: number;
+      agentMaxImpactBps: number;
+      agentBandBps: number;
+      agentWindowSecs: number;
+      emaPeriodSecs: number;
+    },
+  ) {
+    return this.program.methods
+      .setOfficialAgentTerms(terms)
+      .accountsStrict({ admin, platform: platformPda(this.programId), launch })
+      .instruction();
+  }
+
   async setFeeRecipientIx(admin: PublicKey, feeRecipient: PublicKey) {
     return this.program.methods
       .setFeeRecipient(feeRecipient)

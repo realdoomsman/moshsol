@@ -2743,6 +2743,85 @@ export type Moshsol = {
       ]
     },
     {
+      "name": "setOfficialAgentTerms",
+      "docs": [
+        "Retunes the agent terms (window, caps, impact, band, EMA period) of the official token's launch only."
+      ],
+      "discriminator": [
+        183,
+        11,
+        63,
+        202,
+        198,
+        158,
+        180,
+        152
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "platform"
+          ]
+        },
+        {
+          "name": "platform",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "launch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  97,
+                  117,
+                  110,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "launch.create_key",
+                "account": "launch"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "terms",
+          "type": {
+            "defined": {
+              "name": "officialAgentTerms"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "sweepPlatformFees",
       "discriminator": [
         190,
@@ -3224,6 +3303,19 @@ export type Moshsol = {
         212,
         189,
         183
+      ]
+    },
+    {
+      "name": "officialAgentTermsSet",
+      "discriminator": [
+        87,
+        80,
+        181,
+        7,
+        55,
+        143,
+        44,
+        6
       ]
     },
     {
@@ -4539,6 +4631,69 @@ export type Moshsol = {
           {
             "name": "priceQ64",
             "type": "u128"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "officialAgentTerms",
+      "docs": [
+        "Agent terms of the official Holdfast token's launch (the platform's `buyback_mint`), within the platform bounds."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agentBuyBpsPerWindow",
+            "type": "u16"
+          },
+          {
+            "name": "agentSellBpsPerWindow",
+            "type": "u16"
+          },
+          {
+            "name": "agentMaxImpactBps",
+            "type": "u16"
+          },
+          {
+            "name": "agentBandBps",
+            "type": "u16"
+          },
+          {
+            "name": "agentWindowSecs",
+            "type": "u32"
+          },
+          {
+            "name": "emaPeriodSecs",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "officialAgentTermsSet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "launch",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "terms",
+            "type": {
+              "defined": {
+                "name": "officialAgentTerms"
+              }
+            }
           },
           {
             "name": "timestamp",

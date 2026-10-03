@@ -186,3 +186,11 @@ pub struct LaunchMigrated {
     pub mint: Pubkey,
     pub timestamp: i64,
 }
+
+#[event]
+pub struct OfficialAgentTermsSet {
+    pub launch: Pubkey,
+    pub mint: Pubkey,
+    pub terms: crate::instructions::OfficialAgentTerms,
+    pub timestamp: i64,
+}

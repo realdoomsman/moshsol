@@ -52,6 +52,11 @@ pub mod moshsol {
         platform::set_agent_executors(ctx, executors)
     }
 
+    /// Retunes the agent terms (window, caps, impact, band, EMA period) of the official token's launch only.
+    pub fn set_official_agent_terms(ctx: Context<SetOfficialAgentTerms>, terms: OfficialAgentTerms) -> Result<()> {
+        platform::set_official_agent_terms(ctx, terms)
+    }
+
     pub fn propose_admin(ctx: Context<AdminOnly>, new_admin: Pubkey) -> Result<()> {
         platform::propose_admin(ctx, new_admin)
     }

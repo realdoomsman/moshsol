@@ -1660,3 +1660,72 @@ fn a_met_raise_not_launched_within_the_grace_period_becomes_refundable() {
     let (_mint, res) = env.launch_pump(&creator, &stale);
     assert_err(res, MoshError::NotRaising);
 }
+
+fn set_official_terms(
+    env: &mut Env,
+    signer: &solana_sdk::signature::Keypair,
+    launch: &Pubkey,
+    terms: moshsol::instructions::OfficialAgentTerms,
+) -> TxResult {
+    use anchor_lang::InstructionData;
+    let ix = solana_sdk::instruction::Instruction {
+        program_id: moshsol::ID,
+        accounts: moshsol::accounts::SetOfficialAgentTerms { admin: signer.pubkey(), platform: platform_pda(), launch: *launch }
+            .to_account_metas(None),
+        data: moshsol::instruction::SetOfficialAgentTerms { terms }.data(),
+    };
+    env.send(&[ix], &[signer])
+}
+
+/// Only the admin may retune agent terms, only on the official token's launch (the platform's `buyback_mint`) and
+/// only within the platform bounds; every other launch keeps the terms frozen at its creation.
+#[test]
+fn official_agent_terms_only_on_the_official_launch_by_the_admin_within_bounds() {
+    let mut env = pump_env();
+    let (_c, official, mint, _b) = env.live_pump_launch(&[20 * SOL]);
+    let (_c2, other, _mint2, _b2) = env.live_pump_launch(&[20 * SOL]);
+    let admin = env.admin.insecure_clone();
+    let stranger = env.user(3);
+    let terms = moshsol::instructions::OfficialAgentTerms {
+        agent_buy_bps_per_window: 1_500,
+        agent_sell_bps_per_window: 2_000,
+        agent_max_impact_bps: 800,
+        agent_band_bps: 100,
+        agent_window_secs: MIN_WINDOW_SECS,
+        ema_period_secs: MIN_EMA_PERIOD_SECS,
+    };
+
+    // No official token yet: nothing qualifies.
+    assert_err(set_official_terms(&mut env, &admin, &official, terms), MoshError::Unauthorized);
+    let mut p = test_params();
+    p.buyback_mint = mint;
+    ok(env.update_platform(&admin, p));
+
+    let before_other = env.launch_at(&other).terms;
+    assert_err(set_official_terms(&mut env, &admin, &other, terms), MoshError::Unauthorized);
+    assert_err(set_official_terms(&mut env, &stranger, &official, terms), MoshError::Unauthorized);
+    for bad in [
+        moshsol::instructions::OfficialAgentTerms { ema_period_secs: MIN_EMA_PERIOD_SECS - 1, ..terms },
+        moshsol::instructions::OfficialAgentTerms { agent_window_secs: MIN_WINDOW_SECS - 1, ..terms },
+        moshsol::instructions::OfficialAgentTerms { agent_band_bps: MIN_AGENT_BAND_BPS - 1, ..terms },
+        moshsol::instructions::OfficialAgentTerms { agent_max_impact_bps: MAX_AGENT_IMPACT_BPS + 1, ..terms },
+        moshsol::instructions::OfficialAgentTerms { agent_buy_bps_per_window: MAX_AGENT_WINDOW_BPS + 1, ..terms },
+    ] {
+        assert_err(set_official_terms(&mut env, &admin, &official, bad), MoshError::InvalidParam);
+    }
+
+    let before = env.launch_at(&official).terms;
+    ok(set_official_terms(&mut env, &admin, &official, terms));
+    let after = env.launch_at(&official).terms;
+    assert_eq!(after.ema_period_secs, MIN_EMA_PERIOD_SECS);
+    assert_eq!(after.agent_window_secs, MIN_WINDOW_SECS);
+    assert_eq!(after.agent_band_bps, 100);
+    assert_eq!(after.agent_max_impact_bps, 800);
+    assert_eq!((after.agent_buy_bps_per_window, after.agent_sell_bps_per_window), (1_500, 2_000));
+    // Fee and payout terms are untouched.
+    assert_eq!(after.burn_share_bps, before.burn_share_bps);
+    assert_eq!(after.payout_mult_bps, before.payout_mult_bps);
+    assert_eq!(after.min_vault_sol, before.min_vault_sol);
+    assert_eq!(env.launch_at(&other).terms, before_other);
+    env.assert_pump_invariants(&official);
+}

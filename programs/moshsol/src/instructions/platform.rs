@@ -2,7 +2,8 @@ use anchor_lang::prelude::*;
 
 use crate::constants::*;
 use crate::errors::MoshError;
-use crate::state::{Platform, PlatformParams};
+use crate::events::OfficialAgentTermsSet;
+use crate::state::{Launch, Platform, PlatformParams};
 
 #[derive(Accounts)]
 pub struct InitializePlatform<'info> {
@@ -117,5 +118,59 @@ pub fn accept_admin(ctx: Context<AcceptAdmin>) -> Result<()> {
     );
     p.admin = p.pending_admin;
     p.pending_admin = Pubkey::default();
+    Ok(())
+}
+
+/// Agent terms of the official Holdfast token's launch (the platform's `buyback_mint`), within the platform bounds.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OfficialAgentTerms {
+    pub agent_buy_bps_per_window: u16,
+    pub agent_sell_bps_per_window: u16,
+    pub agent_max_impact_bps: u16,
+    pub agent_band_bps: u16,
+    pub agent_window_secs: u32,
+    pub ema_period_secs: u32,
+}
+
+#[derive(Accounts)]
+pub struct SetOfficialAgentTerms<'info> {
+    pub admin: Signer<'info>,
+    #[account(seeds = [PLATFORM_SEED], bump = platform.bump, has_one = admin @ MoshError::Unauthorized)]
+    pub platform: Account<'info, Platform>,
+    #[account(
+        mut,
+        seeds = [LAUNCH_SEED, launch.create_key.as_ref()],
+        bump = launch.bump,
+        constraint = platform.params.buyback_mint != Pubkey::default()
+            && launch.mint == platform.params.buyback_mint @ MoshError::Unauthorized
+    )]
+    pub launch: Box<Account<'info, Launch>>,
+}
+
+/// Retunes the agent terms of the official token's launch only: every other launch keeps the terms frozen at its
+/// creation. The bounds are the platform's (`PlatformParams::validate`).
+pub fn set_official_agent_terms(ctx: Context<SetOfficialAgentTerms>, t: OfficialAgentTerms) -> Result<()> {
+    require!(t.agent_buy_bps_per_window <= MAX_AGENT_WINDOW_BPS, MoshError::InvalidParam);
+    require!(t.agent_sell_bps_per_window <= MAX_AGENT_WINDOW_BPS, MoshError::InvalidParam);
+    require!(
+        t.agent_max_impact_bps > 0 && t.agent_max_impact_bps <= MAX_AGENT_IMPACT_BPS,
+        MoshError::InvalidParam
+    );
+    require!((MIN_AGENT_BAND_BPS..=MAX_AGENT_BAND_BPS).contains(&t.agent_band_bps), MoshError::InvalidParam);
+    require!((MIN_WINDOW_SECS..=MAX_WINDOW_SECS).contains(&t.agent_window_secs), MoshError::InvalidParam);
+    require!((MIN_EMA_PERIOD_SECS..=MAX_EMA_PERIOD_SECS).contains(&t.ema_period_secs), MoshError::InvalidParam);
+    let launch = &mut ctx.accounts.launch;
+    launch.terms.agent_buy_bps_per_window = t.agent_buy_bps_per_window;
+    launch.terms.agent_sell_bps_per_window = t.agent_sell_bps_per_window;
+    launch.terms.agent_max_impact_bps = t.agent_max_impact_bps;
+    launch.terms.agent_band_bps = t.agent_band_bps;
+    launch.terms.agent_window_secs = t.agent_window_secs;
+    launch.terms.ema_period_secs = t.ema_period_secs;
+    emit!(OfficialAgentTermsSet {
+        launch: launch.key(),
+        mint: launch.mint,
+        terms: t,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
     Ok(())
 }
