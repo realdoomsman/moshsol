@@ -688,19 +688,17 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
 /** Official token: buy-backs below the average sell take up to this share of the window's buy room per clip. */
 const OFFICIAL_BUYBACK_CLIP = 0.33;
 /** Official token: pullback buys above the average sell need spot at least this far under its 15 min high. */
-const OFFICIAL_PULLBACK = 0.07;
+const OFFICIAL_PULLBACK = 0.04;
 /** Official token: pullback buys above the average sell take up to this share of the window's buy room per clip. */
 const OFFICIAL_PULLBACK_CLIP = 0.2;
 /** Official token: the largest pullback clip (deep pullbacks), share of the window's buy room. */
 const OFFICIAL_PULLBACK_CLIP_MAX = 0.5;
 /** Official token: rally sells only while spot is within this share of its 15 min high. */
-const OFFICIAL_SELL_NEAR_HIGH = 0.05;
+const OFFICIAL_SELL_NEAR_HIGH = OFFICIAL_PULLBACK;
 /** Official token: fewest seconds between the agent's fills before a pullback buy. */
 const OFFICIAL_BUY_SPACING_SECS = 10;
-/** Official token: the vault's target SOL share of its value (SOL + tokens at spot). Under it, sells go bigger and wider. */
-const OFFICIAL_SOL_TARGET = 0.35;
-/** Official token: under the SOL target, rally sells run while spot is within this share of the 15 min high. */
-const OFFICIAL_SELL_NEAR_HIGH_REBUILD = 0.1;
+/** Official token: the vault's target SOL share of its value (SOL + tokens at spot). Under it, sells use the whole window. */
+const OFFICIAL_SOL_TARGET = 0.5;
 /** Official token: one sell moves spot at most this much (bps), so sells absorb buying instead of knocking the price down. */
 const OFFICIAL_SELL_IMPACT_BPS = 300n;
 
@@ -709,12 +707,13 @@ const OFFICIAL_DEEP = 0.2;
 /** Official token: a shallow pullback whose latest minute sold more than this share of its volume waits. */
 const OFFICIAL_FLUSH_SELL_SHARE = 0.7;
 /** Official token: the reserve falls to 0 at this far off the 15 min high. */
-const OFFICIAL_RESERVE_ZERO_AT = 0.4;
+const OFFICIAL_RESERVE_ZERO_AT = 0.35;
 
 /**
  * Official token: the share of the vault's value that must stay SOL after a pullback buy at `drawdown` off the 15 min
- * high — `OFFICIAL_SOL_TARGET` at the high, falling linearly to 0 at `OFFICIAL_RESERVE_ZERO_AT` (35% at 0, ~29% at 7%,
- * ~17% at 20%, ~9% at 30%, 0 from 40%).
+ * high — `OFFICIAL_SOL_TARGET` at the high, falling linearly to 0 at `OFFICIAL_RESERVE_ZERO_AT` (50% at the high, ~44% at
+ * 4%, ~36% at 10%, ~21% at 20%, ~7% at 30%, 0 from 35%): SOL above the reserve supports shallow pullbacks near the
+ * highs in small clips; the reserve itself is kept for the dumps.
  */
 export function officialReserve(drawdown: number): number {
   return OFFICIAL_SOL_TARGET * Math.max(0, 1 - drawdown / OFFICIAL_RESERVE_ZERO_AT);
@@ -888,9 +887,9 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
     if (paused) return done(hold("flow", `${head} but ${paused}`));
     // The official token sells only into new highs: within `OFFICIAL_SELL_NEAR_HIGH` of its 15 min high, never into a
     // pullback it may be buying (buys start at `OFFICIAL_PULLBACK` off the high).
-    const nearHigh = m.official && solShare(m) < OFFICIAL_SOL_TARGET ? OFFICIAL_SELL_NEAR_HIGH_REBUILD : OFFICIAL_SELL_NEAR_HIGH;
-    if (m.official && flow.drawdownHigh > nearHigh) {
-      return done(hold("flow", `${head} but official token sells only near the high (now ${(flow.drawdownHigh * 100).toFixed(1)}% off, sells within ${nearHigh * 100}%)`));
+    // Sells and buys never overlap: sells only within `OFFICIAL_SELL_NEAR_HIGH` of the high, buys only from there down.
+    if (m.official && flow.drawdownHigh >= OFFICIAL_SELL_NEAR_HIGH) {
+      return done(hold("flow", `${head} but official token sells only near the high (now ${(flow.drawdownHigh * 100).toFixed(1)}% off, sells within ${OFFICIAL_SELL_NEAR_HIGH * 100}%)`));
     }
     if (spacing) return done(hold("spacing", `${head} but ${spacing}`));
     return done(planSell(m, s, proj, params, head));
