@@ -34,7 +34,12 @@ export interface HolderSet {
   /** Largest non-program owner's % of total supply (0 when nobody else holds). */
   topPct: number;
   at: number;
+  /** A trade moved balances since `at`: served until the reload lands. */
+  stale?: boolean;
 }
+
+/** Fewest milliseconds between two holder reloads of one mint, however often its trades invalidate it. */
+const MIN_RELOAD_MS = 10_000;
 
 /**
  * Holder snapshots, cached per mint for `ttlMs`; concurrent requests share one RPC call. Holdfast launches
@@ -72,19 +77,26 @@ export class Holders {
     this.cache.clear();
   }
 
-  /** Drops one mint's snapshot (a trade moved balances); the next read loads from chain. */
+  /** Marks one mint's snapshot stale (a trade moved balances); the next read reloads it, at most every `MIN_RELOAD_MS`. */
   invalidate(mint: string): void {
-    this.cache.delete(mint);
+    const hit = this.cache.get(mint);
+    if (hit) this.cache.set(mint, { ...hit, stale: true });
   }
 
   async get(target: HolderTarget): Promise<HolderSet> {
     const hit = this.cache.get(target.mint);
-    if (hit && Date.now() - hit.at < this.ttlMs) return hit;
+    const age = hit ? Date.now() - hit.at : Infinity;
+    // A hot launch invalidates on every trade: without a floor, every page view became a getProgramAccounts call
+    // and the RPC rate-limited the whole indexer (launch day: 429s on holders, portfolio and the rpc proxy).
+    if (hit && (age < MIN_RELOAD_MS || (!hit.stale && age < this.ttlMs))) return hit;
     const running = this.inflight.get(target.mint);
-    if (running) return running;
+    if (running) return hit ?? running;
     const p = this.load(target).finally(() => this.inflight.delete(target.mint));
     this.inflight.set(target.mint, p);
-    return p;
+    if (!hit) return p;
+    // A stale snapshot answers now; the reload refreshes the cache (and keeps the old one if the RPC fails).
+    p.catch(() => {});
+    return hit;
   }
 
   /** The venue's and the vault's token accounts (with their owner) for a launch. */
