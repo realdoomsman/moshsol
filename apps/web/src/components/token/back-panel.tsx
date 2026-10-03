@@ -320,26 +320,21 @@ export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSum
                   <Spinner className="mt-0.5 text-ink-3" />
                   <span>Publishing your token&rsquo;s image and links to Arweave&hellip; (usually under 2 min)</span>
                 </p>
-                {meta.overdue ? (
-                  <>
-                    <p className="small text-warn">
-                      Still not served after 5 minutes. You can launch anyway, but pump.fun may show the token&rsquo;s image and links
-                      late.
-                    </p>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="justify-self-start"
-                      disabled={!!tx.pending}
-                      onClick={() => {
-                        setLaunchAnyway(true);
-                        launch();
-                      }}
-                    >
-                      Launch anyway
-                    </Button>
-                  </>
-                ) : null}
+                <p className={cn("small", meta.overdue ? "text-warn" : "text-ink-3")}>
+                  You can launch now: pump.fun shows the image and links as soon as Arweave serves them (usually a few minutes).
+                </p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="justify-self-start"
+                  disabled={!!tx.pending}
+                  onClick={() => {
+                    setLaunchAnyway(true);
+                    launch();
+                  }}
+                >
+                  Launch anyway
+                </Button>
               </div>
             ) : null}
           </>
