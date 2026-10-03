@@ -631,7 +631,7 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
       // Depth-scaled reserve: shallow pullbacks may only spend SOL above a high reserve, deep ones nearly all of it, so
       // the vault keeps its SOL for the real dump instead of spending it on 7% wobbles at the top.
       const share = solShare(m);
-      const reserve = officialReserve(flow.drawdownHigh);
+      const reserve = officialReserve(flow.drawdownHigh, flow.drawdown24h);
       const valueLamports = Number(m.vaultSol) / Math.max(share, 1e-9);
       const spendable = BigInt(Math.max(0, Math.floor(Number(m.vaultSol) - reserve * valueLamports)));
       if (spendable < s.minTradeLamports) {
@@ -708,6 +708,8 @@ const OFFICIAL_DEEP = 0.2;
 const OFFICIAL_FLUSH_SELL_SHARE = 0.7;
 /** Official token: the reserve falls to 0 at this far off the 15 min high. */
 const OFFICIAL_RESERVE_ZERO_AT = 0.35;
+/** Official token: the reserve falls to 0 at this far off the 24 h high (slow bleeds). */
+const OFFICIAL_RESERVE_ZERO_AT_24H = 0.6;
 
 /**
  * Official token: the share of the vault's value that must stay SOL after a pullback buy at `drawdown` off the 15 min
@@ -715,8 +717,12 @@ const OFFICIAL_RESERVE_ZERO_AT = 0.35;
  * 4%, ~36% at 10%, ~21% at 20%, ~7% at 30%, 0 from 35%): SOL above the reserve supports shallow pullbacks near the
  * highs in small clips; the reserve itself is kept for the dumps.
  */
-export function officialReserve(drawdown: number): number {
-  return OFFICIAL_SOL_TARGET * Math.max(0, 1 - drawdown / OFFICIAL_RESERVE_ZERO_AT);
+export function officialReserve(drawdown: number, drawdown24h = 0): number {
+  const fast = OFFICIAL_SOL_TARGET * Math.max(0, 1 - drawdown / OFFICIAL_RESERVE_ZERO_AT);
+  // A slow bleed never gets far off a rolling 15 min high: the 24 h drawdown releases the reserve too, more slowly
+  // (0 from `OFFICIAL_RESERVE_ZERO_AT_24H` off the 24 h high), so a long slide is bought in steps, never all at once.
+  const slow = OFFICIAL_SOL_TARGET * Math.max(0, 1 - drawdown24h / OFFICIAL_RESERVE_ZERO_AT_24H);
+  return Math.min(fast, slow);
 }
 
 /** The vault's SOL as a share of its value (SOL + tokens at spot), 0..1. */
@@ -888,6 +894,11 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
     // The official token sells only into new highs: within `OFFICIAL_SELL_NEAR_HIGH` of its 15 min high, never into a
     // pullback it may be buying (buys start at `OFFICIAL_PULLBACK` off the high).
     // Sells and buys never overlap: sells only within `OFFICIAL_SELL_NEAR_HIGH` of the high, buys only from there down.
+    // In a downtrend the 15 min high keeps falling, so "near the high" alone would sell every bounce of a bleed: the
+    // official token also needs spot above its 30 min VWAP (an uptrend) to sell.
+    if (m.official && flow.vwapDevBps <= 0) {
+      return done(hold("flow", `${head} but under the 30-min VWAP (${(flow.vwapDevBps / 100).toFixed(1)}%): no sells into a downtrend`));
+    }
     if (m.official && flow.drawdownHigh >= OFFICIAL_SELL_NEAR_HIGH) {
       return done(hold("flow", `${head} but official token sells only near the high (now ${(flow.drawdownHigh * 100).toFixed(1)}% off, sells within ${OFFICIAL_SELL_NEAR_HIGH * 100}%)`));
     }
