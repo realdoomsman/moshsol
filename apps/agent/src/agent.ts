@@ -20,7 +20,7 @@ import { LookupTable } from "./alt";
 import { TradeBackoff } from "./backoff";
 import type { AgentConfig } from "./config";
 import { Cranks, type CrankLaunch } from "./cranks";
-import { FlowWindow, NEUTRAL_FLOW, displayFlow, type FlowFeatures } from "./flow";
+import { FLOW_HIGH_SECS, FlowWindow, NEUTRAL_FLOW, displayFlow, type FlowFeatures } from "./flow";
 import { ExecutorPool, loadExecutors } from "./executors";
 import { log } from "./log";
 import { Metrics } from "./metrics";
@@ -486,12 +486,22 @@ export class Agent {
    * candles hold the real one, so a slow bleed is measured from it after a restart too.
    */
   private withIndexedHigh(rt: LaunchRuntime, market: MarketState, flow: FlowFeatures): FlowFeatures {
-    const high = this.publicVolume.high24h(rt.address.toBase58());
-    if (high === null || !(high > 0)) return flow;
     // MarketState spot is lamports per base unit; candles are SOL per whole token (6 decimals): ×1e-3.
     const spot = (Number(market.virtualSol + market.realSol) / Number(market.tokenReserve)) * 1e-3;
-    const drawdown = Math.max(0, 1 - spot / high);
-    return drawdown > flow.drawdown24h ? { ...flow, drawdown24h: drawdown } : flow;
+    const key = rt.address.toBase58();
+    let out = flow;
+    const high = this.publicVolume.high24h(key);
+    if (high !== null && high > 0) {
+      const drawdown = Math.max(0, 1 - spot / high);
+      if (drawdown > out.drawdown24h) out = { ...out, drawdown24h: drawdown };
+    }
+    // The 15 min high too: after a restart mid-dump the window would read the bottom as the high.
+    const recent = this.publicVolume.recentHigh(key, FLOW_HIGH_SECS);
+    if (recent !== null && recent > 0) {
+      const drawdown = Math.max(0, 1 - spot / recent);
+      if (drawdown > out.drawdownHigh) out = { ...out, drawdownHigh: drawdown };
+    }
+    return out;
   }
 
   private skipped(rt: LaunchRuntime): boolean {

@@ -11,6 +11,9 @@ export class PublicVolume {
   /** Highest price (SOL per token) over the last 24 h from the indexer's hourly candles: survives agent restarts. */
   private readonly high = new Map<string, number>();
   private readonly highAt = new Map<string, number>();
+  /** Per-minute highs (time → high, SOL per token) of the last 15 minutes from the indexer's 1-minute candles. */
+  private readonly minuteHighs = new Map<string, { time: number; high: number }[]>();
+  private readonly minuteAt = new Map<string, number>();
 
   constructor(
     private readonly indexerUrl: string | null,
@@ -32,6 +35,37 @@ export class PublicVolume {
     if (!this.indexerUrl) return null;
     if (Date.now() - (this.highAt.get(launch) ?? 0) >= 60_000) void this.refreshHigh(launch);
     return this.high.get(launch) ?? null;
+  }
+
+  /** Indexed high (SOL per token) over the last `secs` seconds of `launch`, or null; refreshed every 10 s. */
+  recentHigh(launch: string, secs: number): number | null {
+    if (!this.indexerUrl) return null;
+    if (Date.now() - (this.minuteAt.get(launch) ?? 0) >= 10_000) void this.refreshMinutes(launch);
+    const since = Date.now() / 1000 - secs;
+    let high = 0;
+    for (const c of this.minuteHighs.get(launch) ?? []) if (c.time + 60 > since && c.high > high) high = c.high;
+    return high > 0 ? high : null;
+  }
+
+  private async refreshMinutes(launch: string): Promise<void> {
+    const key = `min:${launch}`;
+    if (this.inflight.has(key)) return;
+    this.inflight.add(key);
+    this.minuteAt.set(launch, Date.now());
+    try {
+      const res = await fetch(`${this.indexerUrl}/api/launches/${launch}/candles?tf=60`, {
+        headers: this.internalToken ? { "x-holdfast-internal": this.internalToken } : {},
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as { candles?: { time: number; high: number }[] };
+      const since = Date.now() / 1000 - 1_800;
+      this.minuteHighs.set(launch, (body.candles ?? []).filter((c) => c.time >= since).map((c) => ({ time: c.time, high: c.high })));
+    } catch (err) {
+      this.log("minute candles fetch failed", { launch, err: String(err) });
+    } finally {
+      this.inflight.delete(key);
+    }
   }
 
   private async refreshHigh(launch: string): Promise<void> {
