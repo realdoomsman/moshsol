@@ -584,7 +584,10 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
   const room = minBig(proj.buyRemaining, spendable);
   if (room < s.minTradeLamports) return budgetHold(proj, solStr(proj.buyRemaining));
   // `buyToPrice` is the net the reserves take; the agent spends that plus the venue's fee.
-  let ideal = grossForNet(m, buyToPrice(proj, minBig((proj.ema * (BPS - t.bandBps)) / BPS, impactTargets(proj, t.maxImpactBps).up)));
+  // Normally a buy lifts spot at most back to the EMA band edge. The official token's vault supports its own chart:
+  // once the dip qualifies, its buys are sized by the impact limit and the clip alone (the program checks impact).
+  const impactUp = impactTargets(proj, t.maxImpactBps).up;
+  let ideal = grossForNet(m, buyToPrice(proj, m.official ? impactUp : minBig((proj.ema * (BPS - t.bandBps)) / BPS, impactUp)));
   if (ideal < s.minTradeLamports) return hold("too_small", `${head}, ideal buy ${solStr(ideal)} below minimum`);
   // Low-volume support mode: a quiet chart gets smaller, spaced clips instead of one buy to the band edge.
   const support = supportMode(params, m, flow);
@@ -627,7 +630,7 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
       if (flow.drawdownHigh < OFFICIAL_PULLBACK) {
         return hold("cost_basis", `${head} but ${buyback}; pullback buys need ≥ ${OFFICIAL_PULLBACK * 100}% off the 15-min high (now ${off})`);
       }
-      const pull = largestFeasible(minBig(ideal, clipOf(params.buyClipShare)), impactOk);
+      const pull = largestFeasible(minBig(ideal, clipOf(OFFICIAL_PULLBACK_CLIP)), impactOk);
       if (pull < s.minTradeLamports) return hold("impact", `${head}, impact limit leaves pullback buy below minimum`);
       const out = buyFill(m, proj, pull);
       const moved = moveBps(price, priceQ64(proj.x + buyNet(m, pull), proj.y - out));
@@ -666,6 +669,8 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
 const OFFICIAL_BUYBACK_CLIP = 0.33;
 /** Official token: pullback buys above the average sell need spot at least this far under its 15 min high. */
 const OFFICIAL_PULLBACK = 0.07;
+/** Official token: pullback buys above the average sell take up to this share of the window's buy room per clip. */
+const OFFICIAL_PULLBACK_CLIP = 0.2;
 
 /** Climax volume: the short window trades at least this multiple of the median minute volume. */
 const CLIMAX_VOLUME_RATIO = 2;
