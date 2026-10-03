@@ -31,6 +31,7 @@ function randomFlow(r: Rng): FlowFeatures {
     volumeSol,
     netSol: volumeSol * (2 * r() - 1),
     trades: Math.floor(r() * 50),
+    agentSoldSol: r() < 0.5 ? 0 : volumeSol * r(),
     imbalance: 2 * r() - 1,
     imbalanceRecent: 2 * r() - 1,
     volumeRatio: 10 ** (r() * 2 - 1),

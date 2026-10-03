@@ -33,6 +33,8 @@ export interface FlowSample {
   volume: number;
   net: number;
   trades: number;
+  /** SOL the agent's own sells took out of the curve in the interval. */
+  agentSold: number;
   /** Spot the interval's volume is attributed to (lamports per base unit): geometric mean of both ends. */
   price: number;
   /** Spot at the end of the interval (lamports per base unit). */
@@ -46,6 +48,8 @@ export interface FlowFeatures {
   volumeSol: number;
   netSol: number;
   trades: number;
+  /** SOL the agent's own sells took out over the short window (sells sized against `netSol` subtract it). */
+  agentSoldSol: number;
   /** Σ net / Σ volume over the short / latest-minute window: −1 all sells … +1 all buys (0 without volume). */
   imbalance: number;
   imbalanceRecent: number;
@@ -82,6 +86,7 @@ export const NEUTRAL_FLOW: FlowFeatures = {
   volumeSol: 0,
   netSol: 0,
   trades: 0,
+  agentSoldSol: 0,
   imbalance: 0,
   imbalanceRecent: 0,
   volumeRatio: 1,
@@ -203,7 +208,7 @@ export class FlowWindow {
     const volume = Math.max(0, gross, Math.abs(net));
     const trades = c.tradeCount - from.c.tradeCount - (c.agentBuys - from.c.agentBuys) - (c.agentSells - from.c.agentSells);
     if (c.agentBuys !== from.c.agentBuys || c.agentSells !== from.c.agentSells) this.agentTradeAt = t;
-    return { t, dt, volume, net, trades: Math.max(0, trades), price: Math.sqrt(from.price * price), close: price };
+    return { t, dt, volume, net, trades: Math.max(0, trades), agentSold: Number(received) / LAMPORTS, price: Math.sqrt(from.price * price), close: price };
   }
 
   private features(t: number, price: number, sinceTradeSecs: number): FlowFeatures {
@@ -220,6 +225,7 @@ export class FlowWindow {
     let vShort = 0;
     let nShort = 0;
     let trShort = 0;
+    let soldShort = 0;
     let vRecent = 0;
     let nRecent = 0;
     let vLong = 0;
@@ -240,6 +246,7 @@ export class FlowWindow {
         pvShort += x.volume * x.price;
         nShort += x.net;
         trShort += x.trades;
+        soldShort += x.agentSold;
       }
       if (age < FLOW_HIGH_SECS) {
         if (x.close >= recentHigh) {
@@ -266,6 +273,7 @@ export class FlowWindow {
       volumeSol: vShort,
       netSol: nShort,
       trades: trShort,
+      agentSoldSol: soldShort,
       imbalance: vShort > 0 ? nShort / vShort : 0,
       imbalanceRecent: vRecent > 0 ? nRecent / vRecent : 0,
       volumeRatio: ratio(vShort, FLOW_SHORT_SECS),
@@ -290,6 +298,7 @@ export function displayFlow(f: FlowFeatures): FlowFeatures {
     volumeSol: r(f.volumeSol, 4),
     netSol: r(f.netSol, 4),
     trades: f.trades,
+    agentSoldSol: r(f.agentSoldSol, 4),
     imbalance: r(f.imbalance, 3),
     imbalanceRecent: r(f.imbalanceRecent, 3),
     volumeRatio: r(f.volumeRatio, 2),

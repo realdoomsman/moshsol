@@ -21,7 +21,7 @@ import {
   type LaunchAccount,
   type LaunchVenue,
 } from "@holdfast/sdk";
-import { FLOW_SHORT_SECS, type FlowFeatures } from "./flow";
+import { FLOW_SHORT_SECS, NEUTRAL_FLOW, type FlowFeatures } from "./flow";
 
 /**
  * Pure decision logic in two layers.
@@ -701,6 +701,8 @@ const OFFICIAL_BUY_SPACING_SECS = 10;
 const OFFICIAL_SOL_TARGET = 0.5;
 /** Official token: one sell moves spot at most this much (bps), so sells absorb buying instead of knocking the price down. */
 const OFFICIAL_SELL_IMPACT_BPS = 300n;
+/** Official token: the vault's sells over the last 3 min take at most this share of the public's net buying there. */
+const OFFICIAL_SELL_PARTICIPATION = 0.4;
 
 /** Official token: from this far off the 15 min high a pullback is a dump: bought into even while it is still selling. */
 const OFFICIAL_DEEP = 0.2;
@@ -750,7 +752,7 @@ export function ladderWindowShare(p: StrategyParams, mult: number): number {
   return Math.min(1, ladderShare(p, mult) / p.ladderShare10x);
 }
 
-function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyParams, head: string): Plan {
+function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyParams, head: string, flow: FlowFeatures = NEUTRAL_FLOW): Plan {
   const t = m.terms;
   const { x, y, price, costSol, costTokens } = proj;
   /** Lamports the launch receives for selling `tokens` (net of the venue's fee). */
@@ -798,9 +800,23 @@ function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyP
   if (ideal === 0n || proceeds(ideal) < s.minSellLamports) {
     return hold("too_small", `${head}, a sell to the band edge / impact limit takes ~${solStr(ideal === 0n ? 0n : proceeds(ideal))}, below the ${minSell} minimum sell`);
   }
+  // Official token: sell only a share of what the public bought over the last 3 min, net of the agent's own sells
+  // there, so buyers keep lifting the chart while the vault takes SOL out of it.
+  let budgetLamports: bigint | null = null;
+  if (m.official) {
+    const budget = OFFICIAL_SELL_PARTICIPATION * flow.netSol - flow.agentSoldSol;
+    budgetLamports = BigInt(Math.max(0, Math.floor(budget * 1e9)));
+    if (budgetLamports < s.minSellLamports) {
+      return hold(
+        "flow",
+        `${head} but sells take at most ${OFFICIAL_SELL_PARTICIPATION * 100}% of the public's net buying (3 min: +${flow.netSol.toFixed(2)} SOL bought, ${flow.agentSoldSol.toFixed(2)} SOL sold by the vault)`,
+      );
+    }
+  }
   // Cost rule checked against the slippage floor, so any fill the transaction accepts passes it.
   const tokensIn = largestFeasible(minBig(ideal, room), (a) => {
     if (!sellCurveOk(m, proj, a)) return false;
+    if (budgetLamports !== null && proceeds(a) > budgetLamports) return false;
     return sellAboveCost(m, a, minOut(proceeds(a), s.slippageBps));
   });
   const fill = sellFill(m, proj, tokensIn);
@@ -904,7 +920,7 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
       return done(hold("flow", `${head} but official token sells only near the high (now ${(flow.drawdownHigh * 100).toFixed(1)}% off, sells within ${OFFICIAL_SELL_NEAR_HIGH * 100}%)`));
     }
     if (spacing) return done(hold("spacing", `${head} but ${spacing}`));
-    return done(planSell(m, s, proj, params, head));
+    return done(planSell(m, s, proj, params, head, flow));
   }
   return done(hold("in_band", `price inside band (${dev} vs EMA)`));
 }
