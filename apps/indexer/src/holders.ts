@@ -191,8 +191,7 @@ export class Holders {
     if (this.gpaUnavailable) {
       // Exact balances for the venue, the vault and every wallet that ever traded this launch
       // (their ATAs; public pump.fun trades are in the ledger too), fetched 100 at a time. Only wallets
-      // that received tokens by transfer without ever trading are missed, and pump traders older than
-      // the venue's bounded backfill (`PUMP_BACKFILL`).
+      // that received tokens by transfer without ever trading are missed.
       const mintKey = new PublicKey(t.mint);
       const entries: { tokenAccount: PublicKey; owner: PublicKey }[] = [
         ...program,

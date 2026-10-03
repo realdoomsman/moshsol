@@ -51,7 +51,6 @@ test("admin and dev-key vault withdrawals both index as vault_withdrawn and both
     publicUrl: "",
     filesDir: "",
     wsUrl: "ws://127.0.0.1:1",
-    pumpBackfill: 0,
   });
   const processTx = (sync as unknown as { processTx(sig: string, slot: number, logs: string[]): Promise<void> }).processTx.bind(sync);
 

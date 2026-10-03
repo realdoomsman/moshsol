@@ -35,8 +35,6 @@ export interface SyncOptions {
   publicUrl: string;
   filesDir: string;
   wsUrl: string;
-  /** Newest venue signatures indexed when a live pump launch is first watched for public trades. */
-  pumpBackfill: number;
 }
 
 export interface SyncHealth {
@@ -167,7 +165,6 @@ export class ChainSync {
     );
     this.stream.watch(programId);
     this.pump = new PumpSync(store, this.connection, hub, holders, this.stream, programId, log, {
-      backfill: opts.pumpBackfill,
       onTrade: (address) => void this.refreshLaunch(address),
     });
   }

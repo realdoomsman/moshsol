@@ -167,13 +167,15 @@ touching event, so `change24h`, sorting and stats work the same on both venues; 
 Between the curve completing and `graduate_pump` recording the pool there is nothing to quote and the last price is kept.
 
 **Public pump.fun trades.** A pump launch's public buys and sells happen on pump.fun (PumpSwap once graduated) and never
-touch this program. The indexer books them too: every live pump launch's venue account (bonding curve, or the pool once
-`pump.graduated`) is watched on the logs websocket and polled every `POLL_MS` alongside the program, and the venue's own
-`TradeEvent` / `BuyEvent` / `SellEvent` is decoded into the same trades, activity, candles, volume and holder data
+touch this program. The indexer books them too: every live pump launch's venue account (bonding curve, then also the pool
+once `pump.graduated`) is watched on the logs websocket and scanned every `POLL_MS` alongside the program, and the venue's
+own `TradeEvent` / `BuyEvent` / `SellEvent` is decoded into the same trades, activity, candles, volume and holder data
 (`TradeRow.source = "pump"`, `isAgent: false`). The vault agent's pump trades still come from the program's `Trade` event
-(`source: "holdfast"`, `isAgent: true`), never twice. A venue first watched is backfilled from its newest `PUMP_BACKFILL`
-(default 200) signatures only, so `tradeCount` / `volumeSol` of a pump launch are the on-chain agent counters plus the
-public trades indexed since.
+(`source: "holdfast"`, `isAgent: true`), never twice. Every public trade is indexed: a venue first watched is indexed from
+its whole history, the scan cursor only moves past a signature once it is booked, a reconcile re-lists each venue every
+5 minutes (and on start) and books anything the websocket or the cursor missed, and a graduated launch's curve stays
+watched until its pre-migration history is complete. `tradeCount` / `volumeSol` of a pump launch are the on-chain agent
+counters plus these public trades.
 
 ```json
 {
