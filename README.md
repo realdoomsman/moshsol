@@ -203,7 +203,24 @@ unchanged. **Pump** launches (`create_launch_pump`) are pump.fun tokens created 
 
 ### Layout migration (run right after the upgrade)
 
-**PumpSwap-buy-fix upgrade (current; no layout change, no migration).** Since its graduation every agent-wallet
+**Self-buyback fix upgrade (current; no layout change, no migration).** The Holdfast token is itself a Holdfast
+pump launch, so once `buyback_mint` is its mint, that launch's own buyback pool buys its own token into
+ATA(pump authority, mint) — which is also its vault. `buyback_burn` used to burn everything in that account,
+i.e. the whole vault; it now burns only what exceeds `launch.vault_tokens` when the launch buys its own mint
+(the fill, plus any donated tokens), as before for every other launch. Upgrade **before** setting
+`buyback_mint`; then `pnpm set-buyback-mint` (Squads vault tx, `update_platform` with only `buybackMint`
+changed; `--dry-run` prints current vs next).
+
+```bash
+anchor build                                   # WSL; target/deploy/moshsol.so: 750,840 bytes > the 750,680-byte ProgramData (upgrade extends it)
+sha256sum target/deploy/moshsol.so             # ae04463e0750af2a2f3d53f00771ddb873c2fb811308f4892a97ed0a0bb79ece for this build
+export RPC_URL=<mainnet rpc> KEYS_DIR=.mainnet APPROVER_KEYPAIRS=.mainnet/member-1.json,.mainnet/member-2.json
+pnpm run upgrade --dry-run
+pnpm run upgrade
+BUYBACK_MINT=<Holdfast token mint> pnpm set-buyback-mint --dry-run && BUYBACK_MINT=<mint> pnpm set-buyback-mint
+```
+
+**PumpSwap-buy-fix upgrade (no layout change, no migration).** Since its graduation every agent-wallet
 `agent_buy_pump` on the TEST pool failed with `InvalidArgument`: wrapping the vault's SOL for PumpSwap moved the
 lamports onto the WSOL account directly and flushed the move with a `sync_native` carrying the launch as an extra
 account, which mainnet's SPL Token (p-token) refuses (litesvm's built-in spl-token 3.5, which the suite used, ignores
@@ -984,7 +1001,7 @@ Node 22+ and pnpm 10 for everything else (on Windows the validator runs in WSL, 
 
 ```bash
 anchor build                 # WSL/Linux, once and after every program change
-cargo test -p moshsol-tests  # 54 litesvm tests (27 curve + 27 pump.fun); needs target/deploy/moshsol.so
+cargo test -p moshsol-tests  # 55 litesvm tests (27 curve + 28 pump.fun); needs target/deploy/moshsol.so
 
 pnpm install
 CLONE_PUMP=1 pnpm localnet --reset   # terminal 1: validator (through WSL on Windows) with pump.fun, PumpSwap,

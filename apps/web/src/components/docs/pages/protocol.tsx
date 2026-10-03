@@ -6,6 +6,7 @@ import { BUYBACK_MINT_UNSET, fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-
 import { pctFromBps } from "../../band/model";
 import { Term } from "../../glossary";
 import { SplitBar } from "../../landing/fee-split";
+import { OfficialTokenRef } from "../../official/official-token";
 import { InstructionList } from "../../landing/instruction-list";
 import { instructionRows, windDownRule } from "../../landing/instructions";
 import { DEMO, EmaTerm } from "../../landing/launch-steps";
@@ -110,7 +111,7 @@ export const theVault: DocPage = {
               {s.vaultPct}% to the vault as SOL, {s.burnPct}% to the launch&rsquo;s <Term k="buybackPool" split={s} /> and {s.backerPct}%
               to backers through the fee-per-share accumulator, claimable with <C>claim_backer_fees</C>. The creator wallet gets 0%.{" "}
               <C>buyback_burn</C> (signed by the agent authority, at most once a minute per launch) spends the pool on the Holdfast token
-              and burns what it bought; every burn is listed on the launch page.
+              <OfficialTokenRef /> and burns what it bought; every burn is listed on the launch page.
               {p?.buybackMint === BUYBACK_MINT_UNSET ? " The Holdfast token isn’t live yet, so the pools keep accruing until it is." : null}
             </P>
             {seed && seed.profitSharedSol > 0 ? (

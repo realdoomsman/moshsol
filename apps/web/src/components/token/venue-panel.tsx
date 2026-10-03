@@ -13,6 +13,7 @@ import { ButtonAnchor } from "../ui/button";
 import { Chip } from "../ui/chip";
 import { RuleTooltip } from "../ui/tooltip";
 import { Panel, RelativeTime, TxLink } from "./shared";
+import { OfficialTokenRef } from "../official/official-token";
 
 function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
@@ -94,6 +95,11 @@ export function BuybackCard({ launch: l, now, className }: { launch: LaunchSumma
           </div>
           {mintPending ? (
             <p className="small mt-2 text-ink-3">The Holdfast token isn’t live yet; the pool keeps accruing until it is and burns start.</p>
+          ) : buybackMint ? (
+            <p className="small mt-2 text-ink-3">
+              Burns the Holdfast token
+              <OfficialTokenRef />.
+            </p>
           ) : null}
         </div>
         <dl className="small grid gap-2">

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Discover } from "@/components/discover/discover";
+import { prefetchOfficial } from "@/components/landing/featured";
 import { isToolbarSort, isView } from "@/components/discover/model";
 import { api } from "@/lib/api";
 import { launchId } from "@/lib/launch";
@@ -26,6 +27,7 @@ export default async function DiscoverPage({ searchParams }: { searchParams: Pro
   const launches = launchesQuery({ status: "all", sort: "trending" });
   await Promise.all([
     prefetch(client, trendingQuery()),
+    prefetchOfficial(client),
     (async () => {
       await prefetch(client, launches);
       const now = Math.floor(Date.now() / 1000);

@@ -4,6 +4,7 @@ import { Check, ListFilter, MoreHorizontal, Star } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { NewHere } from "@/components/onboarding/new-here";
+import { OfficialTokenPanel } from "@/components/official/official-token";
 import { Button, IconButton } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { Sheet } from "@/components/ui/dialog";
@@ -13,7 +14,8 @@ import { Select } from "@/components/ui/select";
 import { Segmented } from "@/components/ui/tabs";
 import { useNow } from "@/lib/hooks";
 import { launchId } from "@/lib/launch";
-import { useLaunches } from "@/lib/queries";
+import { pinOfficial } from "@/lib/official";
+import { useLaunches, useOfficial } from "@/lib/queries";
 import type { LaunchSummary } from "@/lib/types";
 import { useWatchlist } from "@/lib/watchlist";
 import { LaunchCard, LaunchCardSkeleton, LaunchRow } from "./launch-card";
@@ -180,8 +182,12 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
   const watchlist = useWatchlist();
 
   const launches = useLaunches({ status: "all", sort: "trending" });
+  const official = useOfficial();
   const flashes = useTradeFlashes();
-  const all = launches.data?.launches ?? [];
+  const listed = launches.data?.launches ?? [];
+  // The official token is always in the dataset (even past the list's page), then pinned first wherever it matches.
+  const all =
+    official.launch && launches.data && !listed.some((l) => l.mint === official.mint) ? [official.launch, ...listed] : listed;
   const isFresh = useFreshIds(all.map(launchId));
 
   const setView = useCallback(
@@ -203,11 +209,11 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
     setSortState((s) => (s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" }));
 
   const watched = watchingOnly ? all.filter((l) => watchlist.has(launchId(l))) : all;
-  const sorted = sortLaunches(watched, sort, now);
+  const sorted = pinOfficial(sortLaunches(watched, sort, now), official.mint);
   const lanes: Record<Lane, LaunchSummary[]> = { raising: [], min: [], live: [] };
   for (const lane of LANES) {
     const key = laneSort[lane.value];
-    const list = key ? sortLaunches(watched, { key, dir: "desc" }, now) : sorted;
+    const list = key ? pinOfficial(sortLaunches(watched, { key, dir: "desc" }, now), official.mint) : sorted;
     lanes[lane.value] = list.filter((l) => laneOf(l, now) === lane.value);
   }
 
@@ -342,6 +348,7 @@ export function Discover({ initialView, initialSort }: { initialView: View; init
       </header>
 
       <div className="flex flex-col gap-8">
+        <OfficialTokenPanel />
         <NewHere />
         {launches.data ? <Spotlight launches={all} now={now} /> : null}
         {body}

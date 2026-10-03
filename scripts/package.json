@@ -15,7 +15,8 @@
     "vault-withdraw": "tsx src/vault-withdraw.ts",
     "dev-withdraw": "tsx src/dev-withdraw.ts",
     "agent-wallets": "tsx src/agent-wallets.ts",
-    "fund-executors": "tsx src/fund-executors.ts"
+    "fund-executors": "tsx src/fund-executors.ts",
+    "set-buyback-mint": "tsx src/set-buyback-mint.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",

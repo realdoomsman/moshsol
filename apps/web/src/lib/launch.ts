@@ -16,9 +16,12 @@ export function launchHref(l: LaunchRef): string {
   return `/launch/${launchId(l)}`;
 }
 
+/** pump.fun's page for a mint: its bonding curve (it links on to PumpSwap once graduated). */
+export const pumpCoinUrl = (mint: string) => `https://pump.fun/coin/${mint}`;
+
 /** Where a pump launch trades: its pump.fun curve, or PumpSwap once graduated. */
 export function pumpTradeUrl(l: Pick<LaunchJson, "mint" | "pump">): string {
-  return l.pump.graduated ? `https://swap.pump.fun/?input=sol&output=${l.mint}` : `https://pump.fun/coin/${l.mint}`;
+  return l.pump.graduated ? `https://swap.pump.fun/?input=sol&output=${l.mint}` : pumpCoinUrl(l.mint);
 }
 
 export type VenueKind = "holdfast" | "pump-curve" | "pumpswap";

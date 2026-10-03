@@ -218,7 +218,8 @@ pub struct BuybackBurn<'info> {
     /// refuses the unset default
     #[account(mut, address = platform.params.buyback_mint @ MoshError::BuybackMintUnset)]
     pub buyback_mint: UncheckedAccount<'info>,
-    /// CHECK: ATA(pump_authority, buyback_mint); created on first use, the cranker paying
+    /// CHECK: ATA(pump_authority, buyback_mint); created on first use, the cranker paying. The
+    /// launch's own vault when the buyback mint is the launch's mint.
     #[account(mut, address = get_associated_token_address(&pump_authority.key(), &buyback_mint.key()))]
     pub burn_tokens: UncheckedAccount<'info>,
     /// CHECK: the buyback mint's pump.fun bonding curve; its `complete` flag picks the venue
@@ -316,8 +317,13 @@ pub fn buyback_burn<'info>(
     let (spent, tokens) = venue.buy(amount, floor)?;
     require!(tokens >= floor && tokens >= min_tokens_out && tokens > 0, MoshError::Slippage);
 
-    // Burn everything the account holds, including anything donated to it.
-    let burned = pump::token_amount(&burn_info)?;
+    // Burn everything the account holds, including anything donated to it — except the launch's
+    // own vault: when the Holdfast token is itself a pump launch, that launch's pool buys its own
+    // mint and this account is its vault (ATA(pump_authority, mint)), so only the excess burns.
+    let kept = if ctx.accounts.launch.mint == mint_info.key() { ctx.accounts.launch.vault_tokens } else { 0 };
+    let burned = pump::token_amount(&burn_info)?
+        .checked_sub(kept)
+        .ok_or(MoshError::MathOverflow)?;
     token::burn(
         CpiContext::new_with_signer(
             token_program.clone(),

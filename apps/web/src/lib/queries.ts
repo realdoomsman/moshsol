@@ -29,6 +29,7 @@ import {
   vaultWithdrawalsQuery,
 } from "./query-options";
 import type { DepositRow, TradeRow, TraderWindow } from "./types";
+import { officialMintOf } from "./official";
 
 export function usePlatform() {
   return useQuery({
@@ -60,6 +61,28 @@ export function useLaunch(id: string) {
     refetchInterval: (q) => (q.state.error instanceof ApiError && q.state.error.status === 404 ? 1_500 : interval),
     retry: (count, err) => !(err instanceof ApiError && err.status === 404) && count < 3,
   });
+}
+
+/** Mint of the official Holdfast token (`params.buybackMint`), null until it is set on-chain. */
+export function useOfficialMint(): string | null {
+  return officialMintOf(usePlatform().data?.params);
+}
+
+/**
+ * The official Holdfast token and its launch (looked up by mint; same cache entry as `launchQuery(mint)`, so
+ * websocket pushes keep it live). `launch` stays null when no Holdfast launch has the mint (`missing`).
+ */
+export function useOfficial() {
+  const mint = useOfficialMint();
+  const interval = useFallbackInterval(8_000);
+  const q = useQuery({
+    ...launchQuery(mint ?? ""),
+    enabled: mint !== null,
+    refetchInterval: (q) => (q.state.error instanceof ApiError && q.state.error.status === 404 ? 60_000 : interval),
+    retry: (count, err) => !(err instanceof ApiError && err.status === 404) && count < 3,
+  });
+  const missing = q.error instanceof ApiError && q.error.status === 404;
+  return { mint, launch: mint && q.data && !missing ? q.data : null, missing };
 }
 
 /** Recent trades for chart overlays (EMA per bucket, agent markers). */

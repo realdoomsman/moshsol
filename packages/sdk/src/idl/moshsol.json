@@ -957,6 +957,9 @@
         },
         {
           "name": "burn_tokens",
+          "docs": [
+            "launch's own vault when the buyback mint is the launch's mint."
+          ],
           "writable": true
         },
         {

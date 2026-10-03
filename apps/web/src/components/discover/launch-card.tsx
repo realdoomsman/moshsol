@@ -3,6 +3,7 @@
 import { lamportsToSol, timeAgo } from "@holdfast/sdk";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { OfficialBadge } from "@/components/official/official-token";
 import { ClampGlyph } from "@/components/brand/glyphs";
 import { ButtonLink } from "@/components/ui/button";
 import { StatusChip } from "@/components/ui/chip";
@@ -197,7 +198,10 @@ export function LaunchCard({
                 {l.name}
               </Link>
             </h3>
-            <StatusChip status={status} className="shrink-0" />
+            <span className="flex shrink-0 items-center gap-1.5">
+              <OfficialBadge mint={l.mint} />
+              <StatusChip status={status} />
+            </span>
           </div>
           <Byline l={l} now={now} />
         </div>
@@ -241,7 +245,10 @@ export function LaunchRow({ launch: l, now, flash, fresh }: { launch: LaunchSumm
       <FlashOutline flash={flash} />
       <TokenAvatar src={l.image} symbol={l.symbol} mint={l.mint} size={48} />
       <div className="min-w-0 flex-1">
-        <div className="ui truncate text-ink">{l.name}</div>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="ui truncate text-ink">{l.name}</span>
+          <OfficialBadge mint={l.mint} />
+        </div>
         <div className="small truncate text-ink-3">${l.symbol}</div>
       </div>
       {live ? (

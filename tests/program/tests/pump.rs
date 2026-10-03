@@ -306,6 +306,54 @@ fn buyback_burn_refuses_without_mint_then_buys_and_burns_with_caps() {
     env.assert_pump_invariants(&launch);
 }
 
+/// The Holdfast token is itself a Holdfast pump launch, so its own buyback pool buys its own
+/// mint, into ATA(pump authority, mint) — the very account that holds its vault. On the curve
+/// and after graduation alike only the fill is burned; the vault keeps every token.
+#[test]
+fn buyback_burn_of_its_own_mint_burns_only_the_fill_on_both_venues() {
+    let mut env = pump_env();
+    let cranker = env.user(2);
+    let (_c, launch, mint, _b) = env.live_pump_launch(&[20 * SOL]);
+    public_pump(&mut env, &mint, 10 * SOL);
+    ok(env.collect_pump_fees(&cranker, &launch));
+    let admin = env.admin.insecure_clone();
+    let mut p = test_params();
+    p.buyback_mint = mint;
+    ok(env.update_platform(&admin, p));
+    env.warp(BUYBACK_MIN_INTERVAL_SECS);
+    let vault_ata = spl_ata(&pump_authority_pda(&launch), &mint);
+
+    let burn_once = |env: &mut Env, venue: &str| {
+        let l0 = env.launch_at(&launch);
+        assert!(l0.buyback_pool_sol >= MIN_BUYBACK_LAMPORTS, "{venue}: pool {}", l0.buyback_pool_sol);
+        let vault_before = env.spl_balance(&vault_ata);
+        assert_eq!(vault_before, l0.vault_tokens);
+        let supply_before = env.spl_mint_supply(&mint);
+        ok(env.buyback_burn(&launch, &mint, u64::MAX, 0));
+        let l1 = env.launch_at(&launch);
+        let spent = l1.burned_sol - l0.burned_sol;
+        let burned = l1.burned_tokens - l0.burned_tokens;
+        assert!(spent >= MIN_BUYBACK_LAMPORTS && burned > 0, "{venue}: spent {spent}, burned {burned}");
+        assert_eq!(l0.buyback_pool_sol - l1.buyback_pool_sol, spent, "{venue}: pool SOL spent");
+        assert_eq!(supply_before - env.spl_mint_supply(&mint), burned, "{venue}: the fill was burned");
+        assert_eq!(env.spl_balance(&vault_ata), vault_before, "{venue}: the vault keeps its tokens");
+        assert_eq!(l1.vault_tokens, l0.vault_tokens);
+        env.assert_pump_invariants(&launch);
+    };
+    burn_once(&mut env, "curve");
+
+    // Graduate it; the buyout and a pool buy pay creator fees that refill the pool.
+    let whale = env.user(200);
+    let left = env.curve(&mint).real_token_reserves;
+    ok(env.pump_public_buy_tokens(&whale, &mint, left, 120 * SOL));
+    ok(env.pump_migrate(&cranker, &mint));
+    ok(env.graduate_pump(&cranker, &launch));
+    ok(env.amm_public_buy(&whale, &mint, 10 * SOL));
+    ok(env.collect_pump_fees(&cranker, &launch));
+    env.warp(BUYBACK_MIN_INTERVAL_SECS);
+    burn_once(&mut env, "pool");
+}
+
 /// Anyone can send lamports to a launch's pump authority (a system PDA). They must never
 /// distort the measured create cost or a fill — nor brick the instruction — and end up as
 /// vault SOL.

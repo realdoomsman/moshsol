@@ -16,6 +16,7 @@ import { chipStatus } from "../discover/model";
 import { Address } from "../ui/address";
 import { Button, buttonClass, IconButton } from "../ui/button";
 import { StatusChip } from "../ui/chip";
+import { OfficialBadge } from "../official/official-token";
 import { cn } from "../ui/cn";
 import { Dialog, Sheet } from "../ui/dialog";
 import { Identicon } from "../ui/identicon";
@@ -175,6 +176,7 @@ export function TokenHeader({ launch: l, phase, now }: { launch: LaunchSummary; 
           <h1 className="h1 min-w-0 truncate text-ink">{l.name}</h1>
           <span className="ui text-ink-2">${l.symbol}</span>
           <span className="flex items-center gap-1.5">
+            <OfficialBadge mint={l.mint} />
             <StatusChip status={chipStatus(l, now)} />
             <VenueChip launch={l} />
           </span>

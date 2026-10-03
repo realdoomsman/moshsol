@@ -963,6 +963,9 @@ export type Moshsol = {
         },
         {
           "name": "burnTokens",
+          "docs": [
+            "launch's own vault when the buyback mint is the launch's mint."
+          ],
           "writable": true
         },
         {

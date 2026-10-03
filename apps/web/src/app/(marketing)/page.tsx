@@ -17,6 +17,7 @@ import { LiveLaunches } from "@/components/landing/live-launches";
 import { ProofTiles } from "@/components/landing/proof-tiles";
 import { RulesStrip } from "@/components/landing/rules-strip";
 import { Section, SectionHeader } from "@/components/landing/section";
+import { OfficialTokenPanel } from "@/components/official/official-token";
 import { Hydrate, serverQueryClient } from "@/lib/prefetch";
 import { pumpSplit } from "@/lib/pump-terms";
 import { platformQuery } from "@/lib/query-options";
@@ -36,6 +37,7 @@ export default async function LandingPage() {
   return (
     <Hydrate client={client}>
       <div>
+        <OfficialTokenPanel frame="frame-marketing pt-6 md:pt-8" />
         <Hero params={p} />
         <HowStrip params={p} />
 

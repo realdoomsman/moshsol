@@ -3,6 +3,7 @@
 import { timeAgo } from "@holdfast/sdk";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { OfficialBadge } from "@/components/official/official-token";
 import { StatusChip } from "@/components/ui/chip";
 import { Sparkline } from "@/components/ui/sparkline";
 import { Table, TD, TH, THead, TR } from "@/components/ui/table";
@@ -86,7 +87,10 @@ export function LaunchTable({
                   </Link>
                 </TD>
                 <TD>
-                  <StatusChip status={chipStatus(l, now)} />
+                  <span className="flex items-center gap-1.5">
+                    <StatusChip status={chipStatus(l, now)} />
+                    <OfficialBadge mint={l.mint} />
+                  </span>
                 </TD>
                 <TD align="right">
                   {live ? (

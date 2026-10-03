@@ -3,6 +3,7 @@ import { fmtLamports } from "@/lib/format";
 import { BUYBACK_MINT_UNSET, fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
 import type { PlatformInfo } from "@/lib/types";
 import { Term } from "../glossary";
+import { OfficialTokenRef } from "../official/official-token";
 
 /**
  * §7 Where the money goes, per party: the exact splits a pump launch freezes at creation, one card
@@ -57,8 +58,8 @@ export function MoneyTrio({ params }: { params: PlatformInfo["params"] | null })
       title: "For the Holdfast token",
       lines: [
         <>
-          {s.burnPct}% of every pump.fun creator fee lands in the <Term k="buybackPool" split={s} />, which buys the Holdfast token and
-          burns it.
+          {s.burnPct}% of every pump.fun creator fee lands in the <Term k="buybackPool" split={s} />, which buys the Holdfast token
+          <OfficialTokenRef /> and burns it.
           {params?.buybackMint === BUYBACK_MINT_UNSET ? " The token isn’t live yet; the pools keep accruing until it is." : null}
         </>,
         <>Holdfast itself earns only the {s.launchFeePct}% launch fee and the create fee.</>,

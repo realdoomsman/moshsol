@@ -23,7 +23,8 @@
     "vault:withdraw": "pnpm --filter @holdfast/scripts run vault-withdraw",
     "vault:dev-withdraw": "pnpm --filter @holdfast/scripts run dev-withdraw",
     "agent-wallets": "pnpm --filter @holdfast/scripts run agent-wallets",
-    "fund-executors": "pnpm --filter @holdfast/scripts run fund-executors"
+    "fund-executors": "pnpm --filter @holdfast/scripts run fund-executors",
+    "set-buyback-mint": "pnpm --filter @holdfast/scripts run set-buyback-mint"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"
