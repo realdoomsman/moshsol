@@ -10,12 +10,14 @@ import { fmtLamports, fmtTokens, pctOf } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { launchId, refundState, wasCancelled, type Phase } from "@/lib/launch";
 import { fmtInterval, fmtMult, pumpSplit } from "@/lib/pump-terms";
+import { useMetaReady } from "@/lib/meta-ready";
 import { usePlatform } from "@/lib/queries";
 import { useSolBalance } from "@/lib/sol-balance";
 import { TX_STAGE_LABEL, useTx } from "@/lib/tx";
 import type { LaunchSummary } from "@/lib/types";
 import { RefundGlyph } from "../brand/glyphs";
 import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
 import { cn } from "../ui/cn";
 import { AmountInput } from "../ui/input";
 import { fmtPct, Panel } from "./shared";
@@ -257,20 +259,42 @@ export function BackPanel({ launch: l, phase, bare, className }: { launch: Launc
  * met, and for any wallet once the deadline passed or the raise is full; the creator can also cancel.
  * Pump launches create their token on pump.fun in the same transaction, signed by a fresh mint
  * keypair generated per click (pump.fun needs the mint to sign; it has no authority afterwards).
+ * pump.fun reads the metadata URI once, at that create: launching waits until the URI and its image are
+ * publicly served (Arweave gateways lag fresh uploads), with "Launch anyway" after 5 minutes.
  */
 export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSummary; phase: Phase; className?: string }) {
   const { publicKey } = useWallet();
   const loadClient = useLoadMoshClient();
   const tx = useTx();
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [launchAnyway, setLaunchAnyway] = useState(false);
   const isCreator = publicKey?.toBase58() === l.creator;
   const minMet = BigInt(l.raised) >= BigInt(l.raiseMin);
-  if (phase !== "raising" && phase !== "ready") return null;
-  const canLaunch = minMet && (phase === "ready" || isCreator);
-  if (!canLaunch && !isCreator) return null;
+  const open = phase === "raising" || phase === "ready";
+  const canLaunch = open && minMet && (phase === "ready" || isCreator);
   const pump = l.venue === "pump";
+  const meta = useMetaReady(l.uri, canLaunch && pump);
+  if (!open) return null;
+  if (!canLaunch && !isCreator) return null;
+  const waiting = pump && !meta.ready && !launchAnyway;
   const launchLabel = `Launch $${l.symbol}`;
   const cancelLabel = `Cancel $${l.symbol} raise`;
+  const launch = () => {
+    const mint = pump ? Keypair.generate() : null;
+    void tx.run({
+      label: launchLabel,
+      successMessage: `$${l.symbol} is live. The bundle is in the vault.`,
+      signers: mint ? [mint] : undefined,
+      build: async (payer) => {
+        const client = await loadClient();
+        return [
+          mint
+            ? await client.launchPumpIx({ cranker: payer, launch: new PublicKey(l.address), mint: mint.publicKey })
+            : await client.launchIx(payer, seedKeyOf(l)),
+        ];
+      },
+    });
+  };
 
   return (
     <Panel title={isCreator ? "Creator controls" : "Ready to launch"} className={className}>
@@ -279,31 +303,46 @@ export function LaunchPanel({ launch: l, phase, className }: { launch: LaunchSum
           Launching {pump ? "creates the token on pump.fun and " : ""}buys the bundle before anyone can trade. Any wallet can trigger it.
         </p>
         {canLaunch ? (
-          <Button
-            variant="accent"
-            size="lg"
-            className="w-full"
-            busy={tx.pending === launchLabel}
-            disabled={!!tx.pending && tx.pending !== launchLabel}
-            onClick={() => {
-              const mint = pump ? Keypair.generate() : null;
-              void tx.run({
-                label: launchLabel,
-                successMessage: `$${l.symbol} is live. The bundle is in the vault.`,
-                signers: mint ? [mint] : undefined,
-                build: async (payer) => {
-                  const client = await loadClient();
-                  return [
-                    mint
-                      ? await client.launchPumpIx({ cranker: payer, launch: new PublicKey(l.address), mint: mint.publicKey })
-                      : await client.launchIx(payer, seedKeyOf(l)),
-                  ];
-                },
-              });
-            }}
-          >
-            {tx.pending === launchLabel && tx.stage ? TX_STAGE_LABEL[tx.stage] : "Launch now"}
-          </Button>
+          <>
+            <Button
+              variant="accent"
+              size="lg"
+              className="w-full"
+              busy={tx.pending === launchLabel}
+              disabled={waiting || (!!tx.pending && tx.pending !== launchLabel)}
+              onClick={launch}
+            >
+              {tx.pending === launchLabel && tx.stage ? TX_STAGE_LABEL[tx.stage] : "Launch now"}
+            </Button>
+            {waiting ? (
+              <div className="grid gap-2">
+                <p className="small flex items-start gap-2 text-ink-2" role="status">
+                  <Spinner className="mt-0.5 text-ink-3" />
+                  <span>Publishing your token&rsquo;s image and links to Arweave&hellip; (usually under 2 min)</span>
+                </p>
+                {meta.overdue ? (
+                  <>
+                    <p className="small text-warn">
+                      Still not served after 5 minutes. You can launch anyway, but pump.fun may show the token&rsquo;s image and links
+                      late.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="justify-self-start"
+                      disabled={!!tx.pending}
+                      onClick={() => {
+                        setLaunchAnyway(true);
+                        launch();
+                      }}
+                    >
+                      Launch anyway
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </>
         ) : (
           <p className="small text-ink-3">You can launch once the {fmtLamports(l.raiseMin)} SOL minimum is met.</p>
         )}

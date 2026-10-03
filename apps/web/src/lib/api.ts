@@ -215,6 +215,9 @@ export const api = {
   /** The agent's decision log for one launch (keyed by `launchId`: address or mint). */
   agentActivity: (id: string) => request<AgentActivity>(AGENT_URL, `/launches/${id}/activity`),
   agentResearch: () => request<AgentResearch>(AGENT_URL, "/research"),
+  /** Whether a launch's metadata URI and its image are served by the public network yet (checked by the indexer). */
+  metaReady: (uri: string) =>
+    request<{ ready: boolean; uri: string; image: string | null }>(INDEXER_URL, `/api/meta-ready?uri=${encodeURIComponent(uri)}`),
   upload: (input: UploadInput) => {
     const form = new FormData();
     form.set("image", input.image);

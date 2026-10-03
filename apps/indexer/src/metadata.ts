@@ -106,7 +106,11 @@ async function readCapped(res: Response): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function fetchRemoteJson(uri: string): Promise<unknown> {
+/**
+ * GET through the vetting dispatcher, following up to `MAX_REDIRECTS` redirects (each hop's scheme and host
+ * re-checked); one `TIMEOUT_MS` budget covers every hop. The caller owns (reads or cancels) the final body.
+ */
+async function fetchPublic(uri: string, accept: string): Promise<Response> {
   let url: URL;
   try {
     url = new URL(uri);
@@ -121,7 +125,7 @@ async function fetchRemoteJson(uri: string): Promise<unknown> {
     assertPublicLiteral(url);
     let res: Response;
     try {
-      res = await fetch(url, { signal, dispatcher, redirect: "manual", headers: { accept: "application/json" } });
+      res = await fetch(url, { signal, dispatcher, redirect: "manual", headers: { accept } });
     } catch (err) {
       // undici wraps connect errors (our lookup rejection included) in a TypeError("fetch failed").
       if (err instanceof Error && err.cause instanceof UnfetchableUriError) throw err.cause;
@@ -134,12 +138,25 @@ async function fetchRemoteJson(uri: string): Promise<unknown> {
       url = new URL(location, url);
       continue;
     }
-    if (!res.ok) {
-      await res.body?.cancel();
-      throw new Error(`metadata fetch returned HTTP ${res.status}`);
-    }
-    return JSON.parse(await readCapped(res));
+    return res;
   }
+}
+
+/** A public http(s) JSON document (5s timeout, 256 KB cap); throws on any non-2xx status. */
+export async function fetchRemoteJson(uri: string): Promise<unknown> {
+  const res = await fetchPublic(uri, "application/json");
+  if (!res.ok) {
+    await res.body?.cancel();
+    throw new Error(`metadata fetch returned HTTP ${res.status}`);
+  }
+  return JSON.parse(await readCapped(res));
+}
+
+/** HTTP status a public http(s) URL answers a GET with after redirects (the body is discarded unread). */
+export async function probeStatus(uri: string): Promise<number> {
+  const res = await fetchPublic(uri, "*/*");
+  await res.body?.cancel();
+  return res.status;
 }
 
 /** Metaplex-style JSON → sanitized display fields. Invalid optional fields are dropped, not fatal. */

@@ -9,6 +9,7 @@ import type { ArweaveStore } from "./arweave";
 import { registerDiscoveryRoutes } from "./discovery";
 import type { Holders } from "./holders";
 import type { Hub } from "./hub";
+import { registerMetaReady } from "./meta-ready";
 import { registerRateLimits } from "./ratelimit";
 import { NotFoundError, registerRoutes, type RouteDeps } from "./routes";
 import { HttpError, ValidationError } from "./sanitize";
@@ -99,7 +100,7 @@ export async function createServer(opts: ServerOptions): Promise<FastifyInstance
   return app;
 }
 
-/** Registers `/ws`, the JSON API (chain data, social, discovery) and the upload endpoints. */
+/** Registers `/ws`, the JSON API (chain data, social, discovery, metadata readiness) and the upload endpoints. */
 export function registerApi(
   app: FastifyInstance,
   deps: RouteDeps & { hub: Hub; holders: Holders },
@@ -124,5 +125,6 @@ export function registerApi(
     hidden: deps.summaries.hidden,
   });
   registerDiscoveryRoutes(app, { store: deps.store, price: deps.price, summaries: deps.summaries });
+  registerMetaReady(app, opts);
   registerUpload(app, opts);
 }
