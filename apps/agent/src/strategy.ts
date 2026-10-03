@@ -677,7 +677,9 @@ const OFFICIAL_PULLBACK_CLIP = 0.2;
 /** Official token: the largest pullback clip (deep pullbacks), share of the window's buy room. */
 const OFFICIAL_PULLBACK_CLIP_MAX = 0.5;
 /** Official token: rally sells only while spot is within this share of its 15 min high. */
-const OFFICIAL_SELL_NEAR_HIGH = 0.03;
+const OFFICIAL_SELL_NEAR_HIGH = 0.05;
+/** Official token: fewest seconds between the agent's fills before a pullback buy. */
+const OFFICIAL_BUY_SPACING_SECS = 10;
 
 /** Climax volume: the short window trades at least this multiple of the median minute volume. */
 const CLIMAX_VOLUME_RATIO = 2;
@@ -705,7 +707,10 @@ function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyP
   const minSell = solStr(s.minSellLamports);
   if (m.vaultTokens === 0n) return hold("vault_empty", `${head} but vault has no tokens`);
   // Sell ladder: at this multiple of the vault's average cost the vault keeps bundleTokens × (1 − share); the rest may go.
-  const mult = Number(x) / Number(y) / (Number(costSol) / Number(costTokens));
+  // The official token's ladder runs on the bundle's own cost: its pullback buys sit well above that cost and would
+  // otherwise drag the vault average up until the ladder froze every sell ("nothing left to sell") while it still ran.
+  const [ladderSol, ladderTokens] = m.official && m.bundleTokens > 0n ? [m.bundleSol, m.bundleTokens] : [costSol, costTokens];
+  const mult = Number(x) / Number(y) / (Number(ladderSol) / Number(ladderTokens));
   const share = ladderShare(params, mult);
   const keep = (m.bundleTokens * BigInt(Math.round((1 - share) * 1_000_000))) / 1_000_000n;
   const gap = m.vaultTokens > keep ? m.vaultTokens - keep : 0n;
@@ -798,6 +803,11 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
   if (m.official && flow.drawdownHigh >= OFFICIAL_PULLBACK) {
     const head = `pullback −${(flow.drawdownHigh * 100).toFixed(1)}% off the 15-min high`;
     if (spacing) return done(hold("spacing", `${head} but ${spacing}`));
+    // One clip per `OFFICIAL_BUY_SPACING_SECS`: a burst of max-impact buys spent most of a window in 10 s on the way
+    // down; spaced clips buy the dip itself, not just its first seconds.
+    if (flow.sinceAgentTradeSecs < OFFICIAL_BUY_SPACING_SECS) {
+      return done(hold("spacing", `${head} but official dip buys are ${OFFICIAL_BUY_SPACING_SECS}s apart, next in ${Math.ceil(OFFICIAL_BUY_SPACING_SECS - flow.sinceAgentTradeSecs)}s`));
+    }
     return done(planBuy(m, s, proj, params, flow, head));
   }
   if (proj.price <= proj.buyCeiling) {
