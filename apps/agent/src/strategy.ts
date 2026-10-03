@@ -628,16 +628,29 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
     // The official token supports its chart on real pullbacks too: smaller clips, only well off the 15 min high.
     if (m.official) {
       const off = `${(flow.drawdownHigh * 100).toFixed(1)}% off the 15-min high`;
+      // Depth-scaled reserve: shallow pullbacks may only spend SOL above a high reserve, deep ones nearly all of it, so
+      // the vault keeps its SOL for the real dump instead of spending it on 7% wobbles at the top.
       const share = solShare(m);
-      if (share < OFFICIAL_SOL_FLOOR) {
-        return hold("vault_floor", `${head} but vault SOL is ${(share * 100).toFixed(0)}% of its value (pullback buys resume from ${OFFICIAL_SOL_FLOOR * 100}%; sells near the high rebuild it); ${buyback}`);
+      const reserve = officialReserve(flow.drawdownHigh);
+      const valueLamports = Number(m.vaultSol) / Math.max(share, 1e-9);
+      const spendable = BigInt(Math.max(0, Math.floor(Number(m.vaultSol) - reserve * valueLamports)));
+      if (spendable < s.minTradeLamports) {
+        return hold(
+          "vault_floor",
+          `${head} but vault SOL is ${(share * 100).toFixed(0)}% of its value; at ${(flow.drawdownHigh * 100).toFixed(0)}% off the high it keeps ${(reserve * 100).toFixed(0)}% for deeper dips (sells near the high rebuild it); ${buyback}`,
+        );
+      }
+      // A live flush on a shallow pullback: wait for the selling to slow; deep dumps are bought into.
+      const sellShare = (1 - flow.imbalanceRecent) / 2;
+      if (flow.drawdownHigh < OFFICIAL_DEEP && sellShare > OFFICIAL_FLUSH_SELL_SHARE && flow.volumeRatioRecent >= 1) {
+        return hold("flow", `${head} but live sell-off (${Math.round(sellShare * 100)}% of the last minute sold), buying once it slows or from ${OFFICIAL_DEEP * 100}% off the high`);
       }
       if (flow.drawdownHigh < OFFICIAL_PULLBACK) {
         return hold("cost_basis", `${head} but ${buyback}; pullback buys need ≥ ${OFFICIAL_PULLBACK * 100}% off the 15-min high (now ${off})`);
       }
       // Deeper pullbacks get bigger clips: 20% of the window room at 7% off the high, up to 50% from ~22%.
       const depthShare = Math.min(OFFICIAL_PULLBACK_CLIP_MAX, OFFICIAL_PULLBACK_CLIP + (flow.drawdownHigh - OFFICIAL_PULLBACK) * 2);
-      const pull = largestFeasible(minBig(ideal, clipOf(depthShare)), impactOk);
+      const pull = largestFeasible(minBig(minBig(ideal, clipOf(depthShare)), spendable), impactOk);
       if (pull < s.minTradeLamports) return hold("impact", `${head}, impact limit leaves pullback buy below minimum`);
       const out = buyFill(m, proj, pull);
       const moved = moveBps(price, priceQ64(proj.x + buyNet(m, pull), proj.y - out));
@@ -686,12 +699,26 @@ const OFFICIAL_SELL_NEAR_HIGH = 0.05;
 const OFFICIAL_BUY_SPACING_SECS = 10;
 /** Official token: the vault's target SOL share of its value (SOL + tokens at spot). Under it, sells go bigger and wider. */
 const OFFICIAL_SOL_TARGET = 0.35;
-/** Official token: under this SOL share, pullback buys above the average sell pause until sells rebuild SOL. */
-const OFFICIAL_SOL_FLOOR = 0.15;
 /** Official token: under the SOL target, rally sells run while spot is within this share of the 15 min high. */
 const OFFICIAL_SELL_NEAR_HIGH_REBUILD = 0.1;
 /** Official token: one sell moves spot at most this much (bps), so sells absorb buying instead of knocking the price down. */
 const OFFICIAL_SELL_IMPACT_BPS = 300n;
+
+/** Official token: from this far off the 15 min high a pullback is a dump: bought into even while it is still selling. */
+const OFFICIAL_DEEP = 0.2;
+/** Official token: a shallow pullback whose latest minute sold more than this share of its volume waits. */
+const OFFICIAL_FLUSH_SELL_SHARE = 0.7;
+/** Official token: the reserve falls to 0 at this far off the 15 min high. */
+const OFFICIAL_RESERVE_ZERO_AT = 0.4;
+
+/**
+ * Official token: the share of the vault's value that must stay SOL after a pullback buy at `drawdown` off the 15 min
+ * high — `OFFICIAL_SOL_TARGET` at the high, falling linearly to 0 at `OFFICIAL_RESERVE_ZERO_AT` (35% at 0, ~29% at 7%,
+ * ~17% at 20%, ~9% at 30%, 0 from 40%).
+ */
+export function officialReserve(drawdown: number): number {
+  return OFFICIAL_SOL_TARGET * Math.max(0, 1 - drawdown / OFFICIAL_RESERVE_ZERO_AT);
+}
 
 /** The vault's SOL as a share of its value (SOL + tokens at spot), 0..1. */
 export function solShare(m: Pick<MarketState, "vaultSol" | "vaultTokens" | "virtualSol" | "realSol" | "tokenReserve">): number {
