@@ -8,6 +8,9 @@ export class PublicVolume {
   private readonly lamports = new Map<string, bigint>();
   private readonly fetchedAt = new Map<string, number>();
   private readonly inflight = new Set<string>();
+  /** Highest price (SOL per token) over the last 24 h from the indexer's hourly candles: survives agent restarts. */
+  private readonly high = new Map<string, number>();
+  private readonly highAt = new Map<string, number>();
 
   constructor(
     private readonly indexerUrl: string | null,
@@ -22,6 +25,36 @@ export class PublicVolume {
     const at = this.fetchedAt.get(launch) ?? 0;
     if (Date.now() - at >= this.refreshMs) void this.refresh(launch);
     return this.lamports.get(launch) ?? null;
+  }
+
+  /** Indexed 24 h high (SOL per token) of `launch`, or null; refreshed at most once a minute. */
+  high24h(launch: string): number | null {
+    if (!this.indexerUrl) return null;
+    if (Date.now() - (this.highAt.get(launch) ?? 0) >= 60_000) void this.refreshHigh(launch);
+    return this.high.get(launch) ?? null;
+  }
+
+  private async refreshHigh(launch: string): Promise<void> {
+    const key = `high:${launch}`;
+    if (this.inflight.has(key)) return;
+    this.inflight.add(key);
+    this.highAt.set(launch, Date.now());
+    try {
+      const res = await fetch(`${this.indexerUrl}/api/launches/${launch}/candles?tf=3600`, {
+        headers: this.internalToken ? { "x-holdfast-internal": this.internalToken } : {},
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as { candles?: { time: number; high: number }[] };
+      const since = Date.now() / 1000 - 86_400;
+      let high = 0;
+      for (const c of body.candles ?? []) if (c.time + 3_600 > since && c.high > high) high = c.high;
+      if (high > 0) this.high.set(launch, high);
+    } catch (err) {
+      this.log("24h high fetch failed", { launch, err: String(err) });
+    } finally {
+      this.inflight.delete(key);
+    }
   }
 
   private async refresh(launch: string): Promise<void> {

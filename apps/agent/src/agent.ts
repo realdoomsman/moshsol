@@ -477,8 +477,21 @@ export class Agent {
     const market = this.marketOf(rt);
     if (!market || this.skipReason() !== undefined) return;
     const now = this.now();
-    const flow = rt.flow.observe(market, now);
+    const flow = this.withIndexedHigh(rt, market, rt.flow.observe(market, now));
     await this.cranks.payout(this.crankLaunch(rt), market, project(market, now), flow, now, this.strategy);
+  }
+
+  /**
+   * The flow window's 24 h high only covers this process's lifetime (every deploy resets it); the indexer's hourly
+   * candles hold the real one, so a slow bleed is measured from it after a restart too.
+   */
+  private withIndexedHigh(rt: LaunchRuntime, market: MarketState, flow: FlowFeatures): FlowFeatures {
+    const high = this.publicVolume.high24h(rt.address.toBase58());
+    if (high === null || !(high > 0)) return flow;
+    // MarketState spot is lamports per base unit; candles are SOL per whole token (6 decimals): ×1e-3.
+    const spot = (Number(market.virtualSol + market.realSol) / Number(market.tokenReserve)) * 1e-3;
+    const drawdown = Math.max(0, 1 - spot / high);
+    return drawdown > flow.drawdown24h ? { ...flow, drawdown24h: drawdown } : flow;
   }
 
   private skipped(rt: LaunchRuntime): boolean {
@@ -864,7 +877,7 @@ export class Agent {
       return;
     }
     const now = this.now();
-    const flow = rt.flow.observe(market, now);
+    const flow = this.withIndexedHigh(rt, market, rt.flow.observe(market, now));
     let ev = evaluate(market, this.sizing, now, this.strategy, flow);
     const skipReason = this.skipped(rt) ? "everything disabled for this launch by the operator (AGENT_SKIP_LAUNCHES)" : this.skipReason();
     if (skipReason) {
