@@ -205,14 +205,36 @@ export interface TradeSent {
   timing: SendTiming;
 }
 
+/** `TradeSender.send` did not send: the plan no longer passes the program's rules on the state at send time. */
+export class StalePlanError extends Error {
+  constructor(readonly reason: string) {
+    super(`plan stale at send time: ${reason}`);
+    this.name = "StalePlanError";
+  }
+}
+
+export interface TradeSendOptions {
+  /** Fires once the send was accepted. */
+  onSent?: (signature: string) => void;
+  /** An agent wallet executing the trade: it pays the fee and the Sender tip and signs next to the agent. */
+  payer?: Keypair;
+  /**
+   * Why the plan would now be rejected, or null; asked before the transaction is prepared and again right before
+   * it is broadcast, on whatever state the caller holds then (a non-null answer throws `StalePlanError`, unsent).
+   */
+  stale?: () => string | null;
+}
+
 /**
  * The latency-critical send of `agent_*` trades. Nothing waits on a round trip that can be done ahead of time:
  * the blockhash is refreshed in the background, a launch's fee estimate (the TRADE_FEE_PERCENTILE of its
  * accounts' recent fee market, within the configured floor/cap) is warmed by the heartbeat and reused for
  * FEE_TTL_MS, and the compute limit comes from the units the same trade kind consumed when it last landed (a
- * simulation only the first time). The transaction goes out without preflight — the plan was made on the same
- * state, and every rule is the program's to enforce anyway — to the RPC (Helius paid plans route it over staked
- * connections) and, with `SENDER_URL`, to Helius Sender at the same time (the transaction then carries the
+ * simulation only the first time). Right before the broadcast the caller's `stale` check re-runs the program's
+ * rules on the plan against the state it holds then (the stream's, not the decision's snapshot), so a public trade
+ * that moved spot out of the band while the transaction was prepared stops it unsent. The transaction goes out
+ * without preflight — every rule is the program's to enforce anyway — to the RPC (Helius paid plans route it over
+ * staked connections) and, with `SENDER_URL`, to Helius Sender at the same time (the transaction then carries the
  * Sender tip). Landing is tracked through the stream's signature notifications (processed, then confirmed) with
  * a status poll as fallback, rebroadcasting every 2 s until the blockhash expires.
  */
@@ -278,15 +300,12 @@ export class TradeSender {
 
   /**
    * Signs and sends `ixs` (one trade), resolving once confirmed; a landed failure throws `TransactionFailedError`
-   * (logs attached), an expired blockhash `TransactionExpiredError`. `onSent` fires once the send was accepted.
-   * `payerWallet` (an agent wallet executing the trade) pays the fee and the Sender tip and signs next to the agent.
+   * (logs attached), an expired blockhash `TransactionExpiredError`, a plan gone stale before broadcast `StalePlanError`.
    */
-  async send(
-    ixs: TransactionInstruction[],
-    keys: { fee: string; units: string },
-    onSent?: (signature: string) => void,
-    payerWallet?: Keypair,
-  ): Promise<TradeSent> {
+  async send(ixs: TransactionInstruction[], keys: { fee: string; units: string }, opts: TradeSendOptions = {}): Promise<TradeSent> {
+    const payerWallet = opts.payer;
+    const staleBefore = opts.stale?.();
+    if (staleBefore) throw new StalePlanError(staleBefore);
     const payer = (payerWallet ?? this.signer).publicKey;
     const extra: TransactionInstruction[] = [];
     if (this.sender) {
@@ -303,7 +322,12 @@ export class TradeSender {
     };
     const remembered = this.units.get(keys.units);
     const [units, micro, hash] = await Promise.all([
-      remembered ?? simulateUnits(this.connection, compile([ComputeBudgetProgram.setComputeUnitLimit({ units: MAX_COMPUTE_UNITS })], PLACEHOLDER_BLOCKHASH), "processed"),
+      remembered ??
+        simulateUnits(this.connection, compile([ComputeBudgetProgram.setComputeUnitLimit({ units: MAX_COMPUTE_UNITS })], PLACEHOLDER_BLOCKHASH), "processed").catch((err: unknown) => {
+          // A rejection on state that moved away from the plan is the plan going stale, not the program refusing it.
+          const stale = err instanceof TransactionFailedError ? opts.stale?.() : null;
+          throw stale ? new StalePlanError(stale) : err;
+        }),
       this.fee(keys.fee, ixs),
       this.freshBlockhash(),
     ]);
@@ -319,9 +343,12 @@ export class TradeSender {
     tx.sign(payerWallet ? [payerWallet, this.signer] : [this.signer]);
     const raw = tx.serialize();
     const preparedAt = Date.now();
+    // The simulation, fee and blockhash took round trips: the state the plan was made on may have moved meanwhile.
+    const staleNow = opts.stale?.();
+    if (staleNow) throw new StalePlanError(staleNow);
     const signature = await this.broadcast(raw, true);
     const sentAt = Date.now();
-    onSent?.(signature);
+    opts.onSent?.(signature);
     const timing = await this.confirm(signature, raw, hash.lastValidBlockHeight);
     return {
       signature,

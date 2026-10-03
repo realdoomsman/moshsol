@@ -342,6 +342,36 @@ export function minBig(...v: bigint[]): bigint {
   return v.reduce((a, b) => (b < a ? b : a));
 }
 
+/**
+ * Why `agent_buy*` / `agent_sell*` would reject `plan` — its exact amount and slippage floor — on `m` at chain time
+ * `now`, or null when it passes. Plans are sized on the state of their decision; this re-checks one on the state at
+ * send time (a public trade in between can lift spot out of the buy band or push a fill under its floor): band,
+ * window budget, vault floor / balance, impact, slippage floor and the cost rule at the fill the state gives now.
+ * A plan `evaluate` just made on the same state always passes.
+ */
+export function planRejection(m: MarketState, now: bigint, plan: TradePlan): string | null {
+  const p = project(m, now);
+  const dev = `${fmtDeviation(p.deviationPpm)} vs EMA`;
+  if (plan.action === "buy") {
+    if (p.price > p.buyCeiling) return `spot ${dev}, no longer below the buy band`;
+    if (plan.amount > p.buyRemaining) return "the window's buy budget no longer covers it";
+    if (plan.amount > spendableSol(m)) return "vault SOL above its floor no longer covers it";
+    if (!buyImpactOk(m, p, plan.amount)) return "it would now move spot past the impact limit";
+    const tokens = buyFill(m, p, plan.amount);
+    if (tokens < plan.minOut) return "the fill is now under its slippage floor";
+    if (!buyCostOk(m, p, plan.amount, tokens)) return "the fill is now above vault avg cost and avg sell − band";
+    return null;
+  }
+  if (p.price < p.sellFloor) return `spot ${dev}, no longer above the sell band`;
+  if (plan.amount > p.sellRemaining) return "the window's sell budget no longer covers it";
+  if (plan.amount > m.vaultTokens) return "the vault no longer holds the tokens";
+  if (!sellCurveOk(m, p, plan.amount)) return "it would now move spot past the impact limit";
+  const { net } = sellFill(m, p, plan.amount);
+  if (net < plan.minOut) return "the fill is now under its slippage floor";
+  if (!sellAboveCost(m, plan.amount, net)) return "the fill is now under vault avg cost + band";
+  return null;
+}
+
 // ------------------------------------------------------------------ policy
 
 /**

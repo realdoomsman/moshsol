@@ -13,7 +13,6 @@ import {
   fetchVenueState,
   minOut,
   payoutStatus,
-  poolPda,
   pumpRefOf,
   quoteBuy,
   splAta,
@@ -24,7 +23,6 @@ import {
   type MoshEvent,
   type PlatformAccount,
   type PumpLaunchRef,
-  type VenueState,
 } from "@holdfast/sdk";
 import type { ActivityItem, ActivityKind, ActivityLog } from "./activity";
 import type { LookupTable } from "./alt";
@@ -39,11 +37,13 @@ import { tokenAmount } from "./venue";
 /**
  * The permissionless instructions the agent cranks for every live launch, independent of agent pauses
  * and of which key is the agent authority: `wind_down` / `wind_down_pump` on both venues, and on pump
- * launches `graduate_pump` (once the curve completed and pump.fun migrated it), `collect_pump_fees`
- * (creator fees worth collecting) and `buyback_burn` (a buyback pool worth spending). Each check costs
- * RPC reads, so every (launch, crank) pair runs at most every `crankMs` (wind-down: WIND_DOWN_RECHECK_MS)
- * and a failed send backs off exponentially from there. `payout_backers` is different: it is signed by the
- * agent authority and only sent when the program says a payout is due AND the market is strong.
+ * launches `collect_pump_fees` (creator fees worth collecting) and `buyback_burn` (a buyback pool worth
+ * spending). Each check costs RPC reads, so every (launch, crank) pair runs at most every `crankMs`
+ * (wind-down: WIND_DOWN_RECHECK_MS) and a failed send backs off exponentially from there. `graduate_pump`
+ * is not paced here: the agent sends it the moment the curve completed and pump.fun's pool exists, and
+ * retries every second until the launch records the pool (`Agent.graduate`). `payout_backers` is different:
+ * it is signed by the agent authority and only sent when the program says a payout is due AND the market is
+ * strong.
  */
 
 /** Creator fees below this stay in pump.fun's vaults (the crank's own fee would be a visible share). */
@@ -164,19 +164,21 @@ export class Cranks {
     }, { payoutKind: kind, market: gate.reason, targetSol: Number(status.target) / LAMPORTS_PER_SOL, liquidSol: Number(status.liquid) / LAMPORTS_PER_SOL });
   }
 
-  /** The pump launch cranks: graduation, creator fee collection, buyback-and-burn. */
-  async pump(l: CrankLaunch, platform: PlatformAccount, venue: VenueState | null, now: bigint): Promise<void> {
+  /**
+   * `graduate_pump` for a launch whose curve completed and whose canonical PumpSwap pool exists (the caller read
+   * it): one attempt with no back-off of its own — the agent retries on its own clock until the launch records the
+   * pool. In dry run the attempt is recorded at most every `crankMs`. Returns whether it landed.
+   */
+  async graduate(l: CrankLaunch): Promise<boolean> {
+    if (this.cfg.dryRun && !this.due(l, "graduate")) return false;
+    return this.attempt("graduate", l, this.cfg.dryRun ? this.cfg.crankMs : 0, () => this.client.graduatePumpIx(pumpRefOf(l.json)), () => ({}));
+  }
+
+  /** The pump launch cranks paced by `crankMs`: creator fee collection, buyback-and-burn. */
+  async pump(l: CrankLaunch, platform: PlatformAccount, now: bigint): Promise<void> {
     const ref = pumpRefOf(l.json);
     const cranker = this.signer.publicKey;
-    const connection = this.client.connection;
     const ms = this.cfg.crankMs;
-
-    if (venue?.complete && !ref.graduated && this.due(l, "graduate")) {
-      this.defer(l, "graduate", ms);
-      // pump.fun migrates a completed curve into its canonical pool; `graduate_pump` records it once it exists.
-      const pool = await connection.getAccountInfo(poolPda(ref.mint), "confirmed");
-      if (pool) await this.attempt("graduate", l, ms, () => this.client.graduatePumpIx(ref), () => ({}));
-    }
 
     if (this.due(l, "collect_fees")) {
       this.defer(l, "collect_fees", ms);

@@ -5,6 +5,7 @@ import {
   decodeBondingCurve,
   decodePool,
   poolBaseAta,
+  poolPda,
   poolQuoteAta,
   poolStateOf,
   type LaunchJson,
@@ -28,7 +29,15 @@ export function tokenAmount(info: { data: Buffer }): bigint {
 export function venueKeys(l: Pick<LaunchJson, "mint" | "pump">): PublicKey[] {
   const mint = new PublicKey(l.mint);
   if (!l.pump.graduated) return [bondingCurvePda(mint)];
-  const pool = new PublicKey(l.pump.pool);
+  return poolKeys(mint, new PublicKey(l.pump.pool));
+}
+
+/**
+ * A graduated launch's venue accounts: the pool's base and quote token accounts and the pool. `pool` defaults to the
+ * canonical pool pump.fun migrates a completed curve into, the only one `graduate_pump` accepts, so the agent can
+ * watch it from the moment the curve completes, before the launch records it.
+ */
+export function poolKeys(mint: PublicKey, pool = poolPda(mint)): PublicKey[] {
   return [poolBaseAta(pool, mint), poolQuoteAta(pool), pool];
 }
 

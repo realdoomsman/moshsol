@@ -32,8 +32,11 @@ export function loadExecutors(source: ExecutorSource): Keypair[] {
 
 type Side = "buy" | "sell";
 
-/** What `ExecutorPool.pick` hands out: a wallet for the trade, or why none may trade it now. */
-export type WalletPick = { wallet: Keypair } | { reason: string };
+/**
+ * What `ExecutorPool.pick` hands out: a wallet for the trade, or why none may trade it now (`retryAt`: wall-clock ms
+ * when the reason runs out by itself — the spacing between a buy and a sell).
+ */
+export type WalletPick = { wallet: Keypair } | { reason: string; retryAt?: number };
 
 interface Wallet {
   keypair: Keypair;
@@ -97,7 +100,7 @@ export class ExecutorPool {
     const l = this.launches.get(launch);
     if (l?.inFlight) return { reason: "an agent wallet is already trading this launch" };
     if (l?.side && l.side !== side && now - l.at < this.opts.spacingMs) {
-      return { reason: `last ${l.side} on this launch was ${Math.round((now - l.at) / 1000)}s ago (spacing ${Math.round(this.opts.spacingMs / 1000)}s)` };
+      return { reason: `last ${l.side} on this launch was ${Math.round((now - l.at) / 1000)}s ago (spacing ${Math.round(this.opts.spacingMs / 1000)}s)`, retryAt: l.at + this.opts.spacingMs };
     }
     let best: Wallet | null = null;
     for (const key of this.registered) {

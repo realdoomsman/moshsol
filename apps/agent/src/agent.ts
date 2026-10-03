@@ -2,7 +2,6 @@ import { LAMPORTS_PER_SOL, SystemProgram, SYSVAR_CLOCK_PUBKEY, TransactionInstru
 import { createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
-  SAME_SLOT_TRADE_MESSAGE,
   TransactionExpiredError,
   TransactionFailedError,
   agentExecutorsOf,
@@ -18,19 +17,22 @@ import {
 } from "@holdfast/sdk";
 import type { ActivityItem, ActivityLog } from "./activity";
 import { LookupTable } from "./alt";
+import { TradeBackoff } from "./backoff";
 import type { AgentConfig } from "./config";
 import { Cranks, type CrankLaunch } from "./cranks";
 import { FlowWindow, NEUTRAL_FLOW, displayFlow, type FlowFeatures } from "./flow";
 import { ExecutorPool, loadExecutors } from "./executors";
 import { log } from "./log";
 import { Metrics } from "./metrics";
-import { TradeSender, landed, sendIxs } from "./send";
+import { StalePlanError, TradeSender, landed, sendIxs } from "./send";
 import { PublicVolume } from "./public-volume";
 import type { Decision, StatusSnapshot } from "./status";
 import {
   displayPrices,
   evaluate,
   marketOf,
+  planRejection,
+  project,
   type DisplayPrices,
   type Evaluation,
   type MarketState,
@@ -39,7 +41,7 @@ import {
   type Sizing,
 } from "./strategy";
 import { Stream, type AccountUpdate } from "./stream";
-import { decodeVenue, venueKeys } from "./venue";
+import { decodeVenue, poolKeys, venueKeys } from "./venue";
 
 /** Byte offset of `Launch.status`: discriminator(8) + index u64(8) + creator(32) + mint(32). */
 const LAUNCH_STATUS_OFFSET = 80;
@@ -57,8 +59,15 @@ const LOW_BALANCE_LAMPORTS = 0.01 * LAMPORTS_PER_SOL;
 const AGENT_RESERVE_LAMPORTS = 0.05 * LAMPORTS_PER_SOL;
 /** `getMultipleAccountsInfo` accepts at most this many keys per call. */
 const MAX_BATCH_KEYS = 100;
-/** First step of the exponential back-off after a failed trade (doubling per consecutive failure, up to `maxBackoffMs`). */
-const ERROR_BACKOFF_MS = 15_000;
+/** Graduation: the pool is re-read and `graduate_pump` retried this often until the launch records the pool. */
+const GRADUATE_RETRY_MS = 1_000;
+/** Failed `graduate_pump` sends (with the pool there) retried at GRADUATE_RETRY_MS before the retries back off to `crankMs`. */
+const GRADUATE_FAST_TRIES = 10;
+/**
+ * pump.fun migrates within a slot or two; when its pool is still missing this long after completion the reads slow
+ * to the heartbeat's pace (the stream still reports the pool's creation at once).
+ */
+const GRADUATE_FAST_WINDOW_MS = 120_000;
 /** After a landed trade, how long the stream gets to deliver the launch with that fill before the next plan re-reads instead. */
 const FILL_WAIT_MS = 5_000;
 /** Stream commitment: a change is acted on in the slot it is first reported (the program re-checks every rule at execution). */
@@ -67,10 +76,13 @@ const STREAM_COMMITMENT: Commitment = "processed";
 const AGENT_BUY_PUMP = createHash("sha256").update("global:agent_buy_pump").digest().subarray(0, 8);
 const AGENT_SELL_PUMP = createHash("sha256").update("global:agent_sell_pump").digest().subarray(0, 8);
 
-/** What set a decision off: a stream notification (with the slot the change landed in) or the heartbeat poll. */
+/**
+ * What set a decision off: a stream notification (with the slot the change landed in), the heartbeat poll, or a wake-up
+ * the agent scheduled itself (a cooldown or back-off ran out, graduation made the pool tradable).
+ */
 interface Trigger {
-  source: "stream" | "poll";
-  /** Wall-clock ms the agent first saw the change (notification arrival, or the poll's read). */
+  source: "stream" | "poll" | "wake";
+  /** Wall-clock ms the agent first saw the change (notification arrival, the poll's read, the wake-up). */
   seenAt: number;
   slot?: number;
   /** Wall-clock ms the RPC node first reported `slot` (≈ when the change became visible on chain). */
@@ -85,34 +97,42 @@ interface LaunchRuntime {
   json: LaunchJson;
   /** Slot the launch account was read at or changed in; older reads never overwrite newer state. */
   launchSlot: number;
-  /** Venue accounts of a pump launch (`venueKeys`), their data and the slot each was read at. */
+  /**
+   * Slot of the newest change seen in the launch's state: a streamed update, or a read whose data differed from what
+   * was known (a read of unchanged state is no change). A program rejection's back-off ends with a later one.
+   */
+  changeSlot: number;
+  /** Venue accounts of a pump launch (`venueKeys`): what `decodeVenue` reads, in order. */
   venueKeys: PublicKey[];
-  venue: ({ data: Buffer } | null)[];
-  venueSlots: number[];
-  /** Stream subscriptions and the accounts they cover (re-made when the set changes: graduation). */
-  subs: number[];
-  subsFor: string;
+  /** Once the curve completed (until the launch records the pool): the canonical pool's accounts, watched ahead. */
+  poolKeys: PublicKey[];
+  /** Data of every watched venue / pool account (null = missing) and the slot it was read at, by base58 address. */
+  accounts: Map<string, { data: Buffer | null; slot: number }>;
+  /** Stream subscription per watched address (the launch, its venue and pool accounts). */
+  subs: Map<string, number>;
   /** Stream epoch whose data a re-read confirmed; another epoch (or new subscriptions) = re-read before sending. */
   verifiedEpoch: number;
-  /** Wall-clock ms before which no trade is sent (cooldown after a trade, or error backoff). */
-  nextTradeAt: number;
-  /** Consecutive failed sends (sizes the backoff); reset by a success or when the market no longer wants a trade. */
-  failures: number;
-  /** Last send error; cleared only by a successful trade, so a pending wait is known to be an error backoff. */
-  lastError?: string;
+  /** Wall-clock ms before which no trade is sent, either side (cooldown after a landed trade). */
+  cooldownUntil: number;
+  /** Error back-off, per side (a failing buy never holds a sell back). */
+  backoff: TradeBackoff;
   /** Kind of the last logged decision; repeated holds/skips of the same kind are not re-logged. */
   loggedKind?: string;
   /** Public flow from the Launch / venue deltas: every stream update and every heartbeat. */
   flow: FlowWindow;
   /** Held by whatever may send for this launch (a decision, the wind-down): one in-flight trade per launch. */
   busy: boolean;
-  /** Earliest stream change not yet decided on, and the debounce timer that will. */
+  /** Earliest change not yet decided on, and the debounce timer that will. */
   trigger: Trigger | null;
   timer: NodeJS.Timeout | null;
+  /** A wake-up the agent scheduled (a cooldown or back-off running out) and when it fires. */
+  wake: { timer: NodeJS.Timeout; at: number } | null;
   /** After a landed trade: `agent_buys + agent_sells` the launch must show before the next plan, and until when to wait. */
   fill: { count: number; until: number } | null;
   /** `agent_buy_pump` built by the SDK at the last heartbeat (accounts incl. the venue's live fee recipients), for agent wallet `executor` (null = the pump authority trades). */
   template: { ix: TransactionInstruction; graduated: boolean; executor: PublicKey | null } | null;
+  /** The curve completed: since when, and the running graduation loop's nudge (pool created → retry at once). */
+  graduation: { completeAt: number; running: boolean; nudge: (() => void) | null } | null;
 }
 
 /** When the final decision was made and the timing facts recorded with it. */
@@ -132,9 +152,12 @@ const nowSec = () => Math.floor(Date.now() / 1000);
  * The vault agent's loop. With the stream (`SUBSCRIBE`), every live launch's Launch account and venue accounts
  * (bonding curve, or the PumpSwap pool's token accounts) are subscribed at `processed`: an update is folded into
  * the launch's state and flow window at once and decided on DEBOUNCE_MS later, on the streamed state (no re-read
- * while the stream is healthy and verified). The poll (`POLL_MS`) is the heartbeat: it finds new and ended
- * launches, re-syncs subscriptions (graduation), runs the cranks and the payout, decides on every launch as the
- * fallback trigger, and warms the trade path (instruction template, fee estimate, lookup table).
+ * while the stream is healthy and verified). A decision held back by time alone (cooldown, back-off) wakes itself
+ * when that time runs out. A curve update that shows the pump.fun curve complete starts graduation at once
+ * (`graduate`): the canonical pool is watched ahead and `graduate_pump` is sent as soon as it exists. The poll
+ * (`POLL_MS`) is the heartbeat: it finds new and ended launches, decides on every launch as the fallback trigger
+ * (first, all launches at once), then runs the cranks and the payout and warms the trade path (instruction
+ * template, fee estimate, lookup table).
  */
 export class Agent {
   /** Keyed by launch address (pump launches share the default mint until `launch_pump`). */
@@ -165,6 +188,8 @@ export class Agent {
   /** Latest chain clock: from the stream (every slot) and from the heartbeat. */
   private clock: { unixTs: bigint; slot: number } | null = null;
   private stopped = false;
+  /** Work a decision left running after releasing its launch (a landed trade's log record): awaited on shutdown. */
+  private readonly followUps = new Set<Promise<void>>();
   private platformDecodeLogged = false;
 
   constructor(
@@ -236,8 +261,10 @@ export class Agent {
       }
     } finally {
       this.stopped = true;
-      for (const rt of this.runtime.values()) if (rt.timer) clearTimeout(rt.timer);
+      for (const rt of this.runtime.values()) this.clearTimers(rt);
       while ([...this.runtime.values()].some((rt) => rt.busy)) await sleep(100);
+      // Landed-trade records, warm-ups and graduation loops (nudged out of their wait above).
+      await Promise.allSettled([...this.followUps]);
       this.stream?.close();
       this.sender.stop();
     }
@@ -361,17 +388,15 @@ export class Agent {
     if (platformAccount) this.applyPlatform(platformAccount, platformInfo.context.slot);
     if (!this.platform) throw new Error("platform account could not be decoded (see platform_decode_failed)");
     if (!this.clock || clock.context.slot > this.clock.slot) this.clock = { unixTs: clockUnixTs(clock.value.data), slot: clock.context.slot };
-    const now = this.now();
     const wasLow = this.balanceLamports !== null && this.balanceLamports < LOW_BALANCE_LAMPORTS;
     this.balanceLamports = balance;
     if (balance < LOW_BALANCE_LAMPORTS && !wasLow && !this.cfg.dryRun) {
       log("low_balance", { agent: this.signer.publicKey.toBase58(), sol: balance / LAMPORTS_PER_SOL });
     }
-    try {
-      await this.walletHeartbeat(balance);
-    } catch (err) {
-      log("agent_wallets_read_failed", { error: describeError(err) });
-    }
+    // Agent wallet balances gate which wallet may trade (`ExecutorPool.pick`): read before the first decisions, and
+    // after them from then on (a top-up waits for its confirmation).
+    const wallets = () => this.walletHeartbeat(balance).catch((err: unknown) => log("agent_wallets_read_failed", { error: describeError(err) }));
+    if (this.tickCount === 0) await wallets();
 
     const rts: LaunchRuntime[] = [];
     for (const { pubkey, account } of launches.value) {
@@ -379,29 +404,34 @@ export class Agent {
       rts.push(await this.runtimeOf(pubkey, decoded, launches.context.slot));
     }
     await this.readVenues(rts.filter((rt) => rt.json.venue === "pump"));
+    // Decisions first, every launch at once: none waits behind another launch's send or behind the cranks below.
     const poll: Trigger = { source: "poll", seenAt: readAt };
+    await Promise.all(
+      rts.map((rt) =>
+        this.exclusive(rt, () => {
+          const trigger = rt.trigger ?? poll;
+          rt.trigger = null;
+          return this.handle(rt, trigger);
+        }).catch((err: unknown) => log("decide_failed", { address: rt.key, error: describeError(err) })),
+      ),
+    );
+    // Then what is not latency-critical, launch by launch; one launch failing never stops the others' heartbeat.
     const live = new Set<string>();
     const liveMints = new Set<string>();
     for (const rt of rts) {
       if (signal.aborted) break;
       let woundDown = false;
-      await this.exclusive(rt, async () => {
-        woundDown = await this.cranks.windDown(this.crankLaunch(rt), now);
-      });
+      try {
+        woundDown = await this.heartbeatCranks(rt);
+      } catch (err) {
+        log("crank_failed", { address: rt.key, error: describeError(err) });
+      }
       // Wound down = no longer Live: its decision, runtime and subscriptions are dropped below.
       if (woundDown) continue;
       live.add(rt.key);
       liveMints.add(rt.account.mint.toBase58());
-      if (rt.json.venue === "pump") {
-        await this.cranks.pump(this.crankLaunch(rt), this.platform.account, decodeVenue(rt.json, rt.venue), now);
-        if (!this.cfg.dryRun) await this.warmTrades(rt);
-      }
-      await this.exclusive(rt, () => {
-        const trigger = rt.trigger ?? poll;
-        rt.trigger = null;
-        return this.handle(rt, trigger, true);
-      });
     }
+    if (this.tickCount > 0) await wallets();
     if (!signal.aborted) {
       for (const key of [...this.decisions.keys()]) if (!live.has(key)) this.decisions.delete(key);
       for (const [key, rt] of [...this.runtime]) {
@@ -418,9 +448,39 @@ export class Agent {
     this.tickCount += 1;
   }
 
-  /** Venue accounts of `rts` from one batched read (each applied only where it is newer than what the stream had). */
+  /**
+   * A launch's heartbeat work after the decisions: wind-down (true = wound down), the payout, graduation of a completed
+   * curve the stream did not report, the paced pump cranks and the trade-path warm-up.
+   */
+  private async heartbeatCranks(rt: LaunchRuntime): Promise<boolean> {
+    let woundDown = false;
+    await this.exclusive(rt, async () => {
+      woundDown = await this.cranks.windDown(this.crankLaunch(rt), this.now());
+      if (!woundDown) await this.payout(rt);
+    });
+    if (woundDown || rt.json.venue !== "pump") return woundDown;
+    if (decodeVenue(rt.json, this.venueInfos(rt))?.complete) this.graduate(rt);
+    await this.cranks.pump(this.crankLaunch(rt), this.platform!.account, this.now());
+    if (!this.cfg.dryRun) await this.warmTrades(rt);
+    return false;
+  }
+
+  /**
+   * Backer payouts are signed by the agent and only sent into a strong market (never a dip), judged on the projection
+   * and flow a decision would use now. Not latency-critical: heartbeat only.
+   */
+  private async payout(rt: LaunchRuntime): Promise<void> {
+    const market = this.marketOf(rt);
+    if (!market || this.skipReason() !== undefined) return;
+    const now = this.now();
+    const flow = rt.flow.observe(market, now);
+    await this.cranks.payout(this.crankLaunch(rt), market, project(market, now), flow, now, this.strategy);
+  }
+
+  /** Venue (and graduation pool) accounts of `rts` from one batched read, each applied only where newer than what the stream had. */
   private async readVenues(rts: LaunchRuntime[]): Promise<void> {
-    const keys = rts.flatMap((rt) => rt.venueKeys);
+    const perLaunch = rts.map((rt) => this.watchedKeys(rt));
+    const keys = perLaunch.flat();
     const infos: ({ data: Buffer } | null)[] = [];
     const slots: number[] = [];
     for (let i = 0; i < keys.length; i += MAX_BATCH_KEYS) {
@@ -429,9 +489,12 @@ export class Agent {
       slots.push(...value.map(() => context.slot));
     }
     let at = 0;
-    for (const rt of rts) {
-      for (let i = 0; i < rt.venueKeys.length; i++, at++) this.applyVenue(rt, i, infos[at] ?? null, slots[at]!);
-    }
+    rts.forEach((rt, r) => {
+      for (const k of perLaunch[r]!) {
+        this.applyAccount(rt, k.toBase58(), infos[at] ?? null, slots[at]!);
+        at++;
+      }
+    });
   }
 
   private async runtimeOf(address: PublicKey, account: LaunchAccount, slot: number): Promise<LaunchRuntime> {
@@ -439,27 +502,28 @@ export class Agent {
     let rt = this.runtime.get(key);
     if (!rt) {
       const json = launchToJson(address, account);
-      const keys = json.venue === "pump" ? venueKeys(json) : [];
       rt = {
         key,
         address,
         account,
         json,
         launchSlot: slot,
-        venueKeys: keys,
-        venue: keys.map(() => null),
-        venueSlots: keys.map(() => -1),
-        subs: [],
-        subsFor: "",
+        changeSlot: slot,
+        venueKeys: json.venue === "pump" ? venueKeys(json) : [],
+        poolKeys: [],
+        accounts: new Map(),
+        subs: new Map(),
         verifiedEpoch: -1,
-        nextTradeAt: 0,
-        failures: 0,
+        cooldownUntil: 0,
+        backoff: new TradeBackoff(),
         flow: new FlowWindow(),
         busy: false,
         trigger: null,
         timer: null,
+        wake: null,
         fill: null,
         template: null,
+        graduation: null,
       };
       this.runtime.set(key, rt);
       this.subscribe(rt);
@@ -479,50 +543,94 @@ export class Agent {
     return rt;
   }
 
-  /** Takes `account` read at `slot` unless newer state is already known; a changed venue (graduation) re-subscribes. */
+  /**
+   * Takes `account` read at `slot` unless newer state is already known. A changed venue re-syncs the watched accounts;
+   * at graduation the pool's accounts were watched since the curve completed, so their data carries over and the
+   * update that records the pool is decided on the pool at once.
+   */
   private applyLaunch(rt: LaunchRuntime, account: LaunchAccount, slot: number): boolean {
     if (slot < rt.launchSlot) return false;
+    const wasGraduated = rt.json.venue === "pump" && rt.json.pump.graduated;
+    const json = launchToJson(rt.address, account);
+    if (JSON.stringify(json) !== JSON.stringify(rt.json)) rt.changeSlot = Math.max(rt.changeSlot, slot);
     rt.account = account;
-    rt.json = launchToJson(rt.address, account);
+    rt.json = json;
     rt.launchSlot = slot;
     const keys = rt.json.venue === "pump" ? venueKeys(rt.json) : [];
     if (keys.map(String).join() !== rt.venueKeys.map(String).join()) {
       rt.venueKeys = keys;
-      rt.venue = keys.map(() => null);
-      rt.venueSlots = keys.map(() => -1);
       rt.template = null;
+      const graduated = rt.json.venue === "pump" && rt.json.pump.graduated;
+      if (graduated) rt.poolKeys = [];
       this.subscribe(rt);
+      if (graduated && !wasGraduated) this.graduated(rt);
     }
     return true;
   }
 
-  private applyVenue(rt: LaunchRuntime, i: number, info: { data: Buffer } | null, slot: number): boolean {
-    if (slot < rt.venueSlots[i]!) return false;
-    rt.venue[i] = info ? { data: info.data } : null;
-    rt.venueSlots[i] = slot;
+  /** Data of a watched venue / pool account read or streamed at `slot`; false when older than what is known or not watched. */
+  private applyAccount(rt: LaunchRuntime, key: string, info: { data: Buffer } | null, slot: number): boolean {
+    if (!this.watchedKeys(rt).some((k) => k.toBase58() === key)) return false;
+    const known = rt.accounts.get(key);
+    if (known && slot < known.slot) return false;
+    if (!known || (known.data === null) !== (info === null) || (info && known.data && !info.data.equals(known.data))) {
+      rt.changeSlot = Math.max(rt.changeSlot, slot);
+    }
+    rt.accounts.set(key, { data: info ? info.data : null, slot });
     return true;
   }
 
+  /** The venue accounts' data in `venueKeys` order (null = missing or not read yet), as `decodeVenue` takes them. */
+  private venueInfos(rt: LaunchRuntime): ({ data: Buffer } | null)[] {
+    return rt.venueKeys.map((k) => {
+      const data = rt.accounts.get(k.toBase58())?.data;
+      return data ? { data } : null;
+    });
+  }
+
+  /** Venue accounts and, while graduating, the canonical pool's: everything subscribed and read besides the Launch. */
+  private watchedKeys(rt: LaunchRuntime): PublicKey[] {
+    return [...rt.venueKeys, ...rt.poolKeys];
+  }
+
+  /** Syncs the stream subscriptions and the account data kept with what the launch watches now. */
   private subscribe(rt: LaunchRuntime): void {
+    const want = new Map<string, (u: AccountUpdate) => void>([[rt.key, (u) => this.onLaunch(rt, u)]]);
+    for (const k of this.watchedKeys(rt)) {
+      const key = k.toBase58();
+      want.set(key, (u) => this.onVenue(rt, key, u));
+    }
+    for (const key of [...rt.accounts.keys()]) if (!want.has(key)) rt.accounts.delete(key);
     const stream = this.stream;
     if (!stream) return;
-    const want = [rt.key, ...rt.venueKeys.map(String)].join();
-    if (rt.subsFor === want) return;
-    for (const id of rt.subs) stream.remove(id);
-    rt.subs = [
-      stream.account(rt.key, (u) => this.onLaunch(rt, u)),
-      ...rt.venueKeys.map((k, i) => stream.account(k.toBase58(), (u) => this.onVenue(rt, i, u))),
-    ];
-    rt.subsFor = want;
-    rt.verifiedEpoch = -1;
+    for (const [key, id] of [...rt.subs]) {
+      if (want.has(key)) continue;
+      stream.remove(id);
+      rt.subs.delete(key);
+    }
+    let added = false;
+    for (const [key, onAccount] of want) {
+      if (rt.subs.has(key)) continue;
+      rt.subs.set(key, stream.account(key, onAccount));
+      added = true;
+    }
+    // A new subscription misses what changed before the server confirmed it: the next trade re-reads first.
+    if (added) rt.verifiedEpoch = -1;
   }
 
   private unsubscribe(rt: LaunchRuntime): void {
+    this.clearTimers(rt);
+    for (const id of rt.subs.values()) this.stream?.remove(id);
+    rt.subs.clear();
+  }
+
+  /** Drops the launch's pending debounce and wake-up, and cuts a graduation loop's wait short (it then sees why). */
+  private clearTimers(rt: LaunchRuntime): void {
     if (rt.timer) clearTimeout(rt.timer);
     rt.timer = null;
-    for (const id of rt.subs) this.stream?.remove(id);
-    rt.subs = [];
-    rt.subsFor = "";
+    if (rt.wake) clearTimeout(rt.wake.timer);
+    rt.wake = null;
+    rt.graduation?.nudge?.();
   }
 
   private onLaunch(rt: LaunchRuntime, u: AccountUpdate): void {
@@ -537,9 +645,16 @@ export class Agent {
     if (this.applyLaunch(rt, account, u.slot)) this.changed(rt, u);
   }
 
-  private onVenue(rt: LaunchRuntime, i: number, u: AccountUpdate): void {
-    if (this.runtime.get(rt.key) !== rt || rt.venueKeys.length <= i) return;
-    if (this.applyVenue(rt, i, u, u.slot)) this.changed(rt, u);
+  private onVenue(rt: LaunchRuntime, key: string, u: AccountUpdate): void {
+    if (this.runtime.get(rt.key) !== rt || !this.applyAccount(rt, key, u, u.slot)) return;
+    if (!rt.venueKeys.some((k) => k.toBase58() === key)) {
+      // A graduation pool account appeared or changed: the graduation loop re-reads now instead of on its next tick.
+      rt.graduation?.nudge?.();
+      return;
+    }
+    // The curve shows completion in the update of the trade that completed it: graduation starts right here.
+    if (decodeVenue(rt.json, this.venueInfos(rt))?.complete) this.graduate(rt);
+    this.changed(rt, u);
   }
 
   /** A streamed change: into the flow window now (so the gates see every trade), decided on after the debounce. */
@@ -553,17 +668,37 @@ export class Agent {
     this.schedule(rt);
   }
 
+  /** Decides on the pending trigger: a streamed change after the debounce (updates arriving meanwhile ride along), a wake-up at once. */
   private schedule(rt: LaunchRuntime): void {
     if (rt.timer || rt.busy || !rt.trigger || this.stopped) return;
-    rt.timer = setTimeout(() => {
-      rt.timer = null;
-      if (this.runtime.get(rt.key) !== rt || !rt.trigger) return;
-      void this.exclusive(rt, () => {
-        const trigger = rt.trigger!;
-        rt.trigger = null;
-        return this.handle(rt, trigger, false);
-      }).catch((err: unknown) => log("decide_failed", { address: rt.key, error: describeError(err) }));
-    }, this.cfg.debounceMs);
+    rt.timer = setTimeout(
+      () => {
+        rt.timer = null;
+        if (this.runtime.get(rt.key) !== rt || !rt.trigger) return;
+        void this.exclusive(rt, () => {
+          const trigger = rt.trigger!;
+          rt.trigger = null;
+          return this.handle(rt, trigger);
+        }).catch((err: unknown) => log("decide_failed", { address: rt.key, error: describeError(err) }));
+      },
+      rt.trigger.source === "stream" ? this.cfg.debounceMs : 0,
+    );
+  }
+
+  /**
+   * Decides again at wall-clock `at`, when a cooldown or back-off runs out: a decision held back by time alone gets no
+   * stream update to retry on when the market is quiet. An earlier wake-up already set stays (it re-arms if needed).
+   */
+  private wakeAt(rt: LaunchRuntime, at: number): void {
+    if (this.stopped || (rt.wake && rt.wake.at <= at)) return;
+    if (rt.wake) clearTimeout(rt.wake.timer);
+    const timer = setTimeout(() => {
+      rt.wake = null;
+      if (this.runtime.get(rt.key) !== rt) return;
+      rt.trigger ??= { source: "wake", seenAt: Date.now() };
+      this.schedule(rt);
+    }, Math.max(0, at - Date.now()));
+    rt.wake = { timer, at };
   }
 
   /** Runs `fn` holding the launch (skipped when something else holds it); a change that arrived meanwhile is scheduled after. */
@@ -578,15 +713,93 @@ export class Agent {
     }
   }
 
+  /** Keeps `work` (started after a decision let go of its launch) for the shutdown to wait on. */
+  private follow(work: Promise<void>): void {
+    const tracked = work.catch((err: unknown) => log("follow_up_failed", { error: describeError(err) })).finally(() => this.followUps.delete(tracked));
+    this.followUps.add(tracked);
+  }
+
+  /**
+   * The pump.fun curve completed. pump.fun migrates it into its canonical PumpSwap pool (`poolPda(mint)`, the only pool
+   * `graduate_pump` accepts) within a slot or two, so the pool and its token accounts are watched from now on and a
+   * loop reads them every GRADUATE_RETRY_MS (at once when the stream shows a pool account change) and sends
+   * `graduate_pump` as soon as the pool exists, until the launch records it. Idempotent: the stream, the heartbeat and
+   * the decisions all call it.
+   */
+  private graduate(rt: LaunchRuntime): void {
+    if (rt.json.venue !== "pump" || rt.json.pump.graduated || this.stopped) return;
+    if (!rt.graduation) {
+      rt.graduation = { completeAt: Date.now(), running: false, nudge: null };
+      rt.poolKeys = poolKeys(rt.account.mint);
+      this.subscribe(rt);
+      log("curve_complete", { address: rt.key, mint: rt.json.mint, symbol: rt.symbol, pool: rt.poolKeys[2]!.toBase58() });
+    }
+    const g = rt.graduation;
+    if (g.running) return;
+    g.running = true;
+    this.follow(
+      this.graduation(rt, g)
+        .catch((err: unknown) => log("graduate_failed", { address: rt.key, error: describeError(err) }))
+        .finally(() => {
+          g.running = false;
+          g.nudge = null;
+        }),
+    );
+  }
+
+  private async graduation(rt: LaunchRuntime, g: NonNullable<LaunchRuntime["graduation"]>): Promise<void> {
+    let failures = 0;
+    while (!this.stopped && this.runtime.get(rt.key) === rt && rt.graduation === g) {
+      let delay = GRADUATE_RETRY_MS;
+      try {
+        const keys = rt.poolKeys;
+        const { context, value } = await this.client.connection.getMultipleAccountsInfoAndContext([rt.address, ...keys], STREAM_COMMITMENT);
+        const [launchInfo, ...pool] = value;
+        if (launchInfo) this.applyLaunch(rt, this.client.program.coder.accounts.decode<LaunchAccount>("launch", launchInfo.data), context.slot);
+        if (rt.graduation !== g) break;
+        keys.forEach((k, i) => this.applyAccount(rt, k.toBase58(), pool[i] ?? null, context.slot));
+        // The pool account (last of `poolKeys`) exists: pump.fun migrated, `graduate_pump` can record it.
+        if (pool[keys.length - 1]) {
+          if (await this.cranks.graduate(this.crankLaunch(rt))) delay = 0;
+          else if (++failures > GRADUATE_FAST_TRIES) delay = Math.min(GRADUATE_RETRY_MS * 2 ** (failures - GRADUATE_FAST_TRIES), this.cfg.crankMs);
+        } else if (Date.now() - g.completeAt > GRADUATE_FAST_WINDOW_MS) {
+          delay = this.cfg.pollMs;
+        }
+      } catch (err) {
+        log("graduate_read_failed", { address: rt.key, error: describeError(err) });
+      }
+      if (delay > 0 && rt.graduation === g && !this.stopped) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, delay);
+          g.nudge = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+        g.nudge = null;
+      }
+    }
+  }
+
+  /** The launch now records its pool: the downtime since the curve completed is logged and the trade path warmed for the pool. */
+  private graduated(rt: LaunchRuntime): void {
+    const g = rt.graduation;
+    rt.graduation = null;
+    g?.nudge?.();
+    log("graduated", { address: rt.key, mint: rt.json.mint, symbol: rt.symbol, pool: rt.json.pump.pool, completeToRecordedMs: g ? Date.now() - g.completeAt : null });
+    if (!this.cfg.dryRun) this.follow(this.warmTrades(rt));
+  }
+
   private crankLaunch(rt: LaunchRuntime): CrankLaunch {
     return { address: rt.address, account: rt.account, json: rt.json, symbol: rt.symbol };
   }
 
-  /** The launch as the program will price it; null for a pump launch whose venue accounts are missing. */
+  /** The launch as the program will price it; null for a pump launch whose venue accounts are missing or whose curve completed. */
   private marketOf(rt: LaunchRuntime): MarketState | null {
     if (rt.json.venue !== "pump") return marketOf(rt.account);
-    const venue = decodeVenue(rt.json, rt.venue);
-    if (!venue) return null;
+    const venue = decodeVenue(rt.json, this.venueInfos(rt));
+    // A completed curve trades no more; once pump.fun migrated it, its reserves read zero.
+    if (!venue || venue.complete) return null;
     const market = marketOf(rt.account, venue.curve);
     // Pump launches: the program only counts its own trades; the guardrail needs the chart's real volume.
     const indexed = this.publicVolume.get(rt.address.toBase58());
@@ -621,7 +834,7 @@ export class Agent {
     return this.stream !== null && this.stream.healthy && rt.verifiedEpoch === this.stream.epoch;
   }
 
-  private async handle(rt: LaunchRuntime, trigger: Trigger, heartbeat: boolean): Promise<void> {
+  private async handle(rt: LaunchRuntime, trigger: Trigger): Promise<void> {
     const l = this.crankLaunch(rt);
     const { json } = l;
     const pump = json.venue === "pump";
@@ -630,6 +843,12 @@ export class Agent {
     const market = this.marketOf(rt);
     if (!market) {
       const prices = { priceSol: 0, emaSol: q64ToSolPerToken(BigInt(json.emaPriceQ64)), bandLowSol: 0, bandHighSol: 0 };
+      if (pump && decodeVenue(json, this.venueInfos(rt))?.complete) {
+        this.graduate(rt);
+        const reason = "bonding curve complete: graduating to PumpSwap (graduate_pump as soon as pump.fun's pool exists)";
+        this.record(rt, l, prices, NEUTRAL_FLOW, { action: "skip", reason }, "complete", this.decided(trigger, false).detail);
+        return;
+      }
       const where = json.pump.graduated ? "PumpSwap pool or its token accounts" : "pump.fun bonding curve";
       this.record(rt, l, prices, NEUTRAL_FLOW, { action: "skip", reason: `venue account missing (${where} not found)` }, "no_venue", this.decided(trigger, false).detail);
       return;
@@ -642,24 +861,8 @@ export class Agent {
       this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason: skipReason }, "paused", this.decided(trigger, false).detail);
       return;
     }
-    // Backer payouts are signed by the agent and only sent into a strong market (never a dip): decided on the
-    // same projection and flow the trade decision used, at the heartbeat (not latency-critical).
-    if (heartbeat) {
-      await this.cranks.payout(l, market, ev.projection, flow, now, this.strategy);
-      // The await yields to the stream: a landed `graduate_pump` swaps the venue under `ev`, which priced the curve.
-      if (pump && rt.json.pump.graduated !== json.pump.graduated) {
-        const reason = "venue changed during payout (graduation), re-planning on the next update";
-        this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason }, "venue_changed", this.decided(trigger, false).detail);
-        return;
-      }
-    }
-    if (pump && decodeVenue(rt.json, rt.venue)?.complete) {
-      const reason = "bonding curve complete, awaiting pump.fun migration (then graduate_pump)";
-      this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason }, "complete", this.decided(trigger, false).detail);
-      return;
-    }
     if (ev.plan.action === "hold") {
-      rt.failures = 0;
+      rt.backoff.calm();
       this.record(rt, l, displayPrices(ev.projection), flow, { action: "hold", reason: ev.plan.reason }, ev.plan.kind, this.decided(trigger, false).detail);
       return;
     }
@@ -676,26 +879,15 @@ export class Agent {
       });
       return;
     }
-    const waitMs = rt.nextTradeAt - Date.now();
-    if (waitMs > 0) {
-      const secs = Math.ceil(waitMs / 1000);
-      const timing = this.decided(trigger, false).detail;
-      if (rt.lastError !== undefined) {
-        const reason = `backing off after error, retry in ${secs}s; wants ${ev.plan.reason}`;
-        this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason, error: rt.lastError }, "backoff", timing);
-      } else {
-        const reason = `cooldown after last trade, ${secs}s left; wants ${ev.plan.reason}`;
-        this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason }, "cooldown", timing);
-      }
-      return;
-    }
+    if (this.heldBack(rt, l, ev.projection, ev.plan, flow, trigger, false)) return;
     if (rt.fill) {
       if (rt.account.agentBuys + rt.account.agentSells >= rt.fill.count) rt.fill = null;
       else if (Date.now() < rt.fill.until && this.trusted(rt)) {
         // The streamed state predates the agent's own last fill: planning on it would trade twice. The fill's
-        // notification triggers the next decision.
+        // notification triggers the next decision (or the wake-up when the wait runs out, which re-reads).
         const reason = `waiting for the last fill to show in the stream; wants ${ev.plan.reason}`;
         this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason }, "settling", this.decided(trigger, false).detail);
+        this.wakeAt(rt, rt.fill.until);
         return;
       } else {
         rt.fill = null;
@@ -709,8 +901,9 @@ export class Agent {
       // program will see (heartbeat data can be seconds old; the stream may have missed changes in a gap).
       reread = true;
       const epoch = this.stream?.epoch ?? -1;
+      const keys = rt.venueKeys;
       const { context, value } = await this.client.connection.getMultipleAccountsInfoAndContext(
-        [l.address, SYSVAR_CLOCK_PUBKEY, ...rt.venueKeys],
+        [l.address, SYSVAR_CLOCK_PUBKEY, ...keys],
         this.stream ? STREAM_COMMITMENT : "confirmed",
       );
       const [launchInfo, clockInfo, ...venueInfos] = value;
@@ -722,33 +915,71 @@ export class Agent {
         this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason }, "venue_changed", this.decided(trigger, true).detail);
         return;
       }
-      venueInfos.forEach((info, i) => this.applyVenue(rt, i, info, context.slot));
+      venueInfos.forEach((info, i) => this.applyAccount(rt, keys[i]!.toBase58(), info, context.slot));
       if (!this.clock || context.slot > this.clock.slot) this.clock = { unixTs: clockUnixTs(clockInfo.data), slot: context.slot };
       rt.verifiedEpoch = epoch;
       const fresh = this.marketOf(rt);
-      const freshVenue = pump ? decodeVenue(rt.json, rt.venue) : null;
-      if (!fresh || freshVenue?.complete) {
-        const reason = fresh ? "bonding curve completed during refresh" : "venue account missing after refresh, re-planning on the next update";
+      if (!fresh) {
+        const completed = pump && decodeVenue(rt.json, this.venueInfos(rt))?.complete;
+        if (completed) this.graduate(rt);
+        const reason = completed ? "bonding curve completed during refresh" : "venue account missing after refresh, re-planning on the next update";
         this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason }, "venue_changed", this.decided(trigger, true).detail);
         return;
       }
       ev = evaluate(fresh, this.sizing, this.now(), this.strategy, flow);
+      // The fresh plan may want the other side, which has its own back-off.
+      if (ev.plan.action !== "hold" && this.heldBack(rt, this.crankLaunch(rt), ev.projection, ev.plan, flow, trigger, true)) return;
     }
     const plan = ev.plan;
     const decided = this.decided(trigger, reread);
     const current = this.crankLaunch(rt);
     if (plan.action === "hold") {
-      rt.failures = 0;
+      rt.backoff.calm();
       this.record(rt, current, displayPrices(ev.projection), flow, { action: "hold", reason: plan.reason }, plan.kind, decided.detail);
       return;
     }
     await this.execute(rt, current, ev, flow, plan, decided);
   }
 
+  /**
+   * Whether a wanted trade waits on time alone: the cooldown after the last fill (either side) or the plan's side's
+   * error back-off. If so the skip is recorded and the launch wakes itself when the wait runs out (a program
+   * rejection's back-off also ends with the next state change, which triggers on its own).
+   */
+  private heldBack(rt: LaunchRuntime, l: CrankLaunch, proj: Evaluation["projection"], plan: TradePlan, flow: FlowFeatures, trigger: Trigger, reread: boolean): boolean {
+    const now = Date.now();
+    if (rt.cooldownUntil > now) {
+      const reason = `cooldown after last trade, ${Math.ceil((rt.cooldownUntil - now) / 1000)}s left; wants ${plan.reason}`;
+      this.record(rt, l, displayPrices(proj), flow, { action: "skip", reason }, "cooldown", this.decided(trigger, reread).detail);
+      this.wakeAt(rt, rt.cooldownUntil);
+      return true;
+    }
+    const wait = rt.backoff.wait(plan.action, rt.changeSlot, now);
+    if (wait.ms === 0) return false;
+    const secs = Math.ceil(wait.ms / 1000);
+    const why = wait.kind === "program" ? `${plan.action} rejected, re-planning on the next update or in ${secs}s` : `${plan.action} send failed, retry in ${secs}s`;
+    const d = { action: "skip" as const, reason: `backing off: ${why}; wants ${plan.reason}`, ...(wait.error ? { error: wait.error } : {}) };
+    this.record(rt, l, displayPrices(proj), flow, d, "backoff", this.decided(trigger, reread).detail);
+    this.wakeAt(rt, now + wait.ms);
+    return true;
+  }
+
+  /**
+   * Why `plan` would now fail on the launch's current state — the stream's at send time, not the decision's snapshot —
+   * or null; `graduated` = the pump venue stage it was planned (and its instruction built) on.
+   */
+  private staleReason(rt: LaunchRuntime, plan: TradePlan, graduated: boolean): string | null {
+    if (rt.json.venue === "pump" && rt.json.pump.graduated !== graduated) return "the venue changed (graduation)";
+    const market = this.marketOf(rt);
+    if (!market) return "the venue state is unavailable";
+    return planRejection(market, this.now(), plan);
+  }
+
   private async execute(rt: LaunchRuntime, l: CrankLaunch, ev: Evaluation, flow: FlowFeatures, plan: TradePlan, decided: Decided): Promise<void> {
     const amount = plan.amount.toString();
     const prices = displayPrices(ev.projection);
-    const unitsKey = `${rt.key}:${plan.action}:${l.json.venue === "pump" && l.json.pump.graduated ? "pool" : "curve"}`;
+    const graduated = l.json.venue === "pump" && l.json.pump.graduated;
+    const unitsKey = `${rt.key}:${plan.action}:${graduated ? "pool" : "curve"}`;
     let extra: Record<string, unknown> = {
       expectedOut: plan.expectedOut,
       minOut: plan.minOut,
@@ -759,9 +990,11 @@ export class Agent {
     // Once the platform registers agent wallets every pump trade goes through one (the program requires it).
     let wallet: Keypair | null = null;
     if (l.json.venue === "pump" && this.executors.required) {
-      const picked = this.executors.pick(rt.key, plan.action === "buy" ? "buy" : "sell", Date.now());
+      const picked = this.executors.pick(rt.key, plan.action, Date.now());
       if ("reason" in picked) {
         this.record(rt, l, prices, flow, { action: "skip", reason: `${picked.reason}; wants ${plan.reason}` }, "agent_wallet", decided.detail);
+        // The spacing between a buy and a sell runs out by itself; busy or low wallets free up with a fill or a top-up.
+        if (picked.retryAt !== undefined) this.wakeAt(rt, picked.retryAt);
         return;
       }
       wallet = picked.wallet;
@@ -770,7 +1003,11 @@ export class Agent {
     let walletCost = 0;
     try {
       const ix = await this.tradeIx(rt, plan, wallet);
-      const sent = await this.sender.send([ix], { fee: rt.key, units: unitsKey }, () => this.metrics.sent(), wallet ?? undefined);
+      const sent = await this.sender.send([ix], { fee: rt.key, units: unitsKey }, {
+        onSent: () => this.metrics.sent(),
+        ...(wallet ? { payer: wallet } : {}),
+        stale: () => this.staleReason(rt, plan, graduated),
+      });
       // The wallet paid both signatures, the priority fee and the Sender tip.
       walletCost = 2 * 5_000 + sent.cost.priorityFeeLamports + sent.cost.tipLamports;
       const t = sent.timing;
@@ -786,45 +1023,65 @@ export class Agent {
         sentToConfirmedMs: t.confirmedAt - t.sentAt,
         landedSlot: t.slot ?? undefined,
       };
-
-      rt.failures = 0;
-      rt.lastError = undefined;
-      rt.nextTradeAt = t.confirmedAt + this.cfg.cooldownMs;
+      rt.backoff.landed(plan.action);
+      rt.cooldownUntil = t.confirmedAt + this.cfg.cooldownMs;
       rt.fill = { count: l.account.agentBuys + l.account.agentSells + 1, until: Date.now() + FILL_WAIT_MS };
-      const result = await landed(this.client, sent.signature);
-      const units = result?.cost.unitsConsumed;
-      if (typeof units === "number") this.sender.noteUnits(unitsKey, units);
-      const trade = (result?.events ?? []).find((e) => e.name === "trade");
-      const fill =
-        trade?.name === "trade"
-          ? {
-              filledSol: trade.data.solAmount.toString(),
-              filledTokens: trade.data.tokenAmount.toString(),
-              vaultSol: trade.data.vaultSol.toString(),
-              vaultTokens: trade.data.vaultTokens.toString(),
-            }
-          : {};
-      this.record(rt, l, prices, flow, { action: plan.action, reason: plan.reason, amount, signature: sent.signature }, plan.kind, {
-        ...extra,
-        ...result?.cost,
-        ...fill,
-      });
+      // The launch is free again once this returns (the cooldown and the fill check guard the next trade); the
+      // landed transaction's units and events are fetched for the log without holding it.
+      this.follow(this.recordLanded(rt, l, prices, flow, plan, sent.signature, unitsKey, extra));
     } catch (err) {
-      const error = describeError(err);
-      rt.lastError = error;
+      if (err instanceof StalePlanError) {
+        // Nothing was sent: the update that moved the state triggers the next plan. No back-off, no fee.
+        this.record(rt, l, prices, flow, { action: "skip", reason: `state moved before sending (${err.reason}), re-planning; wanted ${plan.reason}` }, "stale", decided.detail);
+        return;
+      }
       // The next attempt simulates again, so a persistent program error is caught before it costs another fee.
       this.sender.forgetUnits(unitsKey);
       this.metrics.failed(err);
-      // A public trade landed in the same slot first (anti-sandwich rule): nothing is wrong, the next decision lands
-      // in a later slot, so retry then instead of backing off.
-      const backoff = error === SAME_SLOT_TRADE_MESSAGE ? 0 : Math.min(ERROR_BACKOFF_MS * 2 ** rt.failures++, this.cfg.maxBackoffMs);
-      rt.nextTradeAt = Date.now() + backoff;
+      const failure = rt.backoff.failed(plan.action, err, rt.changeSlot, Date.now());
       // Whatever landed or not, the next plan starts from a fresh read.
       rt.verifiedEpoch = -1;
-      this.record(rt, l, prices, flow, { action: plan.action, reason: plan.reason, amount, error }, "error", { ...extra, retryInMs: backoff });
+      this.record(rt, l, prices, flow, { action: plan.action, reason: plan.reason, amount, error: failure.error }, "error", {
+        ...extra,
+        failure: failure.kind,
+        retryInMs: failure.retryInMs,
+      });
+      // A same-slot collision retries on the next update (the colliding trade's own); the rest also wake when the wait ends.
+      if (failure.retryInMs > 0) this.wakeAt(rt, Date.now() + failure.retryInMs);
     } finally {
       if (wallet) this.executors.release(wallet.publicKey, rt.key, walletCost);
     }
+  }
+
+  /** A landed trade's log record, with the compute units and events of its transaction (the launch is not held meanwhile). */
+  private async recordLanded(
+    rt: LaunchRuntime,
+    l: CrankLaunch,
+    prices: DisplayPrices,
+    flow: FlowFeatures,
+    plan: TradePlan,
+    signature: string,
+    unitsKey: string,
+    extra: Record<string, unknown>,
+  ): Promise<void> {
+    const result = await landed(this.client, signature);
+    const units = result?.cost.unitsConsumed;
+    if (typeof units === "number") this.sender.noteUnits(unitsKey, units);
+    const trade = (result?.events ?? []).find((e) => e.name === "trade");
+    const fill =
+      trade?.name === "trade"
+        ? {
+            filledSol: trade.data.solAmount.toString(),
+            filledTokens: trade.data.tokenAmount.toString(),
+            vaultSol: trade.data.vaultSol.toString(),
+            vaultTokens: trade.data.vaultTokens.toString(),
+          }
+        : {};
+    this.record(rt, l, prices, flow, { action: plan.action, reason: plan.reason, amount: plan.amount.toString(), signature }, plan.kind, {
+      ...extra,
+      ...result?.cost,
+      ...fill,
+    });
   }
 
   /**

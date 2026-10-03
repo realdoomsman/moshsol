@@ -58,8 +58,7 @@ export interface AgentConfig {
   slippageBps: number;
   /** µlamports per CU: the fee-market estimate clamped to [floor, cap]. */
   priorityFee: PriorityFeeBounds;
-  maxBackoffMs: number;
-  /** Permissionless pump cranks (fee collection, buyback, graduation): per-launch check interval. */
+  /** Permissionless pump cranks (fee collection, buyback): per-launch check interval; repeatedly failing `graduate_pump` retries slow to it. */
   crankMs: number;
   /** JSON file remembering the agent's address lookup table per cluster (genesis hash → address). */
   altFile: string;
@@ -168,7 +167,6 @@ export function loadConfig(): AgentConfig {
     // rules (planned against this floor), so the tolerance only absorbs public trades landing in flight.
     slippageBps: int("SLIPPAGE_BPS", 100, 0, 9_999),
     priorityFee: { floor: priorityFloor, cap: priorityCap },
-    maxBackoffMs: 300_000,
     crankMs: int("CRANK_MS", 60_000, 1_000, 86_400_000),
     altFile: path.resolve(REPO_ROOT, process.env.ALT_FILE?.trim() || "apps/agent/.alt.json"),
     alt: pubkey("AGENT_ALT"),

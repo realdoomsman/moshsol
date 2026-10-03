@@ -503,12 +503,23 @@ Everything is keyed by the launch **address** (pump launches share the default m
 account (no Token-2022 metadata). Besides trading, the agent cranks the permissionless instructions, independent
 of `agents_paused` and of which key is the agent authority (the two agent-signed cranks, `buyback_burn` and
 `payout_backers`, are refused by the program while `agents_paused`), each (launch, crank) pair at most every `CRANK_MS`
-(60 s) with exponential back-off after a failed send (up to 24 h), all honouring `DRY_RUN`, logged as `crank`
-lines and listed newest-first (≤ 50) in `/status` → `cranks` (`kind`, `address`, `mint`, `venue`, `symbol`,
-`at`, `signature`/`error`, `amount`/`tokens` from the landed event; neither signature nor error = dry run):
+(60 s) with exponential back-off after a failed send (up to 24 h) — except `graduate`, below —, all honouring
+`DRY_RUN`, logged as `crank` lines and listed newest-first (≤ 50) in `/status` → `cranks` (`kind`, `address`,
+`mint`, `venue`, `symbol`, `at`, `signature`/`error`, `amount`/`tokens` from the landed event; neither signature
+nor error = dry run):
 
-- `graduate` — the curve is `complete` and the launch not yet graduated: once pump.fun's canonical pool exists,
-  `graduate_pump`.
+- `graduate` — not paced: the streamed bonding-curve update that shows the curve `complete` starts it (the
+  heartbeat too, after a restart or with `SUBSCRIBE=0`; logged `curve_complete`). pump.fun migrates a completed
+  curve into its canonical pool (`poolPda(mint)`, the only pool `graduate_pump` accepts) within a slot or two, so
+  the agent subscribes that pool and its two token accounts at once, reads them every second (at once when the
+  stream shows one change; every `POLL_MS` once 2 min passed without a pool) and sends `graduate_pump` the moment
+  the pool exists, retrying every second (after 10
+  failed sends backing off to `CRANK_MS`) until the launch records the pool (logged `graduated` with
+  `completeToRecordedMs`). The pool's data is then already there: the Launch update that records it is decided on
+  the pool straight away (the first trade re-reads once, as after any new subscription). On TEST (agent `e2b8439`)
+  the check ran only with the heartbeat and then waited `CRANK_MS`, the migrated curve's zeroed reserves threw
+  `Division by zero` in every tick, and the new pool accounts had no data until a heartbeat read them: 91 s
+  offline (t=421 → 512).
 - `collect_fees` — pump.fun's creator vault (lamports above its rent) plus, once graduated, the PumpSwap creator
   vault's WSOL account hold ≥ 0.01 SOL: `collect_pump_fees`.
 - `buyback_burn` — `platform.buyback_mint` is set, the launch's buyback pool holds ≥ 0.001 SOL and the last
@@ -548,14 +559,28 @@ replaced; reconnects back off 0.5 s → 30 s and re-subscribe everything. Each u
 and is decided on `DEBOUNCE_MS` (150) after it first arrived; updates arriving meanwhile ride along. While the stream
 is healthy (a message in the last 2 s) and one re-read has confirmed the launch since the socket last (re)opened, a
 trade is planned and sent on the streamed state with no RPC round trip; otherwise the launch, the clock and the venue
-are re-read first, as before. **Heartbeat** (`POLL_MS`, 10 s): new and ended launches, subscription sync, the cranks
-and the payout (not latency-critical), a decision on every launch (the fallback trigger), and warming the trade
-path (the SDK-built `agent_buy_pump` accounts — pump.fun's fee recipients are read live there — the fee estimate,
-the lookup table). `SUBSCRIBE=0` is the pre-stream agent: the poll is the trigger and every trade re-reads.
+are re-read first, as before. A decision held back by time alone — the cooldown, a side's back-off, the wait for the
+agent's own fill to show, the agent-wallet spacing — wakes the launch itself when that time runs out (trigger
+`wake`) instead of waiting for the next update or heartbeat. **Heartbeat** (`POLL_MS`, 10 s): new and ended
+launches, subscription sync, first a decision on every launch, all at once (the fallback trigger), then the cranks
+and the payout (not latency-critical), and warming the trade path (the SDK-built `agent_buy_pump` accounts —
+pump.fun's fee recipients are read live there — the fee estimate, the lookup table); one launch's crank failing
+never stops the others' heartbeat. On TEST 21 of 107 decisions came from the heartbeat with `reactMs` p95 8 s: the
+old heartbeat decided each launch only after the previous launches' cranks and wallet top-ups (seconds of RPC under
+Helius 429s), trades that only waited for a cooldown to end waited for the next heartbeat, and a launch stayed held
+while its landed trade's transaction was fetched for the log. `SUBSCRIBE=0` is the pre-stream agent: the poll is
+the trigger and every trade re-reads.
 
-**One trade in flight per launch, 3 s cooldown.** A decision holds its launch until the trade confirmed. After a
-fill the next plan waits until the stream shows the Launch with that fill (`agent_buys + agent_sells`; at most 5 s,
-then it re-reads) and `COOLDOWN_MS` (3 s) after the confirmation. The old 15 s were not needed for correctness:
+**One trade in flight per launch, 3 s cooldown.** A decision holds its launch until the trade confirmed (the landed
+transaction is fetched for the log afterwards, without holding it). After a fill the next plan waits until the
+stream shows the Launch with that fill (`agent_buys + agent_sells`; at most 5 s, then it re-reads) and
+`COOLDOWN_MS` (3 s) after the confirmation. **Errors back off per side** (`src/backoff.ts`): a failing buy never holds
+a sell back. A program rejection (`AgentBuyNotDip`, `ExceededSlippage`, `InvalidArgument`, … — in simulation or
+landed) does not grow: that side re-plans on the next state change (a launch or venue update from a later slot),
+at the latest after 5 s; RPC / Sender / network failures (429, 5xx, timeouts, an expired blockhash) back off
+2 s → 4 → 8 → 16 → 30 s; a same-slot collision with a public trade retries on the next update. On TEST one
+launch-wide back-off doubled on every failed buy (15 → 233 s) and held rally sells back. The old 15 s cooldown was
+not needed for correctness:
 the same-slot rule only separates agent trades from *public* trades on the Holdfast curve (pump launches never
 record public trades, so it cannot fire there; on Holdfast launches a collision is retried on the next decision
 without back-off), the EMA moves only by what the agent's own trade samples (weight `dt / (dt + period)`, so trades
@@ -573,8 +598,12 @@ new timing (`backtest robust` has the variant) before reading more into it.
 **Landing** (`TradeSender`, `src/send.ts`). The blockhash is refreshed every 5 s in the background; a launch's fee
 estimate (90th percentile of its accounts' recent fee market, within `PRIORITY_MICROLAMPORTS` … `MAX_…`) is warmed
 by the heartbeat and reused for 10 s; the compute limit comes from what the same trade kind consumed when it last
-landed (× 1.3 + 5,000; a simulation only the first time and after a failure). The signed transaction goes out without
-preflight (the plan was made on the same state; the program enforces every rule) to the RPC — on Helius paid plans
+landed (× 1.3 + 5,000; a simulation only the first time and after a failure). Before it is prepared and again right
+before the broadcast the plan is re-checked against the program's rules (`planRejection`: band, window budget, vault
+floor, impact, slippage floor, cost rule) on the launch's state *then* — the stream's, not the decision's snapshot —
+and dropped unsent if a public trade moved it out (activity `stale`; no fee, no back-off; the moving update re-plans).
+On TEST (t=532) a buy-back was decided inside the buy band and spot had bounced above it by the time it went out.
+The signed transaction goes out without preflight (the program enforces every rule) to the RPC — on Helius paid plans
 `sendTransaction` already rides staked connections (SWQoS) — and, with `SENDER_URL`, to Helius Sender at the same
 time, then is tracked over the stream's `signatureSubscribe` (processed, confirmed) with a status poll as fallback,
 rebroadcast every 2 s until its blockhash expires. Cost per trade (a pump.fun curve trade consumes ≈107–121k CU,
@@ -593,7 +622,7 @@ node first reported the slot a change landed in → the decision), `notify` (tha
 `metrics.failures` count sends and failure reasons (the program error, or `Transaction expired unconfirmed` /
 `Transaction failed: <TransactionError>` without the per-attempt block height or signature; at most 32 keys, the
 last of them `other` for every reason first seen after 31 others), `stream` the socket's state. Every decision's log line and
-activity detail carry `trigger`, `triggerSlot`, `landToDecisionMs`, `reactMs`, `reread`; trades add
+activity detail carry `trigger` (`stream`, `poll` = heartbeat, `wake` = a cooldown / back-off ran out), `triggerSlot`, `landToDecisionMs`, `reactMs`, `reread`; failed trades add `failure` (`program`, `transport`, `same_slot`) and `retryInMs`; trades add
 `decisionToSentMs`, `sentToLandedMs`, `sentToConfirmedMs`, `landedSlot`, `cachedUnits`, `tipLamports`.
 Mainnet (read-only, 4 min on the four busiest live pump.fun curves, each change run through the agent's pipeline
 — stream → decode → `marketOf` → `FlowWindow` → `evaluate` — next to a replica of the old 3 s poll):
@@ -1061,7 +1090,7 @@ Agent (`apps/agent`):
 | `MIN_TRADE_LAMPORTS` | `10000000` | 0.01 SOL: smaller buys are skipped |
 | `MIN_SELL_LAMPORTS` | `50000000` | 0.05 SOL: smaller sells are skipped (sells go out as a few impact-sized clips into green candles, not as dust) |
 | `STRATEGY_PARAMS` | unset | JSON object overriding any of the backtest-tuned policy parameters (see [Vault agent](#vault-agent)), e.g. `{"ladderShare10x":0.5}`; unknown keys or out-of-range values stop startup |
-| `COOLDOWN_MS` | `3000` | Per launch after a confirmed trade, counted once the stream shows that fill (errors back off exponentially from 15 s up to 5 min; a same-slot collision with a public trade is retried on the next decision). Also the agent-wallet spacing: no wallet gets a buy within this long of a sell on the same launch (or the reverse) |
+| `COOLDOWN_MS` | `3000` | Per launch after a confirmed trade, counted once the stream shows that fill (errors back off per side: a program rejection re-plans on the next update or after ≤ 5 s, RPC/network failures 2 s → 30 s, a same-slot collision with a public trade retries on the next update; see [Reaction speed](#reaction-speed-stream-trigger-heartbeat-landing)). Also the agent-wallet spacing: no wallet gets a buy within this long of a sell on the same launch (or the reverse) |
 | `AGENT_EXECUTORS_JSON`, `AGENT_EXECUTORS_DIR` | unset, `agent-wallets/` next to the agent keypair file (`.localnet/agent-wallets`) | The agent wallets (see [Agent wallets](#agent-wallets-who-executes-the-vaults-trades)): `_JSON` = a JSON array of up to 15 secret-key arrays (hosted secrets), else every `*.json` keypair file in the directory. Only wallets registered on the platform are used |
 | `EXECUTOR_MIN_SOL`, `EXECUTOR_TOPUP_SOL`, `EXECUTOR_TOPUP_MAX_SOL_PER_HOUR` | `0.01`, `0.02`, `0.2` | A wallet under the minimum is not picked and is topped up to `EXECUTOR_TOPUP_SOL` from the agent key at the next heartbeat (one transaction, logged `agent_wallet_topup`; counted against the hour when sent, refunded only if it failed or expired), at most the hourly total and never below a 0.05 SOL reserve on the agent key, which pays the fees and rent of the cranks only it runs (`collect_pump_fees`, `payout_backers`, `buyback_burn`, `wind_down_pump`, the lookup table); wallets left out are logged `agent_wallet_topup_skipped` with the reason |
 | `SLIPPAGE_BPS` | `100` | Slippage floor of agent trades (cost rules are planned against it, so an accepted fill always passes them) |
