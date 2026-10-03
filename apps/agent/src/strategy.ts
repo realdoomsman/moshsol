@@ -631,7 +631,9 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
       if (flow.drawdownHigh < OFFICIAL_PULLBACK) {
         return hold("cost_basis", `${head} but ${buyback}; pullback buys need ≥ ${OFFICIAL_PULLBACK * 100}% off the 15-min high (now ${off})`);
       }
-      const pull = largestFeasible(minBig(ideal, clipOf(OFFICIAL_PULLBACK_CLIP)), impactOk);
+      // Deeper pullbacks get bigger clips: 20% of the window room at 7% off the high, up to 50% from ~22%.
+      const depthShare = Math.min(OFFICIAL_PULLBACK_CLIP_MAX, OFFICIAL_PULLBACK_CLIP + (flow.drawdownHigh - OFFICIAL_PULLBACK) * 2);
+      const pull = largestFeasible(minBig(ideal, clipOf(depthShare)), impactOk);
       if (pull < s.minTradeLamports) return hold("impact", `${head}, impact limit leaves pullback buy below minimum`);
       const out = buyFill(m, proj, pull);
       const moved = moveBps(price, priceQ64(proj.x + buyNet(m, pull), proj.y - out));
@@ -672,6 +674,10 @@ const OFFICIAL_BUYBACK_CLIP = 0.33;
 const OFFICIAL_PULLBACK = 0.07;
 /** Official token: pullback buys above the average sell take up to this share of the window's buy room per clip. */
 const OFFICIAL_PULLBACK_CLIP = 0.2;
+/** Official token: the largest pullback clip (deep pullbacks), share of the window's buy room. */
+const OFFICIAL_PULLBACK_CLIP_MAX = 0.5;
+/** Official token: rally sells only while spot is within this share of its 15 min high. */
+const OFFICIAL_SELL_NEAR_HIGH = 0.03;
 
 /** Climax volume: the short window trades at least this multiple of the median minute volume. */
 const CLIMAX_VOLUME_RATIO = 2;
@@ -818,6 +824,11 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
     if (params.vwapEntryBps > 0 && flow.vwapDevBps < params.vwapEntryBps) return done(hold("flow", `${head} but ${vwap}, selling from +${pctStr(params.vwapEntryBps)}`));
     const paused = sellPause(params, flow);
     if (paused) return done(hold("flow", `${head} but ${paused}`));
+    // The official token sells only into new highs: within `OFFICIAL_SELL_NEAR_HIGH` of its 15 min high, never into a
+    // pullback it may be buying (buys start at `OFFICIAL_PULLBACK` off the high).
+    if (m.official && flow.drawdownHigh > OFFICIAL_SELL_NEAR_HIGH) {
+      return done(hold("flow", `${head} but official token sells only near the high (now ${(flow.drawdownHigh * 100).toFixed(1)}% off, sells within ${OFFICIAL_SELL_NEAR_HIGH * 100}%)`));
+    }
     if (spacing) return done(hold("spacing", `${head} but ${spacing}`));
     return done(planSell(m, s, proj, params, head));
   }
