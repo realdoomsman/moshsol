@@ -692,10 +692,18 @@ per 10 minutes, ≤ 2 sentences — in the background: it never decides a trade,
 endpoint changes nothing but the missing `narrative` (logged as `narration_failed`).
 
 **Research loop** (optional, `RESEARCH_INTERVAL_MIN` > 0): every interval the agent re-fits its own knobs on real
-pump.fun history, rule-bounded. It refreshes the backtest dataset (`backtest/fetch.ts`, GeckoTerminal; only
-when `backtest/data/index.json` is older than `RESEARCH_REFRESH_DAYS`, 7, and silently keeps the cached data on
-network failure), then runs `backtest/research-run.ts` in a child process (`RESEARCH_WORKERS` 2,
-`RESEARCH_RANDOM` 40 random draws, `RESEARCH_GENS` 6 CMA-ES generations, `RESEARCH_TIMEOUT_MIN` 90): tune from
+pump.fun history, rule-bounded. The clock is the persisted run history: the next run is one interval after the last
+one started, so a deploy doesn't reset it, and an overdue run starts 3 min after startup (a run cut off by a
+shutdown isn't recorded and is redone). The dataset lives in `BACKTEST_DATA_DIR` (default `apps/agent/backtest/data`;
+on a host, a path on the persistent volume, e.g. `/data/backtest`, or every new container refetches it). A run
+first refreshes the GeckoTerminal pools (`backtest/fetch.ts`; only when `index.json` is older than
+`RESEARCH_REFRESH_DAYS`, 7): incremental (past windows' candle responses are reused, mostly the pool lists are
+refetched) and bounded (`RESEARCH_REFRESH_MAX_MIN`, 45; an unfinished refresh resumes next run, the current data
+stays in use). Then it adds Holdfast's own pump launches from the indexer (`backtest/holdfast.ts`: launched ≥ 6 h
+ago, ≥ 60 one-minute candles in the first 72 h, SOL-quoted; at most `RESEARCH_HOLDFAST_LAUNCHES`, 20, candle
+fetches per run at ≤ 1 req/s, 0 = leave them out) and runs `backtest/research-run.ts` in a child process
+(`RESEARCH_WORKERS` 2, ~270 MB each, `RESEARCH_RANDOM` 40 random draws, `RESEARCH_GENS` 6 CMA-ES generations,
+`RESEARCH_TIMEOUT_MIN` 90): tune from
 the current parameters on walk-forward TRAIN (every pool's first 24 h + synthetic) and score both the current
 parameters and the proposal on walk-forward TEST (hours 24–72) with the backtest objective. The proposal is
 **adopted only if** its walk-forward TEST objective beats the current one **and** every value lies inside

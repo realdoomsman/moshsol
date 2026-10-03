@@ -32,7 +32,7 @@
  *   chop      max close / min close <= 3 (range-bound)
  *   survivor  anything else: ended between 0.5x and 3x start after a > 3x range
  *
- * Output (apps/agent/backtest/data/, gitignored):
+ * Output (`DATA_DIR`: env BACKTEST_DATA_DIR or apps/agent/backtest/data/, gitignored):
  *   <pool>.json  { pool, baseToken, symbol, dex, createdAt, timeframe: "minute",
  *                  candles: [[t, o, h, l, c, volumeUsd], ...] }  t = unix s, ascending, window =
  *                  the 4320 minutes from the minute of pool creation. GeckoTerminal omits minutes
@@ -41,7 +41,10 @@
  *   index.json   { asOf, rules, pools: [{ file, pool, baseToken, symbol, dex, createdAt, source, tag,
  *                  candles, coverage, maxGapMin, endMult, peakMult, maxDrawdown, rangeMult }] }
  *   .cache/      every API response keyed by request path, plus the pinned `asOf` time: re-runs
- *                never refetch and select the same pools. Delete it to rebuild from today's lists.
+ *                never refetch and select the same pools (an interrupted fetch resumes from it).
+ *                Delete it to rebuild from today's lists.
+ *   hf-*.json    Holdfast's own launches (`holdfast.ts`), merged into the index by the research
+ *                child; this fetch leaves those files alone.
  *
  * GeckoTerminal's public rate limit is ~10 calls/min: requests are spaced GT_INTERVAL_MS apart,
  * 429/5xx/network errors retry with exponential backoff (honouring Retry-After) and widen the spacing.
@@ -53,14 +56,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { DATA_DIR } from "./scenarios";
 
 const WSOL = "So11111111111111111111111111111111111111112";
-const WINDOW_S = 72 * 3600;
-export const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "data");
+export const WINDOW_S = 72 * 3600;
+/** Pool files of Holdfast's own launches (`holdfast.ts`); the GeckoTerminal fetch never deletes them. */
+export const HOLDFAST_PREFIX = "hf-";
 /** Response cache of the running fetch (under its data dir); set by `fetchDataset`. */
 let cacheDir = path.join(DATA_DIR, ".cache");
 /** Progress lines of the running fetch (stdout for the CLI; the research child sends them to stderr). */
 let say: (line: string) => void = console.log;
+/** Aborts the running fetch (the research child's refresh budget); set by `fetchDataset`. */
+let abort: AbortSignal | undefined;
 
 const num = (key: string, dflt: number) => {
   const v = process.env[key];
@@ -86,7 +93,7 @@ const SEARCH_TERMS = [
   "god", "kid", "boy", "girl", "man", "world", "jeet", "rich", "cult", "agent", "bot", "sol",
 ];
 
-type Candle = [t: number, o: number, h: number, l: number, c: number, volumeUsd: number];
+export type Candle = [t: number, o: number, h: number, l: number, c: number, volumeUsd: number];
 interface Candidate {
   pool: string;
   baseToken: string;
@@ -94,14 +101,14 @@ interface Candidate {
   createdAt: number;
   source: string;
 }
-interface Outcome {
+export interface Outcome {
   tag: Tag;
   endMult: number;
   peakMult: number;
   maxDrawdown: number;
   rangeMult: number;
 }
-interface IndexEntry extends Outcome {
+export interface IndexEntry extends Outcome {
   file: string;
   pool: string;
   baseToken: string;
@@ -156,20 +163,21 @@ const GECKO: Api = {
 /** DexScreener search (300 req/min) widens discovery; candles always come from GeckoTerminal. */
 const DEXSCREENER: Api = { base: "https://api.dexscreener.com", headers: {}, intervalMs: 300, maxIntervalMs: 5000, nextAt: 0, requests: 0 };
 
-/** GET an API path; responses (including 404 as `null`) are cached on disk forever. */
+/** GET an API path; responses (including 404 as `null`) are cached on disk forever. Throws once `abort` fires. */
 async function get<T>(api: Api, p: string): Promise<T | null> {
   const url = api.base + p;
   const file = path.join(cacheDir, url.replace(/^https:\/\//, "").replace(/[^A-Za-z0-9._-]+/g, "_") + ".json");
   if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf8")) as T | null;
   for (let attempt = 0; ; attempt++) {
+    abort?.throwIfAborted();
     const wait = api.nextAt - Date.now();
-    if (wait > 0) await sleep(wait);
+    if (wait > 0) await sleep(wait, undefined, { signal: abort });
     api.nextAt = Date.now() + api.intervalMs;
     let status = 0;
     let retryAfter = 0;
     try {
       api.requests++;
-      const res = await fetch(url, { headers: api.headers });
+      const res = await fetch(url, { headers: api.headers, signal: abort });
       status = res.status;
       if (res.ok || status === 404) {
         const body = status === 404 ? null : ((await res.json()) as T);
@@ -179,6 +187,7 @@ async function get<T>(api: Api, p: string): Promise<T | null> {
       retryAfter = Number(res.headers.get("retry-after")) || 0;
       await res.body?.cancel();
     } catch (e) {
+      if (abort?.aborted) throw e;
       console.warn(`  ${url}: ${(e as Error).message}`);
     }
     if (status !== 0 && status !== 429 && status < 500) throw new Error(`GET ${url}: HTTP ${status}`);
@@ -186,13 +195,13 @@ async function get<T>(api: Api, p: string): Promise<T | null> {
     if (status === 429) api.intervalMs = Math.min(Math.round(api.intervalMs * 1.3), api.maxIntervalMs);
     const backoff = Math.max(retryAfter * 1000, Math.min(120_000, 10_000 * 2 ** attempt));
     console.warn(`  HTTP ${status || "error"} on ${url}; retrying in ${backoff / 1000}s (spacing now ${api.intervalMs}ms)`);
-    await sleep(backoff);
+    await sleep(backoff, undefined, { signal: abort });
   }
 }
 
 // ---------- outcome tagging ----------
 
-function classify(closes: number[]): Outcome {
+export function classify(closes: number[]): Outcome {
   const start = closes[0];
   let peak = start;
   let hi = start;
@@ -307,7 +316,7 @@ async function minuteCandles(c: Candidate): Promise<{ symbol: string; candles: C
 }
 
 /** Longest run of minutes without a candle in the window starting at `from`. */
-function maxGapMinutes(candles: Candle[], from: number) {
+export function maxGapMinutes(candles: Candle[], from: number) {
   let gap = 0;
   let prev = from - 60;
   for (const [t] of candles) {
@@ -320,11 +329,13 @@ function maxGapMinutes(candles: Candle[], from: number) {
 // ---------- main ----------
 
 export interface FetchOptions {
-  /** Where `index.json`, the pool files and `.cache/` go (default: `backtest/data`). */
+  /** Where `index.json`, the pool files and `.cache/` go (default: `DATA_DIR`). */
   dataDir?: string;
   /** Pools to stop at (default: env TARGET, 80). */
   target?: number;
   log?: (line: string) => void;
+  /** Stops the fetch (rejects with the abort reason); the response cache keeps what was fetched, so a re-run resumes. */
+  signal?: AbortSignal;
 }
 
 /** Builds (or, with the response cache present, reproduces) the dataset; resolves with the number of pools kept. */
@@ -334,6 +345,7 @@ export async function fetchDataset(opts: FetchOptions = {}): Promise<number> {
   const tagCap = Math.ceil(target * TAG_SHARE);
   cacheDir = path.join(dataDir, ".cache");
   say = opts.log ?? console.log;
+  abort = opts.signal;
   const started = Date.now();
   fs.mkdirSync(cacheDir, { recursive: true });
   const asOfFile = path.join(cacheDir, "asof.json");
@@ -419,10 +431,10 @@ export async function fetchDataset(opts: FetchOptions = {}): Promise<number> {
   }
   writeIndex();
 
-  // Drop pool files a previous run kept but this one didn't.
+  // Drop pool files a previous run kept but this one didn't (Holdfast launches are `holdfast.ts`'s).
   const keep = new Set(kept.map((k) => k.file));
   for (const f of fs.readdirSync(dataDir)) {
-    if (f.endsWith(".json") && f !== "index.json" && !keep.has(f)) fs.rmSync(path.join(dataDir, f));
+    if (f.endsWith(".json") && f !== "index.json" && !f.startsWith(HOLDFAST_PREFIX) && !keep.has(f)) fs.rmSync(path.join(dataDir, f));
   }
 
   const total = kept.reduce((s, k) => s + k.candles, 0);

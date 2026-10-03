@@ -20,7 +20,13 @@ import { hashSeed, mulberry32, simulate, type Recording, type Scenario } from ".
  * from their first price get clipped at the floor (the public runs out of tokens to sell).
  */
 
-export const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "data");
+/**
+ * The dataset (`index.json`, pool files, response caches): `BACKTEST_DATA_DIR` (resolved against the cwd; on a host,
+ * point it at a persistent volume so a restart doesn't refetch it) or `backtest/data`.
+ */
+export const DATA_DIR = process.env.BACKTEST_DATA_DIR?.trim()
+  ? path.resolve(process.env.BACKTEST_DATA_DIR.trim())
+  : path.join(path.dirname(fileURLToPath(import.meta.url)), "data");
 const VIRTUAL_SOL = 30_000_000_000n;
 const START_HEADROOM = 1.1;
 const START_MAX = 20;
@@ -44,6 +50,8 @@ export interface PoolEntry {
   tag: string;
   candles: number;
   createdAt: number;
+  /** Where the pool came from (`holdfast` for the platform's own launches, holdfast.ts). */
+  source?: string;
 }
 
 export function loadIndex(dir = DATA_DIR): PoolEntry[] {

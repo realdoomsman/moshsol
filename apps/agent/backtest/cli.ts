@@ -1,5 +1,5 @@
 /**
- * Backtest CLI (dataset: `backtest:fetch` → apps/agent/backtest/data/):
+ * Backtest CLI (dataset: `backtest:fetch` → `BACKTEST_DATA_DIR` or apps/agent/backtest/data/; the research loop adds Holdfast launches):
  *
  *   pnpm --filter @holdfast/agent backtest eval         no agent / v1 / current / tuned on TRAIN and TEST
  *   pnpm --filter @holdfast/agent backtest train        random search + CMA-ES on TRAIN, then TRAIN/TEST tables

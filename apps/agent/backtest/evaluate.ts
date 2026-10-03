@@ -15,6 +15,8 @@ export const TEST_SHARE = 0.3;
 export const SYN_HOURS = 24;
 export const SYN_TRAIN_SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
 export const SYN_TEST_SEEDS = [101, 102, 103, 104, 105, 106, 107, 108];
+/** Candles a pool needs inside a walk-forward segment to be replayed in it. */
+export const MIN_SEGMENT_CANDLES = 60;
 
 /** Stratified by outcome tag: within each tag, pools ordered by a hash of their address, the first 30% go to TEST. */
 export function split(entries: PoolEntry[]): { train: PoolEntry[]; test: PoolEntry[] } {
@@ -50,8 +52,8 @@ function withCandles(entries: PoolEntry[], fromMin: number, toMin: number, min: 
 
 /** Walk-forward specs: every pool's hours 0–24 (+ synthetic TRAIN) to tune on, hours 24–72 to test on; `say` gets the one-line description. */
 export function walkForward(entries: PoolEntry[], say: (line: string) => void = () => {}): { wfTrain: ScenarioSpec[]; wfTest: ScenarioSpec[] } {
-  const first = withCandles(entries, 0, 24 * HOUR_MIN, 60);
-  const later = withCandles(entries, 24 * HOUR_MIN, FULL_MIN, 60);
+  const first = withCandles(entries, 0, 24 * HOUR_MIN, MIN_SEGMENT_CANDLES);
+  const later = withCandles(entries, 24 * HOUR_MIN, FULL_MIN, MIN_SEGMENT_CANDLES);
   say(`walk-forward: tune on hours 0–24 of ${first.length} pools (+ synthetic TRAIN), test on hours 24–72 of ${later.length} pools, each segment replayed as its own launch`);
   return {
     wfTrain: [...poolSpecs(first, 0, 24 * HOUR_MIN), ...syntheticSpecs(SYN_TRAIN_SEEDS)],
