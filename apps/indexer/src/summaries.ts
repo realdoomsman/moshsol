@@ -194,6 +194,7 @@ export class LaunchSummaries {
       const list = rows.map((row) => {
         const summary = toSummary(this.store, row, aggs.get(row.address), vault.get(row.address), pump.get(row.address), solUsd, now);
         if (this.hidden.has(row)) summary.hidden = true;
+        if (this.hidden.impersonator(row)) summary.impersonator = true;
         return summary;
       });
       // Keyed by the row's columns, not the snapshot's: a pump launch's mint lands with its `launched` event,

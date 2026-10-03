@@ -24,9 +24,11 @@ export function parseMint(id: string): PublicKey | null {
  * comma-separated) — impersonators of the Holdfast brand. Their page, metadata and share image 404.
  */
 const BLOCKED = new Set((process.env.BLOCKED_LAUNCHES ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+/** Ids the indexer flagged as brand impersonators during this process (so the on-chain fallback 404s them too). */
+const IMPERSONATORS = new Set<string>();
 
 export function isBlockedLaunch(...ids: (string | null | undefined)[]): boolean {
-  return ids.some((id) => !!id && BLOCKED.has(id));
+  return ids.some((id) => !!id && (BLOCKED.has(id) || IMPERSONATORS.has(id)));
 }
 
 /**
@@ -37,6 +39,8 @@ export const loadLaunch = cache(async (id: string): Promise<ServerLaunch> => {
   if (isBlockedLaunch(id)) return { state: "missing" };
   try {
     const launch = await api.launch(id);
+    // A raising pump launch has no mint yet (the default pubkey): never block by it.
+    if (launch.impersonator) for (const k of [id, launch.address, launch.mint]) if (k !== PublicKey.default.toBase58()) IMPERSONATORS.add(k);
     return isBlockedLaunch(launch.address, launch.mint) ? { state: "missing" } : { state: "found", launch };
   } catch (e) {
     return e instanceof ApiError && e.status === 404 ? { state: "missing" } : { state: "unreachable" };

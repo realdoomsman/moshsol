@@ -35,6 +35,8 @@ export interface LaunchSummary extends LaunchJson {
   creatorName: string | null;
   /** Set (only) on a launch in `HIDDEN_LAUNCHES`: kept off every list, still served by id; pages should not be indexed. */
   hidden?: true;
+  /** Uses the Holdfast name or $HOLD ticker without being the official token: the web 404s its page. */
+  impersonator?: true;
   /** SOL credited to backers under the pre-October-2026 profit split (sum of historical `VaultProfitShared`); 0 on launches since. */
   profitSharedSol: number;
   /** Backer payback (`payout_backers`): principal repaid so far and dividends paid on top, in SOL (snapshot `backersRepaid` / `backerPayouts`). */
