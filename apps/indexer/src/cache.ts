@@ -53,12 +53,16 @@ export class ReadCache {
     private readonly version: () => number,
     private readonly ttlMs: number,
     private readonly now: () => number = Date.now,
+    /** Reuse a value this young even after a write: a hot launch writes many times a second, and recomputing on every
+     * write kept the event loop busy (every request recomputed every launch's aggregates). 0 = see writes at once. */
+    private readonly minFreshMs = 0,
   ) {}
 
   get<V>(key: string, compute: () => V): V {
     const version = this.version();
     const at = this.now();
     const hit = this.slots.get(key);
+    if (hit && at - hit.at < this.minFreshMs) return hit.value as V;
     if (hit && hit.version === version && at - hit.at < this.ttlMs) return hit.value as V;
     const value = compute();
     this.slots.set(key, { version, at, value });

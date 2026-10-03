@@ -144,6 +144,8 @@ export function summaryOf(store: Store, price: SolPrice, row: LaunchDbRow | unde
 
 /** How long derived reads are reused when nothing was written: only the rolling 1h/24h windows drift meanwhile. */
 export const READ_CACHE_TTL_MS = 1_000;
+/** Production floor between recomputes of the summaries under a stream of writes (`ReadCache` minFreshMs). */
+export const SUMMARIES_MIN_FRESH_MS = 2_000;
 
 /**
  * Every launch summary, computed once and shared by the list, detail, stats, agents, trending and portfolio routes
@@ -159,8 +161,9 @@ export class LaunchSummaries {
     readonly hidden = new HiddenLaunches(),
     ttlMs = READ_CACHE_TTL_MS,
     private readonly now: () => number = Date.now,
+    minFreshMs = 0,
   ) {
-    this.cache = new ReadCache(() => store.dataVersion(), ttlMs, now);
+    this.cache = new ReadCache(() => store.dataVersion(), ttlMs, now, minFreshMs);
   }
 
   /** Every launch with a snapshot, hidden ones included (flagged), newest first. Shared between requests: never mutate it. */
