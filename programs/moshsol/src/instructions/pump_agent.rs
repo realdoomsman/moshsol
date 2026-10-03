@@ -263,8 +263,12 @@ pub fn agent_buy_pump<'info>(
         MoshError::AgentWindowLimit
     );
     let before = view.price_q64;
+    // The official Holdfast token's vault buys on price action alone (the agent buys pullbacks off the recent high);
+    // every other launch buys only under its EMA band. Budget, impact and the vault floor bind both.
+    let official = ctx.accounts.platform.params.buyback_mint != Pubkey::default()
+        && launch.mint == ctx.accounts.platform.params.buyback_mint;
     let ceiling = launch.ema_price / BPS as u128 * (BPS - terms.agent_band_bps as u64) as u128;
-    require!(before <= ceiling, MoshError::AgentBuyNotDip);
+    require!(official || before <= ceiling, MoshError::AgentBuyNotDip);
 
     let (spent, tokens) = venue.buy(sol_in, min_tokens_out)?;
     if let Some(w) = &wallet {
@@ -289,8 +293,6 @@ pub fn agent_buy_pump<'info>(
             <= (tokens as u128)
                 * (launch.agent_sol_received as u128)
                 * (BPS - terms.agent_band_bps as u64) as u128;
-    let official = ctx.accounts.platform.params.buyback_mint != Pubkey::default()
-        && launch.mint == ctx.accounts.platform.params.buyback_mint;
     require!(below_cost || below_avg_sell || official, MoshError::AgentAboveCostBasis);
 
     launch.vault_sol = launch.vault_sol - spent + venue.donated.get();

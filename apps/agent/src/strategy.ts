@@ -355,7 +355,8 @@ export function planRejection(m: MarketState, now: bigint, plan: TradePlan): str
   const p = project(m, now);
   const dev = `${fmtDeviation(p.deviationPpm)} vs EMA`;
   if (plan.action === "buy") {
-    if (p.price > p.buyCeiling) return `spot ${dev}, no longer below the buy band`;
+    // The official token buys on pullbacks off its high, not under the EMA band (the program skips that check for it).
+    if (!m.official && p.price > p.buyCeiling) return `spot ${dev}, no longer below the buy band`;
     if (plan.amount > p.buyRemaining) return "the window's buy budget no longer covers it";
     if (plan.amount > spendableSol(m)) return "vault SOL above its floor no longer covers it";
     if (!buyImpactOk(m, p, plan.amount)) return "it would now move spot past the impact limit";
@@ -787,6 +788,12 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
     flow.sinceAgentTradeSecs < params.clipSpacingSecs
       ? `clips are spaced ${Math.round(params.clipSpacingSecs)}s apart on either side (last agent fill ${Math.round(flow.sinceAgentTradeSecs)}s ago), next in ${Math.ceil(params.clipSpacingSecs - flow.sinceAgentTradeSecs)}s`
       : null;
+  // The official token buys on price alone: any pullback of `OFFICIAL_PULLBACK` off its 15 min high, wherever the EMA is.
+  if (m.official && flow.drawdownHigh >= OFFICIAL_PULLBACK) {
+    const head = `pullback −${(flow.drawdownHigh * 100).toFixed(1)}% off the 15-min high`;
+    if (spacing) return done(hold("spacing", `${head} but ${spacing}`));
+    return done(planBuy(m, s, proj, params, flow, head));
+  }
   if (proj.price <= proj.buyCeiling) {
     const head = `dip ${dev} vs EMA`;
     // Selling climax that is easing: the window sold on climax volume, the latest minute sells less than the window did.
