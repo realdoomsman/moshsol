@@ -30,8 +30,10 @@ export interface AgentConfig {
   indexerUrl: string | null;
   /** `INDEXER_INTERNAL_TOKEN`: exempts the agent's reads from the indexer's per-IP limit (same value as its INTERNAL_TOKEN). */
   indexerInternalToken: string | null;
-  /** `AGENT_SKIP_LAUNCHES`: launch addresses or mints the agent never trades (cranks still run). */
+  /** `AGENT_SKIP_LAUNCHES`: launch addresses or mints the agent leaves alone entirely (no trades, no cranks). */
   skipLaunches: Set<string>;
+  /** `AGENT_NO_PAYOUT_LAUNCHES`: launch addresses or mints whose backers the agent does not pay out (the backers waived it). */
+  noPayoutLaunches: Set<string>;
   /** Below this a wallet is not picked and gets topped up from the agent key (`EXECUTOR_MIN_SOL`). */
   executorMinLamports: number;
   /** Top-ups bring a low wallet to this (`EXECUTOR_TOPUP_SOL`)… */
@@ -147,6 +149,7 @@ export function loadConfig(): AgentConfig {
     indexerUrl: process.env.INDEXER_URL?.trim().replace(/\/+$/, "") || null,
     indexerInternalToken: process.env.INDEXER_INTERNAL_TOKEN?.trim() || null,
     skipLaunches: new Set((process.env.AGENT_SKIP_LAUNCHES ?? "").split(",").map((s) => s.trim()).filter(Boolean)),
+    noPayoutLaunches: new Set((process.env.AGENT_NO_PAYOUT_LAUNCHES ?? "").split(",").map((s) => s.trim()).filter(Boolean)),
     executorMinLamports,
     executorTopUpLamports,
     executorTopUpMaxPerHourLamports: sol("EXECUTOR_TOPUP_MAX_SOL_PER_HOUR", 0.2),

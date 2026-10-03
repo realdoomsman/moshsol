@@ -472,6 +472,8 @@ export class Agent {
    * and flow a decision would use now. Not latency-critical: heartbeat only.
    */
   private async payout(rt: LaunchRuntime): Promise<void> {
+    const ids = [rt.address.toBase58(), rt.account.mint.toBase58()];
+    if (ids.some((id) => this.cfg.noPayoutLaunches.has(id))) return;
     const market = this.marketOf(rt);
     if (!market || this.skipReason() !== undefined) return;
     const now = this.now();
