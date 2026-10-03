@@ -628,6 +628,10 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
     // The official token supports its chart on real pullbacks too: smaller clips, only well off the 15 min high.
     if (m.official) {
       const off = `${(flow.drawdownHigh * 100).toFixed(1)}% off the 15-min high`;
+      const share = solShare(m);
+      if (share < OFFICIAL_SOL_FLOOR) {
+        return hold("vault_floor", `${head} but vault SOL is ${(share * 100).toFixed(0)}% of its value (pullback buys resume from ${OFFICIAL_SOL_FLOOR * 100}%; sells near the high rebuild it); ${buyback}`);
+      }
       if (flow.drawdownHigh < OFFICIAL_PULLBACK) {
         return hold("cost_basis", `${head} but ${buyback}; pullback buys need ≥ ${OFFICIAL_PULLBACK * 100}% off the 15-min high (now ${off})`);
       }
@@ -680,6 +684,21 @@ const OFFICIAL_PULLBACK_CLIP_MAX = 0.5;
 const OFFICIAL_SELL_NEAR_HIGH = 0.05;
 /** Official token: fewest seconds between the agent's fills before a pullback buy. */
 const OFFICIAL_BUY_SPACING_SECS = 10;
+/** Official token: the vault's target SOL share of its value (SOL + tokens at spot). Under it, sells go bigger and wider. */
+const OFFICIAL_SOL_TARGET = 0.35;
+/** Official token: under this SOL share, pullback buys above the average sell pause until sells rebuild SOL. */
+const OFFICIAL_SOL_FLOOR = 0.15;
+/** Official token: under the SOL target, rally sells run while spot is within this share of the 15 min high. */
+const OFFICIAL_SELL_NEAR_HIGH_REBUILD = 0.1;
+/** Official token: one sell moves spot at most this much (bps), so sells absorb buying instead of knocking the price down. */
+const OFFICIAL_SELL_IMPACT_BPS = 300n;
+
+/** The vault's SOL as a share of its value (SOL + tokens at spot), 0..1. */
+export function solShare(m: Pick<MarketState, "vaultSol" | "vaultTokens" | "virtualSol" | "realSol" | "tokenReserve">): number {
+  const sol = Number(m.vaultSol);
+  const tokens = (Number(m.vaultTokens) * Number(m.virtualSol + m.realSol)) / Number(m.tokenReserve || 1n);
+  return sol + tokens > 0 ? sol / (sol + tokens) : 1;
+}
 
 /** Climax volume: the short window trades at least this multiple of the median minute volume. */
 const CLIMAX_VOLUME_RATIO = 2;
@@ -723,7 +742,12 @@ function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyP
   // Per window, the bundle's tokens go at the ladder's pace (tokens bought back on dips beyond the bundle sell freely).
   const windowShare = ladderWindowShare(params, mult);
   const excess = m.vaultTokens > m.bundleTokens ? m.vaultTokens - m.bundleTokens : 0n;
-  const allowed = minBig(proj.sellCap, (proj.sellCap * BigInt(Math.round(windowShare * 1_000_000))) / 1_000_000n + excess);
+  // Official token: the whole window while the vault is under its SOL target (rebuild), half of it above.
+  const officialShare = m.official ? (solShare(m) < OFFICIAL_SOL_TARGET ? 1 : 0.5) : 1;
+  const allowed = minBig(
+    proj.sellCap,
+    (proj.sellCap * BigInt(Math.round(windowShare * officialShare * 1_000_000))) / 1_000_000n + excess,
+  );
   const windowSold = proj.sellCap - proj.sellRemaining;
   const room = minBig(allowed > windowSold ? allowed - windowSold : 0n, gap);
   if (room === 0n || proceeds(room) < s.minSellLamports) {
@@ -736,7 +760,8 @@ function planSell(m: MarketState, s: Sizing, proj: Projection, params: StrategyP
   }
   // One clip as large as the ladder gap and the window allow, down to the EMA band edge or 90% of the impact limit.
   const floorTarget = (proj.ema * (BPS + t.bandBps)) / BPS;
-  const impactTarget = impactTargets(proj, t.maxImpactBps).down;
+  // Official token: small clips (≤ 3% each) into buying pressure, many of them, never one that knocks the chart down.
+  const impactTarget = impactTargets(proj, m.official && t.maxImpactBps > OFFICIAL_SELL_IMPACT_BPS ? OFFICIAL_SELL_IMPACT_BPS : t.maxImpactBps).down;
   const ideal = sellToPrice(proj, floorTarget > impactTarget ? floorTarget : impactTarget);
   if (ideal === 0n || proceeds(ideal) < s.minSellLamports) {
     return hold("too_small", `${head}, a sell to the band edge / impact limit takes ~${solStr(ideal === 0n ? 0n : proceeds(ideal))}, below the ${minSell} minimum sell`);
@@ -836,8 +861,9 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
     if (paused) return done(hold("flow", `${head} but ${paused}`));
     // The official token sells only into new highs: within `OFFICIAL_SELL_NEAR_HIGH` of its 15 min high, never into a
     // pullback it may be buying (buys start at `OFFICIAL_PULLBACK` off the high).
-    if (m.official && flow.drawdownHigh > OFFICIAL_SELL_NEAR_HIGH) {
-      return done(hold("flow", `${head} but official token sells only near the high (now ${(flow.drawdownHigh * 100).toFixed(1)}% off, sells within ${OFFICIAL_SELL_NEAR_HIGH * 100}%)`));
+    const nearHigh = m.official && solShare(m) < OFFICIAL_SOL_TARGET ? OFFICIAL_SELL_NEAR_HIGH_REBUILD : OFFICIAL_SELL_NEAR_HIGH;
+    if (m.official && flow.drawdownHigh > nearHigh) {
+      return done(hold("flow", `${head} but official token sells only near the high (now ${(flow.drawdownHigh * 100).toFixed(1)}% off, sells within ${nearHigh * 100}%)`));
     }
     if (spacing) return done(hold("spacing", `${head} but ${spacing}`));
     return done(planSell(m, s, proj, params, head));
