@@ -20,12 +20,24 @@ export function parseMint(id: string): PublicKey | null {
 }
 
 /**
+ * Launches whose pages don't exist on this site (`BLOCKED_LAUNCHES`, server-only: launch addresses and/or mints,
+ * comma-separated) — impersonators of the Holdfast brand. Their page, metadata and share image 404.
+ */
+const BLOCKED = new Set((process.env.BLOCKED_LAUNCHES ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+
+export function isBlockedLaunch(...ids: (string | null | undefined)[]): boolean {
+  return ids.some((id) => !!id && BLOCKED.has(id));
+}
+
+/**
  * Indexer snapshot of a launch for server rendering (metadata, 404s, OG image, the page's query
  * cache). Deduped per request, so `generateMetadata` and the page share one fetch.
  */
 export const loadLaunch = cache(async (id: string): Promise<ServerLaunch> => {
+  if (isBlockedLaunch(id)) return { state: "missing" };
   try {
-    return { state: "found", launch: await api.launch(id) };
+    const launch = await api.launch(id);
+    return isBlockedLaunch(launch.address, launch.mint) ? { state: "missing" } : { state: "found", launch };
   } catch (e) {
     return e instanceof ApiError && e.status === 404 ? { state: "missing" } : { state: "unreachable" };
   }
@@ -35,8 +47,10 @@ export const loadLaunch = cache(async (id: string): Promise<ServerLaunch> => {
  * Whether the launch account exists on-chain (null when the RPC is unreachable). Lets a launch
  * that confirmed a moment ago render while the indexer catches up, instead of a 404. `id` is a
  * launch address (pump launches, the PDA itself) or a mint (Holdfast launches, the PDA's seed).
+ * Blocked launches never count as existing.
  */
 export const launchOnChain = cache(async (id: string): Promise<boolean | null> => {
+  if (isBlockedLaunch(id)) return false;
   const key = parseMint(id);
   if (!key) return false;
   try {
