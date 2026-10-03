@@ -3,7 +3,7 @@
 import { TOTAL_SUPPLY } from "@holdfast/sdk";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { api } from "@/lib/api";
+import { agentTradesQuery } from "@/lib/query-options";
 import { pctOf } from "@/lib/format";
 import { launchId } from "@/lib/launch";
 import { useFallbackInterval } from "@/lib/live";
@@ -49,8 +49,7 @@ export function useHolderStats(l: LaunchSummary): HolderStats {
 function useAgentTrades24h(id: string, now: number) {
   const interval = useFallbackInterval(10_000);
   const q = useQuery({
-    queryKey: ["trades", id, "agent-24h"],
-    queryFn: () => api.trades(id, { limit: 500, agent: true }),
+    ...agentTradesQuery(id, 500),
     refetchInterval: interval,
   });
   const since = now - 86_400;

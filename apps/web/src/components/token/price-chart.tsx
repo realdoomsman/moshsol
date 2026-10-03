@@ -23,7 +23,8 @@ import type { Timeframe } from "@/lib/api";
 import { fmtSolValue, fmtUsd, solUsdOf } from "@/lib/format";
 import { useLocalStorage, useMounted, useNow } from "@/lib/hooks";
 import { launchId } from "@/lib/launch";
-import { useCandles, useStats, useTrades } from "@/lib/queries";
+import { useAgentTrades, useCandles, useStats, useTrades } from "@/lib/queries";
+import type { TradeRow } from "@/lib/types";
 import type { Candle, LaunchSummary } from "@/lib/types";
 import { AgentGlyph } from "../brand/glyphs";
 import { IconButton } from "../ui/button";
@@ -399,6 +400,8 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
   const tf = TIMEFRAMES.find((t) => t.value === tfChoice)?.tf ?? autoTf;
   const candles = useCandles(id, tf);
   const trades = useTrades(id, CHART_TRADES);
+  // The newest trades of a busy launch cover only its last minutes: the agent's markers come from its own trades.
+  const agentTrades = useAgentTrades(id, CHART_TRADES);
   const now = useNow(30_000);
   const mounted = useMounted();
   const panel = useRef<HTMLElement>(null);
@@ -554,7 +557,9 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
         agentSells: 0,
       });
     }
-    const asc = [...(trades.data?.trades ?? [])].sort((a, b) => a.timestamp - b.timestamp || a.slot - b.slot);
+    const merged = new Map<string, TradeRow>();
+    for (const t of [...(trades.data?.trades ?? []), ...(agentTrades.data?.trades ?? [])]) merged.set(`${t.signature}:${t.isBuy}:${t.solAmount}`, t);
+    const asc = [...merged.values()].sort((a, b) => a.timestamp - b.timestamp || a.slot - b.slot);
     for (const t of asc) {
       const bar = bars.get(Math.floor(t.timestamp / tf) * tf);
       if (!bar) continue;
@@ -588,7 +593,7 @@ export function PriceChart({ launch: l, zones, className }: { launch: LaunchSumm
       ema: emaLine,
       agentBars: list.filter((b) => b.agentBuys || b.agentSells),
     };
-  }, [candles.data, trades.data, tf, mult, now, l.priceSol]);
+  }, [candles.data, trades.data, agentTrades.data, tf, mult, now, l.priceSol]);
 
   useEffect(() => {
     const r = refs.current;

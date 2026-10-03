@@ -24,6 +24,10 @@ export const launchQuery = (id: string) => queryOptions({ queryKey: ["launch", i
 export const recentTradesQuery = (id: string, limit: number) =>
   queryOptions({ queryKey: ["trades", id, "recent", limit], queryFn: () => api.trades(id, { limit }) });
 
+/** The vault agent's own trades (newest `limit`): the chart's agent markers and the 24 h agent-trade count. */
+export const agentTradesQuery = (id: string, limit: number) =>
+  queryOptions({ queryKey: ["trades", id, "agent", limit], queryFn: () => api.trades(id, { limit, agent: true }) });
+
 export const candlesQuery = (id: string, tf: Timeframe) =>
   queryOptions({ queryKey: ["candles", id, tf], queryFn: () => api.candles(id, tf) });
 

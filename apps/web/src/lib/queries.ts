@@ -22,6 +22,7 @@ import {
   platformQuery,
   portfolioQuery,
   recentTradesQuery,
+  agentTradesQuery,
   statsQuery,
   tradeFeed,
   type TradeFilter,
@@ -93,6 +94,12 @@ export function useTrades(id: string, limit: number, enabled = true) {
     refetchInterval: interval,
     enabled,
   });
+}
+
+/** The vault agent's newest `limit` trades, polled like `useTrades`. */
+export function useAgentTrades(id: string, limit: number, enabled = true) {
+  const interval = useFallbackInterval(5_000);
+  return useQuery({ ...agentTradesQuery(id, limit), refetchInterval: interval, enabled });
 }
 
 export function useCandles(id: string, tf: Timeframe, enabled = true) {
