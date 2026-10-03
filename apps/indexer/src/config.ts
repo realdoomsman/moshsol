@@ -119,8 +119,6 @@ export const config = {
   internalToken: process.env.INTERNAL_TOKEN?.trim() || null,
   /** Launch addresses and/or mints kept off every list/discovery surface; still served by id. */
   hiddenLaunches: hiddenLaunches(),
-  /** `OFFICIAL_MINTS`: mints exempt from the brand-impersonation filter (the official Holdfast token). */
-  officialMints: (process.env.OFFICIAL_MINTS ?? "").split(",").map((s) => s.trim()).filter((s) => s !== ""),
   /**
    * Client IP from X-Forwarded-For behind reverse proxies: a comma-separated list of proxy IPs/CIDRs or
    * `loopback`/`linklocal`/`uniquelocal` trusts only those proxies, so clients can't spoof their IP.
