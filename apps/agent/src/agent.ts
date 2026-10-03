@@ -453,6 +453,8 @@ export class Agent {
    * curve the stream did not report, the paced pump cranks and the trade-path warm-up.
    */
   private async heartbeatCranks(rt: LaunchRuntime): Promise<boolean> {
+    // Operator kill switch (AGENT_SKIP_LAUNCHES): no trades and no cranks at all on this launch.
+    if (this.skipped(rt)) return false;
     let woundDown = false;
     await this.exclusive(rt, async () => {
       woundDown = await this.cranks.windDown(this.crankLaunch(rt), this.now());
@@ -475,6 +477,10 @@ export class Agent {
     const now = this.now();
     const flow = rt.flow.observe(market, now);
     await this.cranks.payout(this.crankLaunch(rt), market, project(market, now), flow, now, this.strategy);
+  }
+
+  private skipped(rt: LaunchRuntime): boolean {
+    return this.cfg.skipLaunches.has(rt.address.toBase58()) || this.cfg.skipLaunches.has(rt.account.mint.toBase58());
   }
 
   /** Venue (and graduation pool) accounts of `rts` from one batched read, each applied only where newer than what the stream had. */
@@ -727,7 +733,7 @@ export class Agent {
    * the decisions all call it.
    */
   private graduate(rt: LaunchRuntime): void {
-    if (rt.json.venue !== "pump" || rt.json.pump.graduated || this.stopped) return;
+    if (rt.json.venue !== "pump" || rt.json.pump.graduated || this.stopped || this.skipped(rt)) return;
     if (!rt.graduation) {
       rt.graduation = { completeAt: Date.now(), running: false, nudge: null };
       rt.poolKeys = poolKeys(rt.account.mint);
@@ -856,9 +862,7 @@ export class Agent {
     const now = this.now();
     const flow = rt.flow.observe(market, now);
     let ev = evaluate(market, this.sizing, now, this.strategy, flow);
-    const skipReason = this.cfg.skipLaunches.has(rt.address.toBase58()) || this.cfg.skipLaunches.has(rt.account.mint.toBase58())
-      ? "trading disabled for this launch by the operator (AGENT_SKIP_LAUNCHES)"
-      : this.skipReason();
+    const skipReason = this.skipped(rt) ? "everything disabled for this launch by the operator (AGENT_SKIP_LAUNCHES)" : this.skipReason();
     if (skipReason) {
       this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason: skipReason }, "paused", this.decided(trigger, false).detail);
       return;
