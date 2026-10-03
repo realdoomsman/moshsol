@@ -52,8 +52,8 @@ import { DRY_RUN, done, fail, readConfig, readKeypair, readVaultSigners, runVaul
 const PROGRAM_SO = path.resolve(ROOT, process.env.PROGRAM_SO ?? "target/deploy/moshsol.so");
 /** Solana's packet size: the most a serialized transaction may take. */
 const PACKET_DATA_SIZE = 1232;
-/** Buffer writes in flight at once (each is ~4 RPC calls; more trips free-tier RPC rate limits). */
-const WRITE_CONCURRENCY = 2;
+/** Buffer writes in flight at once (each is ~4 RPC calls; more trips free-tier RPC rate limits). `WRITE_CONCURRENCY` overrides. */
+const WRITE_CONCURRENCY = Math.max(1, Number(process.env.WRITE_CONCURRENCY ?? 2));
 
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 const sol = (lamports: number) => `${(lamports / 1e9).toFixed(4)} SOL`;
