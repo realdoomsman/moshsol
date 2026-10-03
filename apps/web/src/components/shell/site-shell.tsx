@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { NoLaunchNotice } from "../official/no-launch-notice";
 import { cn } from "../ui/cn";
 import { MobileTabs } from "./mobile-tabs";
 import { SiteFooter } from "./site-footer";
@@ -20,6 +21,7 @@ export function SiteShell({ mainClassName, children }: { mainClassName?: string;
         Skip to content
       </a>
       <SiteHeader />
+      <NoLaunchNotice />
       <main id="main" tabIndex={-1} className={cn("flex-1 outline-none", mainClassName)}>
         {children}
       </main>
