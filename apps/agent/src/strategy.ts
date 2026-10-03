@@ -665,7 +665,7 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
 /** Official token: buy-backs below the average sell take up to this share of the window's buy room per clip. */
 const OFFICIAL_BUYBACK_CLIP = 0.33;
 /** Official token: pullback buys above the average sell need spot at least this far under its 15 min high. */
-const OFFICIAL_PULLBACK = 0.15;
+const OFFICIAL_PULLBACK = 0.07;
 
 /** Climax volume: the short window trades at least this multiple of the median minute volume. */
 const CLIMAX_VOLUME_RATIO = 2;
