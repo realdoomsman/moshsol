@@ -862,7 +862,8 @@ export function evaluate(m: MarketState, s: Sizing, now: bigint, params: Strateg
     if (spacing) return done(hold("spacing", `${head} but ${spacing}`));
     // One clip per `OFFICIAL_BUY_SPACING_SECS`: a burst of max-impact buys spent most of a window in 10 s on the way
     // down; spaced clips buy the dip itself, not just its first seconds.
-    if (flow.sinceAgentTradeSecs < OFFICIAL_BUY_SPACING_SECS) {
+    // Deep dumps are bought at the cooldown's pace; shallower pullbacks one clip per `OFFICIAL_BUY_SPACING_SECS`.
+    if (flow.drawdownHigh < OFFICIAL_DEEP && flow.sinceAgentTradeSecs < OFFICIAL_BUY_SPACING_SECS) {
       return done(hold("spacing", `${head} but official dip buys are ${OFFICIAL_BUY_SPACING_SECS}s apart, next in ${Math.ceil(OFFICIAL_BUY_SPACING_SECS - flow.sinceAgentTradeSecs)}s`));
     }
     return done(planBuy(m, s, proj, params, flow, head));

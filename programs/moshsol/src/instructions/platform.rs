@@ -150,7 +150,8 @@ pub struct SetOfficialAgentTerms<'info> {
 /// Retunes the agent terms of the official token's launch only: every other launch keeps the terms frozen at its
 /// creation. The bounds are the platform's (`PlatformParams::validate`).
 pub fn set_official_agent_terms(ctx: Context<SetOfficialAgentTerms>, t: OfficialAgentTerms) -> Result<()> {
-    require!(t.agent_buy_bps_per_window <= MAX_AGENT_WINDOW_BPS, MoshError::InvalidParam);
+    // The official token may spend up to its whole vault per window (dump defense); sells keep the platform cap.
+    require!(t.agent_buy_bps_per_window as u64 <= BPS, MoshError::InvalidParam);
     require!(t.agent_sell_bps_per_window <= MAX_AGENT_WINDOW_BPS, MoshError::InvalidParam);
     require!(
         t.agent_max_impact_bps > 0 && t.agent_max_impact_bps <= MAX_AGENT_IMPACT_BPS,

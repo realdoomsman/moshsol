@@ -1709,7 +1709,8 @@ fn official_agent_terms_only_on_the_official_launch_by_the_admin_within_bounds()
         moshsol::instructions::OfficialAgentTerms { agent_window_secs: MIN_WINDOW_SECS - 1, ..terms },
         moshsol::instructions::OfficialAgentTerms { agent_band_bps: MIN_AGENT_BAND_BPS - 1, ..terms },
         moshsol::instructions::OfficialAgentTerms { agent_max_impact_bps: MAX_AGENT_IMPACT_BPS + 1, ..terms },
-        moshsol::instructions::OfficialAgentTerms { agent_buy_bps_per_window: MAX_AGENT_WINDOW_BPS + 1, ..terms },
+        moshsol::instructions::OfficialAgentTerms { agent_buy_bps_per_window: BPS as u16 + 1, ..terms },
+        moshsol::instructions::OfficialAgentTerms { agent_sell_bps_per_window: MAX_AGENT_WINDOW_BPS + 1, ..terms },
     ] {
         assert_err(set_official_terms(&mut env, &admin, &official, bad), MoshError::InvalidParam);
     }
