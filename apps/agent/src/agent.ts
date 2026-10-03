@@ -856,7 +856,9 @@ export class Agent {
     const now = this.now();
     const flow = rt.flow.observe(market, now);
     let ev = evaluate(market, this.sizing, now, this.strategy, flow);
-    const skipReason = this.skipReason();
+    const skipReason = this.cfg.skipLaunches.has(rt.address.toBase58()) || this.cfg.skipLaunches.has(rt.account.mint.toBase58())
+      ? "trading disabled for this launch by the operator (AGENT_SKIP_LAUNCHES)"
+      : this.skipReason();
     if (skipReason) {
       this.record(rt, l, displayPrices(ev.projection), flow, { action: "skip", reason: skipReason }, "paused", this.decided(trigger, false).detail);
       return;
