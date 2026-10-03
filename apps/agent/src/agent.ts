@@ -1,4 +1,4 @@
-import { LAMPORTS_PER_SOL, SystemProgram, SYSVAR_CLOCK_PUBKEY, TransactionInstruction, type Commitment, type Keypair, type PublicKey } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, SystemProgram, SYSVAR_CLOCK_PUBKEY, TransactionInstruction, type Commitment, type Keypair, PublicKey } from "@solana/web3.js";
 import { createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
@@ -807,6 +807,8 @@ export class Agent {
     // A completed curve trades no more; once pump.fun migrated it, its reserves read zero.
     if (!venue || venue.complete) return null;
     const market = marketOf(rt.account, venue.curve);
+    const buyback = this.platform?.account.params.buybackMint;
+    market.official = !!buyback && !buyback.equals(PublicKey.default) && buyback.equals(rt.account.mint);
     // Pump launches: the program only counts its own trades; the guardrail needs the chart's real volume.
     const indexed = this.publicVolume.get(rt.address.toBase58());
     if (indexed !== null && indexed > market.volumeSol) market.volumeSol = indexed;

@@ -279,7 +279,9 @@ pub fn agent_buy_pump<'info>(
     require!(spent <= sol_in, MoshError::InsufficientLiquidity);
     require!(tokens >= min_tokens_out, MoshError::Slippage);
 
-    // Same two ways in as on the Holdfast curve, on the measured fill.
+    // Same two ways in as on the Holdfast curve, on the measured fill. The official Holdfast token's launch (the
+    // platform's buyback mint) also buys pullbacks above its average sell: its vault supports its own chart, still
+    // only on a dip under the EMA band, within the window budget, the impact limit and the vault floor.
     let (cost_sol, cost_tokens) = launch.cost_basis();
     let below_cost = (spent as u128) * (cost_tokens as u128) <= (tokens as u128) * (cost_sol as u128);
     let below_avg_sell = launch.agent_tokens_sold > 0
@@ -287,7 +289,9 @@ pub fn agent_buy_pump<'info>(
             <= (tokens as u128)
                 * (launch.agent_sol_received as u128)
                 * (BPS - terms.agent_band_bps as u64) as u128;
-    require!(below_cost || below_avg_sell, MoshError::AgentAboveCostBasis);
+    let official = ctx.accounts.platform.params.buyback_mint != Pubkey::default()
+        && launch.mint == ctx.accounts.platform.params.buyback_mint;
+    require!(below_cost || below_avg_sell || official, MoshError::AgentAboveCostBasis);
 
     launch.vault_sol = launch.vault_sol - spent + venue.donated.get();
     launch.vault_tokens += tokens;

@@ -84,6 +84,8 @@ export interface MarketState {
   agentBuys: number;
   agentSells: number;
   agentSolSpent: bigint;
+  /** The official Holdfast token's launch (mint = the platform's buyback mint): the program also lets it buy pullbacks above its average sell. */
+  official?: boolean;
 }
 
 /** `venue` is required for pump launches: their reserves live on pump.fun / PumpSwap (`fetchVenueState`). */
@@ -274,7 +276,7 @@ export function buyBelowAvgSell(m: MarketState, solIn: bigint, tokens: bigint): 
 
 /** agent_buy cost rule: either path. Monotone in `solIn` (the fill price only rises with size), so `largestFeasible` applies. */
 export function buyCostOk(m: MarketState, p: Projection, solIn: bigint, tokens: bigint): boolean {
-  return buyBelowCost(p, solIn, tokens) || buyBelowAvgSell(m, solIn, tokens);
+  return m.official === true || buyBelowCost(p, solIn, tokens) || buyBelowAvgSell(m, solIn, tokens);
 }
 
 /** Vault SOL an agent buy may spend: everything above the launch's `minVaultSol` floor (`VaultFloor`). */
@@ -598,14 +600,20 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
     supportNote = `; support mode: ${quiet}, clip ${Math.round(params.supportClipShare * 100)}%`;
   }
   // Clip granularity: at most `buyClipShare` of the window's buy room per decision, never below the minimum trade.
-  const buyClip = (room * BigInt(Math.round(params.buyClipShare * 10_000))) / BPS;
-  const clipRoom = params.buyClipShare >= 1 ? room : buyClip > s.minTradeLamports ? buyClip : s.minTradeLamports;
-  const clipNote = clipRoom < minBig(ideal, room) ? `; clip ≤ ${Math.round(params.buyClipShare * 100)}% of ${solStr(room)} window room` : "";
+  // The official token buys below its average sell in bigger clips (`OFFICIAL_BUYBACK_CLIP`): those lock in profit.
+  const clipShare = m.official ? Math.max(params.buyClipShare, OFFICIAL_BUYBACK_CLIP) : params.buyClipShare;
+  const clipOf = (share: number) => {
+    const c = (room * BigInt(Math.round(share * 10_000))) / BPS;
+    return share >= 1 ? room : c > s.minTradeLamports ? c : s.minTradeLamports;
+  };
+  const clipRoom = clipOf(clipShare);
+  const clipNote = clipRoom < minBig(ideal, room) ? `; clip ≤ ${Math.round(clipShare * 100)}% of ${solStr(room)} window room` : "";
 
   const impactOk = (a: bigint) => buyImpactOk(m, proj, a);
   // Cost rules are checked against the slippage floor, so any fill the transaction accepts passes them.
   const worstFill = (a: bigint) => minOut(buyFill(m, proj, a), s.slippageBps);
-  const solIn = largestFeasible(minBig(ideal, clipRoom), (a) => impactOk(a) && buyCostOk(m, proj, a, worstFill(a)));
+  const strictCostOk = (a: bigint) => buyBelowCost(proj, a, worstFill(a)) || buyBelowAvgSell(m, a, worstFill(a));
+  const solIn = largestFeasible(minBig(ideal, clipRoom), (a) => impactOk(a) && strictCostOk(a));
   if (solIn < s.minTradeLamports) {
     if (!impactOk(s.minTradeLamports)) return hold("impact", `${head}, impact limit leaves buy below minimum`);
     const cost = `spot above vault avg cost ${avgPriceStr(costSol, costTokens)}`;
@@ -613,6 +621,26 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
       m.agentTokensSold === 0n
         ? "nothing sold yet to buy back"
         : `buy-back needs fill ≤ ${avgPriceStr((m.agentSolReceived * (BPS - t.bandBps)) / BPS, m.agentTokensSold)}`;
+    // The official token supports its chart on real pullbacks too: smaller clips, only well off the 15 min high.
+    if (m.official) {
+      const off = `${(flow.drawdownHigh * 100).toFixed(1)}% off the 15-min high`;
+      if (flow.drawdownHigh < OFFICIAL_PULLBACK) {
+        return hold("cost_basis", `${head} but ${buyback}; pullback buys need ≥ ${OFFICIAL_PULLBACK * 100}% off the 15-min high (now ${off})`);
+      }
+      const pull = largestFeasible(minBig(ideal, clipOf(params.buyClipShare)), impactOk);
+      if (pull < s.minTradeLamports) return hold("impact", `${head}, impact limit leaves pullback buy below minimum`);
+      const out = buyFill(m, proj, pull);
+      const moved = moveBps(price, priceQ64(proj.x + buyNet(m, pull), proj.y - out));
+      return {
+        action: "buy",
+        kind: "buyback",
+        reason: `${head}, ${off}: pullback buy ${solStr(pull)} above avg sell ${avgPriceStr(m.agentSolReceived, m.agentTokensSold)} (official token, impact ${Number(moved) / 100}%)`,
+        amount: pull,
+        expectedOut: out,
+        minOut: minOut(out, s.slippageBps),
+        impactBps: moved,
+      };
+    }
     return hold("cost_basis", `${head} but ${cost}, ${buyback}`);
   }
   const expectedTokens = buyFill(m, proj, solIn);
@@ -633,6 +661,11 @@ function planBuy(m: MarketState, s: Sizing, proj: Projection, params: StrategyPa
     impactBps,
   };
 }
+
+/** Official token: buy-backs below the average sell take up to this share of the window's buy room per clip. */
+const OFFICIAL_BUYBACK_CLIP = 0.33;
+/** Official token: pullback buys above the average sell need spot at least this far under its 15 min high. */
+const OFFICIAL_PULLBACK = 0.15;
 
 /** Climax volume: the short window trades at least this multiple of the median minute volume. */
 const CLIMAX_VOLUME_RATIO = 2;
