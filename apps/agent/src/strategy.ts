@@ -477,7 +477,9 @@ export const DEFAULT_PARAMS: StrategyParams = {
   ladderStartMult: 1.5,
   ladderShare10x: 0.35,
   ladderShape: 1.25,
-  sellPauseDrawdown: 0.2,
+  // 35%, not 20%: on the first 7 pumped mainnet launches (5–25× in the first minutes, back near 1× by 30 min) a 20%
+  // pause stopped rally sells on the first pullback off the high and the vault rode the rest down.
+  sellPauseDrawdown: 0.35,
   sellFlowBps: 0,
   sellThinRatio: 0,
   buyDumpShare: 1,

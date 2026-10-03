@@ -460,13 +460,23 @@ a strong market, never in a dip (see [Cranks](#venues-cranks-and-the-lookup-tabl
    (sell earlier into net buying, hold rally sells on thin volume, wait out a live sell-off before buying, buy
    earlier after a selling climax that is easing, a VWAP anchor) are tuned and kept only if they beat the
    previous policy out of sample — see the results below.
-5. **Sell pause** (`sellPauseDrawdown` 0.2; part of the owner's rule, like the ladder). A rally sell needs a green
+5. **Sell pause** (`sellPauseDrawdown` 0.35; part of the owner's rule, like the ladder). A rally sell needs a green
    market, not just spot above the EMA band: on a pump launch the EMA is sampled only by agent trades, so after a
    dump it can still sit near the launch price and read the lows as "+5–25% vs EMA". No rally sell while spot is more
-   than 20% under its 15 min high with the public net selling since that high (`sell paused: −68.0% from 15-min high,
+   than 35% under its 15 min high with the public net selling since that high (`sell paused: −68.0% from 15-min high,
    sellers in control (net −41.20 SOL since the high)`), while spot is under the 3 min VWAP, or while the latest
    minute's public flow is net selling. With the agent deciding on every streamed update (3 s cooldown) the sells go
    into the green candles themselves. The program still enforces its own EMA band; this is an extra agent-side gate.
+
+   **Live-launch read-out (first 7 pumped mainnet launches, 2026-10).** Every one ran 5–25× its open within the first
+   1–9 minutes and was back near 1× by 30 min. Under the old terms (10% of the vault per 900 s window) the agent spent
+   its whole window in the first minute (the ladder is measured against the bundle's average cost, which sits 1.3–4×
+   under the post-bundle open) and then sat out the peak and the crash with ~90% of the bundle. New launches therefore
+   get `agentWindowSecs` 300 / `agentSellBpsPerWindow` 2000 (the program's floor and ceiling), `agentBuyBpsPerWindow`
+   700 (the same buy pace per 15 min as before), and the pause moved from 20% to 35% off the high. Replaying the
+   ladder on those price paths realized ~2.5× the SOL of the old terms; the replay ignores the agent's own impact
+   on later prices, so treat it as directional, not a forecast. Buy-backs on those launches were break-even overall
+   (−50% on the one that bought mid-crash).
 6. **Low-volume support mode** (`supportVolumeMult`, `supportClipShare`, `supportSpacingSecs`). While the launch's
    24 h activity (`flow.volume24hSol`: public volume, or on pump launches the price-implied net flow, scaled to a
    day while the window is younger) is below `supportVolumeMult` × the vault's SOL, dip buys shrink to
