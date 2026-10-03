@@ -15,23 +15,16 @@ interface LiveContext {
 const Ctx = createContext<LiveContext>({ connected: false, subscribe: () => () => undefined });
 
 /**
- * Per-launch query families refreshed whenever the indexer reports an on-chain event for that
- * launch. They are keyed by `launchId` (mint on Holdfast launches, address on pump launches), so an
- * event invalidates both ids; the other one finds nothing.
+ * Per-launch query families refreshed after the indexer reports an on-chain event for that launch. They are keyed
+ * by `launchId` (mint on Holdfast launches, address on pump launches), so an event refreshes both ids; the other one
+ * finds nothing. A hot launch reports several trades a second: refetching every family per event made the page
+ * fire ~8 requests a second and re-render the chart and tables continuously, so the refreshes are coalesced per
+ * launch — the live chart/tape families at most every `FAST_MS`, the heavy ones (holders, backers) every `SLOW_MS`.
  */
-const LAUNCH_KEYS = [
-  "trades",
-  "traders",
-  "candles",
-  "backers",
-  "deposits",
-  "holders",
-  "token-balance",
-  "backer",
-  "launch-account",
-  "launch-activity",
-  "wind-down",
-];
+const FAST_KEYS = ["trades", "traders", "candles", "token-balance", "launch-account", "launch-activity"];
+const SLOW_KEYS = ["backers", "deposits", "holders", "backer", "wind-down"];
+const FAST_MS = 2_000;
+const SLOW_MS = 10_000;
 
 /**
  * Single indexer websocket for the whole app. Pushes launch snapshots straight into the
@@ -54,13 +47,32 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     let reconnect: number | undefined;
     let listRefresh: number | undefined;
     let disposed = false;
+    const pending = { fast: new Set<string>(), slow: new Set<string>() };
+    const flushTimers: { fast?: number; slow?: number } = {};
+
+    /** Trailing throttle: the first event of a burst schedules one refresh of every launch seen until it fires. */
+    const refreshLaunch = (ids: string[]) => {
+      for (const [lane, keys, ms] of [
+        ["fast", FAST_KEYS, FAST_MS],
+        ["slow", SLOW_KEYS, SLOW_MS],
+      ] as const) {
+        for (const id of ids) pending[lane].add(id);
+        if (flushTimers[lane] !== undefined) continue;
+        flushTimers[lane] = window.setTimeout(() => {
+          flushTimers[lane] = undefined;
+          const batch = [...pending[lane]];
+          pending[lane].clear();
+          for (const key of keys) for (const id of batch) void qc.invalidateQueries({ queryKey: [key, id] });
+        }, ms);
+      }
+    };
 
     const refreshLists = () => {
       if (listRefresh !== undefined) return;
       listRefresh = window.setTimeout(() => {
         listRefresh = undefined;
         for (const key of ["launches", "stats", "agents", "portfolio"]) qc.invalidateQueries({ queryKey: [key] });
-      }, 1200);
+      }, 3_000);
     };
 
     const connect = () => {
@@ -82,7 +94,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           qc.setQueryData<{ events: ActivityEvent[] }>(["activity"], (old) =>
             old ? { events: [event, ...old.events.filter((e) => e.id !== event.id)].slice(0, 80) } : old,
           );
-          for (const key of LAUNCH_KEYS) for (const id of [event.mint, event.launch]) qc.invalidateQueries({ queryKey: [key, id] });
+          refreshLaunch([event.mint, event.launch]);
           refreshLists();
           listeners.current.forEach((fn) => fn(event));
         } else if (msg.type === "launch") {
@@ -133,6 +145,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       disposed = true;
       window.clearTimeout(reconnect);
       window.clearTimeout(listRefresh);
+      window.clearTimeout(flushTimers.fast);
+      window.clearTimeout(flushTimers.slow);
       if (ws) {
         const sock = ws;
         sock.onclose = null;
