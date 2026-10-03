@@ -813,11 +813,17 @@ export class ChainSync {
   /** Loads holders for a launch (30s cache) and persists count + top holder share; broadcasts when either changed. */
   async updateHolders(target: HolderTarget): Promise<HolderSet> {
     const set = await this.holders.get(target);
-    const row = this.store.launch(target.address);
-    if (!row || row.holders_at >= set.at) return set;
-    this.store.setHolders(target.address, set.count, set.topPct, set.at);
-    if (row.holders !== set.count || row.top_holder_pct !== set.topPct) this.broadcastLaunch(target.address);
+    this.persistHolders(target.address, set);
+    // A stale snapshot came back while a reload runs: persist the reload when it lands, or the stored count lags.
+    this.holders.reloading(target.mint)?.then((fresh) => this.persistHolders(target.address, fresh), () => {});
     return set;
+  }
+
+  private persistHolders(address: string, set: HolderSet): void {
+    const row = this.store.launch(address);
+    if (!row || row.holders_at >= set.at) return;
+    this.store.setHolders(address, set.count, set.topPct, set.at);
+    if (row.holders !== set.count || row.top_holder_pct !== set.topPct) this.broadcastLaunch(address);
   }
 
   // ---------------- metadata ----------------

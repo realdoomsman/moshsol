@@ -99,6 +99,11 @@ export class Holders {
     return hit;
   }
 
+  /** The reload in flight for `mint`, if any (callers persist its result once it lands). */
+  reloading(mint: string): Promise<HolderSet> | undefined {
+    return this.inflight.get(mint);
+  }
+
   /** The venue's and the vault's token accounts (with their owner) for a launch. */
   private programAccounts(t: HolderTarget): { tokenAccount: PublicKey; owner: PublicKey; label: Label }[] {
     const launch = new PublicKey(t.address);

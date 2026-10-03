@@ -178,7 +178,9 @@ export function registerRpcProxy(app: FastifyInstance, opts: { rpcUrl: string; w
       if (!isRecord(msg) || typeof msg.method !== "string") return reply(id, -32600, "invalid request");
       const method = msg.method;
       if (!Object.hasOwn(WS_METHODS, method)) return reply(id, -32601, `method ${method.slice(0, 64)} is not available through this proxy`);
-      if (limiter?.hit(ip, Date.now())) {
+      // web3.js's keepalive `ping` (every few seconds per open socket) is not a user call: counting it let a few idle
+      // tabs behind one IP exhaust the budget during the launch.
+      if (method !== "ping" && limiter?.hit(ip, Date.now())) {
         // Notifications (web3.js's ping) have no id and expect no answer.
         if (id !== null) reply(id, -32005, `rate limit exceeded (${opts.perMin} RPC calls/min)`);
         return;
