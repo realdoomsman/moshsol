@@ -16,6 +16,7 @@ The bar: a brand-new account has to look premium and credible. Every post makes 
 | `video/final/holdfast-explainer.mp4` | Pinned post video (voiceover + music; `.srt` alongside; `-4x5` variant for mobile) | — |
 | `video/final/the-bundle.mp4`, `video/final/vault-agent.mp4` | V1, V2 (voiceover + music; `.srt` alongside) | — |
 | `pfp*.png`, `banner*.png`, `announce*.png` | Earlier assets, kept for reference | — |
+| `src/stats.mjs`, `src/wallets.mjs`, `src/burns.mjs`, `src/buys.mjs`, `src/dashboard.mjs`, `src/momentum.mjs`, `src/tracker-list.mjs`, `src/agent-video.mjs` → `stats/<unix time>/` | Live-data cards, videos + post copy from one read of `api.holdfast.fun` and the chain (shared style, fetch, RPC, agent-trade paging, card and video render in `src/stat-card.mjs`; video audio in `src/audio.mjs`; each takes an optional launch address, default HOLD). `stats.mjs`: launch, vault, creator fees, platform totals. `wallets.mjs`: the 15 agent wallets (`platform.agent_executors`) with each one's sells, SOL fee float and token balance. `burns.mjs`: burned supply from the mint, split into pump.fun BOOST (`BoostBuyAndBurn`), Holdfast buyback-and-burn and other burns. `buys.mjs`: every vault buy as a labelled bar chart. `dashboard.mjs`: "N minutes in" market + vault card. `momentum.mjs`: since-launch market-cap area chart. `tracker-list.mjs`: the agent wallets as a tracker import list. `agent-video.mjs`: 17 s 1920×1080 MP4 with audio: USD market-cap candles from launch with the 20-min trend, every vault trade popping in with a tick, live panel and tape, end card. `dashboard.mjs` and `momentum.mjs` still print SOL amounts and "N×" (see the live-post rules below). Chain reads need `RPC_URL` or `.mainnet/config.json`. `posts.json` holds the copy and alt text | 1600×900 @2x; video 1920×1080 |
 
 Everything with `card-`, `cover`, `kit/banner` and `kit/avatar` is generated: `node brand/x/src/cards.mjs --render` rewrites the `src/*.html` sources from the numbers in the script (README "Vault economics", `constants.rs` defaults and hard caps, the platform account, `previewPumpBundle` for the docs' 10 SOL example) and screenshots them with headless Chrome. Review every card at 600×338 before posting; that is the timeline size (`kit/review/` holds the last review set).
 
@@ -169,3 +170,18 @@ Illustrative chart; the numbers are the program's.
 
 ## Posted on @TryHoldFast (2026-10-01)
 Article `2105645092799127789` · P1 `2105645338124070939` · P2 `2105645917810659832` · P3 `2105646427636678663` · P4 `2105646937693204482` · P5 `2105647450509754440` · P6 `2105648190305304913` · P7 `2105648703889703193` · P8 `2105649217314099427` (program id left on the card only) · PINNED quote of the article + holdfast-explainer.mp4 `2105670300943966523` · V1 `2105670961483714724` · V2 `2105671549097549852`.
+
+## Live-stats posts on @TryHoldFast (2026-10-03, ~18 min after HOLD launched)
+HOLD launch `2106244281795244442` (snapshot `stats/1791002673`) · HOLD vault `2106244372895527126` · HOLD creator fees `2106244425298944039` · platform totals `2106244484723843570` (snapshot `stats/1791002750`).
+HOLD agent wallets (2 images: explanation + all 15 with sells / float / balance) `2106247832801878341` (snapshot `stats/1791003514`).
+HOLD vault buys (bar chart, one bar per buy) `2106256356164477202` (snapshot `stats/1791005600`).
+HOLD vault agent video (every trade on the candles, 16 s) `2106260597587267644` (snapshot `stats/1791006596`).
+HOLD dashboard, 86 minutes in (market + vault marked at the current price) `2106261180306325918` (snapshot `stats/1791006748`).
+HOLD 42× since launch (log mcap chart, 105 minutes in) `2106266049259938187` (snapshot `stats/1791007910`).
+HOLD agent wallets as a tracker import list (JSON `[{"address","name","emoji"}]`, the format Axiom, Padre and GMGN all import; `src/tracker-list.mjs`) `2106268454277832817` (snapshot `stats/1791008470`, list in `agent-wallets.json`).
+HOLD zoomed out (video: log mcap line from launch with a live "N×" counter and every vault trade dotted, then an end card; no audio; generator removed after review, superseded by `agent-video.mjs`) `2106273416139706585` (snapshot `stats/1791009651`).
+HOLD vault agent, trade by trade (video with audio: USD market-cap candles from launch, rising 20-min trend line, every vault sell / buy popping in with a tick, live market cap / sold / bought panel and tape, end card "$14K → $520K"; `src/agent-video.mjs` + `src/audio.mjs`) `2106274733897712109` (snapshot `stats/1791009969`).
+HOLD dip (video with audio, `agent-video.mjs --dip 30`: last 30 minutes of USD candles, every vault trade with ticks, the window low marked, end card "$128K → $397K", 34 vault buys into the dip) `2106277714676085003` (snapshot `stats/1791010680`).
+HOLD burned supply (card: 6.94% of supply burned, split pump.fun BOOST / Holdfast buyback-and-burn / other, Holdfast's share priced in USD; `src/burns.mjs`) `2106282259544220145` (snapshot `stats/1791011768`).
+
+Live-post rules (from review, 2026-10-03): market caps and amounts in USD (at the indexer's current SOL price), not SOL; no "N×" multiples as values; every video has audio (`src/audio.mjs`: the kit's cached music bed + a tick per on-screen trade; Gemini TTS / Lyria are refused for this project's key as of this date, so no new voiceover or music can be generated).

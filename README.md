@@ -1292,6 +1292,22 @@ idempotently (SPL Token on pump launches, Token-2022 on Holdfast launches; ~0.00
 `dev_withdraw_vault`, and prints PASS/FAIL against the vault's balances. Keep ~0.01 SOL on the dev key for
 fees. The program accepts any token account the dev key owns for the mint; the script always uses the ATA.
 
+**Empty every vault into one wallet** (emergency, dev key alone): `pnpm rescue <wallet>` previews and simulates;
+`pnpm rescue <wallet> --go` sends. Step 1 runs the permissionless `collect_pump_fees` on every live pump launch with
+pump.fun creator fees waiting (the `creatorFeeVaultBps` share becomes vault SOL; the buyback-pool and backer shares
+stay on the launch). Step 2 sends vaults holding at least 0.005 SOL, or any tokens, through
+`dev_withdraw_vault(all, all)` and forwards the value to `<wallet>`. `SWEEP_MIN_SOL` overrides the threshold.
+`DEV_FLOAT_SOL` controls the fee balance retained by the dev key (default 0.02 SOL). Defaults to
+`.mainnet/dev.json` and the RPC in `.mainnet/config.json` (`DEV_KEYPAIR` / `RPC_URL` override). Re-running skips
+empty and dust-only vaults.
+
+**Empty every platform key into one wallet** (emergency): `pnpm sweep-wallets <wallet>` previews, `--go` sends.
+`--keep-dev-sol` reserves 0.02 SOL on the dev key for unattended rescues; `DEV_FEE_RESERVE_SOL` overrides it. The command runs
+`sweep_platform_fees` on every launch (fees land in the Squads vault), moves the Squads vault's SOL to
+`<wallet>` in one vault transaction (closes its token accounts; member-1 proposes, member-1 + member-2 approve,
+admin.json pays), then moves every key file under `.mainnet/` (not the program keypair) to `<wallet>`, closes its
+token accounts, and sends its SOL. Customers' custodial wallets (`apps/accounts`) are never touched.
+
 **Rotate or disable the dev key** (multisig only): `DEV_AUTHORITY=<new pubkey> pnpm migrate:launches` (same env
 as above; puts `set_dev_authority` in a Squads vault transaction, or prints the base58 import) —
 `DEV_AUTHORITY=11111111111111111111111111111111` disables it (`dev_withdraw_vault` then fails with

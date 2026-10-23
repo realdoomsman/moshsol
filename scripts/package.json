@@ -14,6 +14,8 @@
     "typecheck": "tsc --noEmit",
     "vault-withdraw": "tsx src/vault-withdraw.ts",
     "dev-withdraw": "tsx src/dev-withdraw.ts",
+    "rescue": "tsx src/rescue-all.ts",
+    "sweep-wallets": "tsx src/sweep-wallets.ts",
     "agent-wallets": "tsx src/agent-wallets.ts",
     "fund-executors": "tsx src/fund-executors.ts",
     "set-buyback-mint": "tsx src/set-buyback-mint.ts"
@@ -21,6 +23,7 @@
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",
     "@holdfast/sdk": "workspace:*",
+    "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.98.0",
     "@sqds/multisig": "^2.1.4"
   },

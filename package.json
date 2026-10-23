@@ -22,6 +22,8 @@
     "typecheck": "pnpm -r typecheck",
     "vault:withdraw": "pnpm --filter @holdfast/scripts run vault-withdraw",
     "vault:dev-withdraw": "pnpm --filter @holdfast/scripts run dev-withdraw",
+    "rescue": "pnpm --filter @holdfast/scripts run rescue --",
+    "sweep-wallets": "pnpm --filter @holdfast/scripts run sweep-wallets --",
     "agent-wallets": "pnpm --filter @holdfast/scripts run agent-wallets",
     "fund-executors": "pnpm --filter @holdfast/scripts run fund-executors",
     "set-buyback-mint": "pnpm --filter @holdfast/scripts run set-buyback-mint"
