@@ -7,6 +7,7 @@ test-ledger/
 *.log
 .env
 .env.*
+!.env.example
 apps/indexer/data/
 apps/accounts/data/
 apps/agent/backtest/data/
@@ -22,3 +23,16 @@ apps/agent/.agent*.db*
 .x-session/
 apps/indexer/apps/
 apps/agent/.before/
+# local scratch, keys and data
+%TEMP%*
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.pem
+id.json
+*keypair*.json
+.tmp*/
+.tmp*.log
+# generated X stat-card runs
+brand/x/stats/
